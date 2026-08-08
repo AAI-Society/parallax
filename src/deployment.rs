@@ -110,6 +110,28 @@ pub enum MechanismSpec {
 }
 
 impl MechanismSpec {
+    /// This mechanism's kind, as the canonical grammar and
+    /// `mechanism::kind_of` spell it.
+    ///
+    /// Exists so a caller can count *distinct kinds* without going through
+    /// `canonical`, which is fallible (it parses durations) and would make
+    /// counting mechanisms fail on a file that already solved. The strings
+    /// must stay identical to the serde `rename_all = "snake_case"` variant
+    /// names, since `kind_of` reads them back off a tag; the match is
+    /// exhaustive, so adding a variant fails to compile here rather than
+    /// silently returning a kind nothing recognises.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            MechanismSpec::TeeAttestation { .. } => "tee_attestation",
+            MechanismSpec::Signing { .. } => "signing",
+            MechanismSpec::HashChain { .. } => "hash_chain",
+            MechanismSpec::Anchoring { .. } => "anchoring",
+            MechanismSpec::Gossip { .. } => "gossip",
+            MechanismSpec::WitnessQuorum { .. } => "witness_quorum",
+            MechanismSpec::ZkProof { .. } => "zk_proof",
+        }
+    }
+
     /// Every principal this mechanism names. Used by `validate`, and by the
     /// shared-dependency analysis in a later task.
     pub fn named_principals(&self) -> Vec<&str> {

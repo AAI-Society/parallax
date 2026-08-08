@@ -1181,27 +1181,38 @@ fn the_headline_count_is_never_typed_into_the_paper() {
     // of the PDF — and the preamble comment explaining *why* these macros
     // exist necessarily quotes the wrong old number. Scanning them would
     // make the note about the bug indistinguishable from the bug.
-    let tex: String = raw
-        .lines()
-        .filter(|l| !l.trim_start().starts_with('%'))
-        .collect::<Vec<_>>()
-        .join("\n");
+    //
+    // Runs of whitespace then collapse to a single space, in the source and
+    // in every anchor below. Without that, the anchors embed the source's
+    // own line breaks, and rewrapping a paragraph — no semantic change at
+    // all, the sort of thing an editor does without thinking — fails this
+    // test. A guard that cries wolf on reflowed prose is a guard somebody
+    // deletes rather than repairs, and this one is worth keeping. TeX
+    // collapses whitespace the same way, so the collapsed form is also
+    // closer to what the reader ends up seeing.
+    let squash = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let tex: String = squash(
+        &raw.lines()
+            .filter(|l| !l.trim_start().starts_with('%'))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
 
     // Each entry is (text immediately *after* the count, the macro call that
     // must precede it). Two families are covered: how many of Sigma_2's
     // parties are undetectable, and how many mechanisms a deployment
     // declares. Both were typed into the prose and both were wrong.
-    let sites: [(&str, &str); 7] = [
+    let sites: [(&str, &str); 9] = [
         (
             " of the \\SigmaTwoParties{} have no detection",
             "\\SigmaTwoUndetectable{}",
         ),
         (
-            " of those\n\\SigmaTwoParties{}, there is no detection",
+            " of those \\SigmaTwoParties{}, there is no detection",
             "\\SigmaTwoUndetectable{}",
         ),
         (
-            " of the\n\\SigmaTwoParties{} are $\\Never$",
+            " of the \\SigmaTwoParties{} are $\\Never$",
             "\\SigmaTwoUndetectable{}",
         ),
         (
@@ -1209,16 +1220,22 @@ fn the_headline_count_is_never_typed_into_the_paper() {
             "\\SigmaTwoUndetectable{}",
         ),
         // Section 6's concession, which claimed the opposite of the truth
-        // until the numbers were generated.
-        (" mechanism, $\\Sigma_4$ declares", "\\SigmaTwoMechanisms{}"),
+        // until the numbers were generated. Both readings of "how many
+        // mechanisms" appear, because they rank differently and the
+        // paragraph now has to say which one it means.
+        (" stanzas of only", "\\SigmaOneMechanisms{}"),
+        (" kinds. Under stanzas", "\\SigmaOneMechanismKinds{}"),
+        (" stanza, $\\Sigma_4$ declares", "\\SigmaTwoMechanisms{}"),
         (
-            ",\nand $\\Sigma_1$ and $\\Sigma_3$ declare",
+            ", and $\\Sigma_1$ and $\\Sigma_3$ declare",
             "\\SigmaFourMechanisms{}",
         ),
         (" apiece.", "\\SigmaOneMechanisms{}"),
     ];
 
-    for (anchor, expected) in sites {
+    for (raw_anchor, expected) in sites {
+        let anchor = squash(raw_anchor);
+        let anchor = anchor.as_str();
         let macro_call = expected;
         let at = tex.find(anchor).unwrap_or_else(|| {
             panic!(
@@ -1229,7 +1246,9 @@ fn the_headline_count_is_never_typed_into_the_paper() {
                  the defect this test exists for."
             )
         });
-        let before = &tex[..at];
+        // `trim_end`: squashing drops each anchor's leading space, so the
+        // text before it ends with the macro call plus that separator.
+        let before = tex[..at].trim_end();
         assert!(
             before.ends_with(macro_call),
             "the count before `{anchor}` is typed, not generated.\n\

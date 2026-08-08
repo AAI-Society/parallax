@@ -63,6 +63,11 @@ pub struct Encoded {
     /// would do under a one-assumption-per-mechanism convention, and that
     /// discussion needs a number the paper is not allowed to type.
     pub mechanisms: usize,
+    /// Distinct mechanism *kinds*. The other reading of "how many
+    /// mechanisms", and it ranks differently: Σ₁ declares three stanzas of
+    /// two kinds, so counting stanzas ties it last and counting kinds
+    /// leaves it mid-table. Section 6 states both, so both are pinned.
+    pub mechanism_kinds: usize,
     pub trust: TrustSet,
 }
 
@@ -76,6 +81,12 @@ impl Encoded {
             undetectable: t.0.iter().filter(|a| a.latency == Latency::Never).count(),
             system_latency: t.system_latency(),
             mechanisms: d.mechanism.len(),
+            mechanism_kinds: d
+                .mechanism
+                .iter()
+                .map(|m| m.kind())
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
             trust: t.clone(),
         }
     }
@@ -759,6 +770,28 @@ mod tests {
             by_assumptions.first().unwrap().names,
             rungs.first().unwrap().names,
             "the conventions must disagree about who is most verifiable"
+        );
+
+        // And the *other* reading of "how many mechanisms" — distinct kinds
+        // rather than declared stanzas — does not invert. Section 6 says so
+        // rather than quietly leading with the reading that concedes most,
+        // so the milder outcome is pinned too: the quorum still sits last
+        // and the software-only host lands in the middle.
+        let by_kind = rank_by(
+            &r.deployments,
+            |e| e.mechanism_kinds,
+            |e| e.mechanism_kinds.to_string(),
+        );
+        assert_eq!(by_kind.first().unwrap().names, vec!["sigma2-tdx"]);
+        assert_eq!(
+            by_kind.last().unwrap().names,
+            vec!["sigma3-quorum"],
+            "counting kinds still puts the witness quorum last"
+        );
+        assert_eq!(
+            by_kind[1].names,
+            vec!["sigma1-software", "sigma4-zk"],
+            "and leaves the software-only host mid-table, not tied for last"
         );
     }
 

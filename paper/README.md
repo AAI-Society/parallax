@@ -58,7 +58,7 @@ claim has a tripwire test:
 | Typed claim | Where | Pinned by |
 | --- | --- | --- |
 | Four of Σ₂'s five parties are undetectable | abstract, §1, §5.1, §8 | **not typed at all** — `\SigmaTwoUndetectable`; plus `the_headline_count_is_never_typed_into_the_paper` (`tests/acceptance.rs`) and `the_tdx_headline_count_is_four` (`src/tex.rs`) |
-| Mechanism counts, and that one-per-mechanism *inverts* the ranking | §6 | **not typed at all** — `\SigmaNMechanisms`; plus the same acceptance guard and `one_assumption_per_mechanism_would_invert_the_cardinality_ranking` (`src/tiers.rs`) |
+| Mechanism counts, both readings, and that counting stanzas *inverts* the ranking while counting kinds does not | §6 | **not typed at all** — `\SigmaNMechanisms`, `\SigmaNMechanismKinds`; plus the same acceptance guard and `one_assumption_per_mechanism_would_invert_the_cardinality_ranking` (`src/tiers.rs`) |
 | Σ₂ has five rows, four `∞`, one bounded | §5.1, Table 3 caption | `the_tdx_trust_set_renders_five_rows_with_one_bound` (`src/tex.rs`) |
 | Eight of twelve ordered pairs N/A; two unordered comparisons, both incomparable | §5.2, Table 4 caption | `the_comparison_matrix_rests_on_exactly_two_unordered_comparisons` (`tests/acceptance.rs`) |
 | Principals < \|T\| only for Σ₅ | §5.4, Table 5 caption | `only_the_hybrid_names_fewer_principals_than_it_has_assumptions` (`src/tiers.rs`) |
@@ -100,8 +100,15 @@ claim, said Σ₁ declares the fewest mechanisms when it declares the most.
 Two families of count are therefore generated — trust-set counts and
 mechanism counts — and the prose calls a macro for both. Available:
 `\SigmaNAssumptions`, `\SigmaNParties`, `\SigmaNUndetectable`,
-`\SigmaNBounded`, `\SigmaNMechanisms`, for N in One..Five. **If you write a
-sentence stating a count about a deployment, use one.**
+`\SigmaNBounded`, `\SigmaNMechanisms`, `\SigmaNMechanismKinds`, for N in
+One..Five. **If you write a sentence stating a count about a deployment, use
+one.**
+
+Both readings of "how many mechanisms" are generated because they rank
+differently — Σ₁ declares three `[[mechanism]]` stanzas of only two kinds, so
+counting stanzas ties it last and counting kinds leaves it mid-table. §6
+states which reading it means and what the other one does; if you write about
+mechanism counts, say which you mean.
 
 Numbers *outside* Sections 5 and 6 — deployment parameters quoted in
 Section 1, the code size, the size of the termination example — are prose,
@@ -189,10 +196,12 @@ to pass.
    contingent on the four deployments we happened to write; and (g) the
    headline count — four of Σ₂'s five parties undetectable — is read from
    `\SigmaTwoUndetectable`, never typed; and (h) §6 concedes that under a
-   one-assumption-per-mechanism convention the cardinality ranking *inverts*
-   (Σ₂ first, Σ₁ and Σ₃ joint last), not merely that it loses its shape, and
-   says which part of "ranks the systems backwards" survives the objection
-   and which does not. If any of these stops being stated, the paper is
+   one-assumption-per-`[[mechanism]]`-stanza convention the cardinality
+   ranking *inverts* (Σ₂ first, Σ₁ and Σ₃ joint last), not merely that it
+   loses its shape; names that reading rather than leaving "mechanism"
+   ambiguous; says what the milder reading (distinct kinds) does instead;
+   and says which part of "ranks the systems backwards" survives the
+   objection and which does not. If any of these stops being stated, the paper is
    overclaiming.
 
    Statements (g) and (h) are there because prose contradicted the artifact

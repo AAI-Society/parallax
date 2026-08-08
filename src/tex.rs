@@ -169,13 +169,22 @@ pub fn counts_macros(prefix: &str, d: &Deployment, t: &TrustSet) -> Result<Strin
         ("Parties", t.principals().len()),
         ("Undetectable", undetectable),
         ("Bounded", t.len() - undetectable),
-        // Declared `[[mechanism]]` blocks, not distinct mechanism *kinds*.
-        // Section 6 discusses a hypothetical one-assumption-per-mechanism
-        // convention and needs a number for it; two readings of "how many
-        // mechanisms" would give two different rankings, so the tool commits
-        // to one and the prose says which. This count was typed into the
-        // paper once and was wrong, which is why it is here.
+        // Both readings of "how many mechanisms", because they disagree and
+        // Section 6 turns on the difference: Sigma_1 declares three
+        // `[[mechanism]]` stanzas but only two kinds, and counting stanzas
+        // ties it last while counting kinds leaves it mid-table. The prose
+        // states which reading it means and what the other one does, so both
+        // numbers have to be available to it. This count was typed into the
+        // paper once and was wrong, which is why it is here at all.
         ("Mechanisms", d.mechanism.len()),
+        (
+            "MechanismKinds",
+            d.mechanism
+                .iter()
+                .map(|m| m.kind())
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+        ),
     ] {
         out.push_str(&format!(
             "\\newcommand{{\\{prefix}{suffix}}}{{{}}}\n",
@@ -418,6 +427,10 @@ mod tests {
         assert!(
             tex.contains("\\newcommand{\\SigmaTwoMechanisms}{one}"),
             "sigma2 declares a single tee_attestation stanza:\n{tex}"
+        );
+        assert!(
+            tex.contains("\\newcommand{\\SigmaTwoMechanismKinds}{one}"),
+            "and that stanza is the only kind it uses:\n{tex}"
         );
         assert!(
             !tex.contains("{4}") && !tex.contains("{5}"),

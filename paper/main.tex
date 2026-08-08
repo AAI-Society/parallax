@@ -1154,18 +1154,22 @@ first thing a referee should push on.
 Cardinality puts $\Sigma_3$ last only because \texttt{witness\ub quorum}
 attributes \texttt{non\ub collusion\ub $k$\ub of\ub $n$} to each of the $n$
 witnesses rather than once to the mechanism. Suppose you reject that and
-count one assumption per declared mechanism instead. The ranking does not
-merely lose its shape; it turns over. $\Sigma_2$ declares
-\SigmaTwoMechanisms{} mechanism, $\Sigma_4$ declares \SigmaFourMechanisms{},
-and $\Sigma_1$ and $\Sigma_3$ declare \SigmaOneMechanisms{} apiece. The
-hardware-attested deployment comes first and the software-only host ties the
-witness quorum for last --- which is the opposite of the paragraph above, not
-a tie-break away from it.
+count one assumption per declared \texttt{[[mechanism]]} stanza instead ---
+stanzas, not distinct kinds, and the difference is not idle: $\Sigma_1$
+declares \SigmaOneMechanisms{} stanzas of only \SigmaOneMechanismKinds{}
+kinds. Under stanzas the ranking does not merely lose its shape; it turns
+over. $\Sigma_2$ declares \SigmaTwoMechanisms{} stanza, $\Sigma_4$ declares
+\SigmaFourMechanisms{}, and $\Sigma_1$ and $\Sigma_3$ declare
+\SigmaOneMechanisms{} apiece. The hardware-attested deployment comes first
+and the software-only host ties the witness quorum for last --- which is the
+opposite of the paragraph above, not a tie-break away from it.
 
-We had this wrong in an earlier draft, in this paragraph, which is the
-paragraph about what we are not entitled to claim. It said $\Sigma_1$ has the
-fewest mechanisms as well as the fewest assumptions. It has the most. The
-numbers above now come from the deployment files rather than from us.
+Count kinds instead and the damage is smaller: $\Sigma_3$ is still last and
+$\Sigma_1$ sits mid-table, so ``backwards'' fails without inverting. We lead
+with the stanza reading because it is the one that costs us most, and we
+would rather a referee found us conceding too much than too little. Neither
+reading leaves ``ranks the systems backwards'' standing, which is the part
+that matters.
 
 There is a narrower objection that does leave $\Sigma_1$ on top: collapse
 only the quorum's $n$ non-collusion assumptions and leave every other rule
