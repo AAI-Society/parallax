@@ -511,3 +511,132 @@ fn check_refuses_a_never_bound_instead_of_silently_disabling_it() {
         "expected the NeverIsNotABound explanation, got: {stderr}"
     );
 }
+
+/// IMPORTANT regression from the Task 10 review: a typo'd principal id and a
+/// principal that is genuinely declared but simply not load-bearing must not
+/// print the same message. An operator who mistypes a DID deserves a
+/// different, more actionable answer than one who correctly queried an inert
+/// principal.
+#[test]
+fn explain_distinguishes_a_typo_from_a_declared_but_inert_principal() {
+    let path = write_temp(
+        "explain-inert.toml",
+        r#"
+name = "explain-test"
+claim = "measurement_valid"
+[[principal]]
+id = "a"
+role = "R"
+[[principal]]
+id = "inert"
+role = "R"
+[[mechanism]]
+kind = "signing"
+signer = "a"
+"#,
+    );
+
+    let inert = bin()
+        .args(["explain", path.to_str().unwrap(), "-p", "inert"])
+        .output()
+        .unwrap();
+    assert_eq!(inert.status.code(), Some(0));
+    let inert_stdout = String::from_utf8_lossy(&inert.stdout).to_string();
+    assert!(
+        inert_stdout.contains("declared") && inert_stdout.contains("not load-bearing"),
+        "got: {inert_stdout}"
+    );
+
+    let ghost = bin()
+        .args(["explain", path.to_str().unwrap(), "-p", "ghost"])
+        .output()
+        .unwrap();
+    assert_eq!(ghost.status.code(), Some(0));
+    let ghost_stdout = String::from_utf8_lossy(&ghost.stdout).to_string();
+    assert!(
+        ghost_stdout.contains("no such principal"),
+        "got: {ghost_stdout}"
+    );
+
+    let _ = std::fs::remove_file(&path);
+    assert_ne!(
+        inert_stdout, ghost_stdout,
+        "a typo and a declared-but-inert principal must be distinguishable"
+    );
+}
+
+/// IMPORTANT regression: the transitivity caveat must not fire for a
+/// principal named directly by a mechanism with no delegation involved at
+/// all — a note that prints unconditionally trains readers to skip it.
+#[test]
+fn explain_omits_the_delegation_note_for_a_directly_named_principal() {
+    let out = bin()
+        .args([
+            "explain",
+            "examples/sigma2-tdx.toml",
+            "-p",
+            "did:web:intel.com",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("Note:"),
+        "no delegation is involved here, so no note should print: {stdout}"
+    );
+}
+
+/// IMPORTANT regression, positive direction: when a principal's explanation
+/// does include a delegation-derived entry, the CLI must name the specific
+/// `sup` and suggest the concrete follow-up command, not a generic
+/// placeholder like `P -> Q -> R`.
+#[test]
+fn explain_names_the_specific_sup_and_suggests_the_next_hop() {
+    let path = write_temp(
+        "explain-delegation-note.toml",
+        r#"
+name = "t"
+claim = "measurement_valid"
+[[principal]]
+id = "intel"
+role = "SiliconManufacturer"
+[[principal]]
+id = "qe"
+role = "QuotingEnclave"
+[[principal]]
+id = "pcs"
+role = "CertificationAuthority"
+[[principal]]
+id = "rvp"
+role = "ReferenceValueProvider"
+[[principal]]
+id = "cloud"
+role = "CloudOperator"
+[[mechanism]]
+kind = "tee_attestation"
+endorser = "intel"
+quoting_enclave = "qe"
+collateral_authority = "pcs"
+collateral_refresh = "12h"
+reference_values = "rvp"
+host = "cloud"
+[[delegation]]
+sub = "pcs"
+sup = "intel"
+"#,
+    );
+
+    let out = bin()
+        .args(["explain", path.to_str().unwrap(), "-p", "pcs"])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Note:"), "got: {stdout}");
+    assert!(
+        stdout.contains(&format!("explain {} -p intel", path.to_str().unwrap())),
+        "expected an actionable follow-up command naming `intel`, got: {stdout}"
+    );
+}

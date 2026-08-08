@@ -36,11 +36,12 @@ enum Cmd {
     },
     /// Show why a principal is load-bearing in a deployment
     ///
-    /// This reports the principal's own assumptions and, for each, who it
-    /// *directly* delegates to. `solve`'s load-bearing relation is
-    /// transitive, so a principal reached through a multi-hop delegation
-    /// chain (P -> Q -> R) is load-bearing without this one-hop view ever
-    /// showing the chain. See `parallax::explain` for details.
+    /// This reports the principal's own assumptions and, for whichever of
+    /// them exist because of a delegation edge, the immediate principal that
+    /// edge names. `solve`'s load-bearing relation is transitive, so a
+    /// principal reached through a multi-hop delegation chain (P -> Q -> R)
+    /// is load-bearing without this one-hop view ever showing the chain past
+    /// its first hop. See `parallax::explain` for details.
     Explain {
         file: PathBuf,
         #[arg(short, long)]
@@ -212,7 +213,18 @@ fn run() -> Result<ExitCode> {
             let t = parallax::solve::solve(&d)?;
             match parallax::explain::explain(&d, &t, &principal) {
                 None => {
-                    println!("{principal} is not load-bearing in this deployment.");
+                    // A typo'd principal and a declared-but-inert one must
+                    // not read the same: an operator who mistypes a DID
+                    // deserves a different answer than one who correctly
+                    // queried a principal the deployment simply doesn't
+                    // depend on.
+                    if d.principal.iter().any(|p| p.id == principal) {
+                        println!(
+                            "{principal} is declared in this deployment, but is not load-bearing."
+                        );
+                    } else {
+                        println!("no such principal `{principal}` is declared in this deployment.");
+                    }
                     Ok(ExitCode::SUCCESS)
                 }
                 Some(e) => {
@@ -228,12 +240,29 @@ fn run() -> Result<ExitCode> {
                             println!("    speaks for: {}", entry.via_delegation.join(", "));
                         }
                     }
-                    println!(
-                        "\nNote: this shows direct delegation only. `load_bearing` is \
-                         transitive, so a principal reached through a longer chain \
-                         (P -> Q -> R) will not show that chain here — see \
-                         `parallax::explain` and `parallax::shared::shared_dependencies`."
-                    );
+                    // Only fires when at least one entry actually arose from
+                    // delegation — a caveat that printed unconditionally
+                    // (including for principals named directly, with no
+                    // delegation involved at all) trains readers to skip it.
+                    // Named and actionable: point at the specific `sup`s
+                    // this principal's delegation-derived entries name, not
+                    // a generic placeholder.
+                    let mut sups: Vec<&str> = e
+                        .entries
+                        .iter()
+                        .flat_map(|entry| entry.via_delegation.iter().map(String::as_str))
+                        .collect();
+                    sups.sort_unstable();
+                    sups.dedup();
+                    if !sups.is_empty() {
+                        println!(
+                            "\nNote: the entries above marked \"speaks for\" show one hop of \
+                             delegation. To see why each of those is itself load-bearing, run:"
+                        );
+                        for sup in &sups {
+                            println!("  parallax explain {} -p {sup}", file.display());
+                        }
+                    }
                     Ok(ExitCode::SUCCESS)
                 }
             }
