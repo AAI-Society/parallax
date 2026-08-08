@@ -57,13 +57,21 @@ claim has a tripwire test:
 
 | Typed claim | Where | Pinned by |
 | --- | --- | --- |
+| Four of Σ₂'s five parties are undetectable | abstract, §1, §5.1, §8 | **not typed at all** — `\SigmaTwoUndetectable`; plus `the_headline_count_is_never_typed_into_the_paper` (`tests/acceptance.rs`) and `the_tdx_headline_count_is_four` (`src/tex.rs`) |
 | Σ₂ has five rows, four `∞`, one bounded | §5.1, Table 3 caption | `the_tdx_trust_set_renders_five_rows_with_one_bound` (`src/tex.rs`) |
 | Eight of twelve ordered pairs N/A; two unordered comparisons, both incomparable | §5.2, Table 4 caption | `the_comparison_matrix_rests_on_exactly_two_unordered_comparisons` (`tests/acceptance.rs`) |
 | Principals < \|T\| only for Σ₅ | §5.4, Table 5 caption | `only_the_hybrid_names_fewer_principals_than_it_has_assumptions` (`src/tiers.rs`) |
 | Per-deployment counts (3/3/3, 5/5/4, 11/11/7, 5/5/3) | §5.4, §6 | `the_per_deployment_figures_are_what_the_paper_reports` (`src/tiers.rs`) |
 
 If you add a sentence restating a generated figure, add a tripwire in the
-same commit or do not add the sentence.
+same commit or do not add the sentence. For the headline count, prefer the
+macro: `\SigmaTwoUndetectable{}`, `\SigmaTwoParties{}`,
+`\SigmaTwoBounded{}`, `\SigmaTwoAssumptions{}` are defined and expand to
+words, so a new sentence can state the count without typing it.
+`the_headline_count_is_never_typed_into_the_paper` fails if one of the four
+existing sites goes back to a typed word, and if you deliberately reword one
+of those sentences it will fail too — update the anchor in the test, in the
+same commit, after checking the macro is still there.
 
 The generated files those sections read:
 
@@ -75,6 +83,16 @@ The generated files those sections read:
 | `deployment-summary.tex` | Table 5, §5.4 | `parallax tiers --format tex-summary` |
 | `policy-checks.tex` | Table 6, §5.4 | `parallax check`, per manifest |
 | `tier-orderings.tex` | Table 7, §6 | `parallax tiers --format tex-orderings` |
+| `sigma2-counts.tex` | the *prose* of the abstract, §1, §5.1 and §8 | `parallax solve --format latex-counts` |
+
+`sigma2-counts.tex` is the odd one out and the most important one. It is not
+a table body — it is `\newcommand`s, `\input` from the preamble, carrying
+Σ₂'s counts spelled as English words (`\SigmaTwoUndetectable` → `four`).
+Generating tables stops a *table* drifting from the code; it does nothing
+about the sentence beside the table stating the same number in words, which
+is how the abstract, §1 and the conclusion came to claim three undetectable
+parties while three generated tables on the facing pages said four. The
+prose now calls the macro and the number cannot be typed.
 
 Numbers *outside* Sections 5 and 6 — deployment parameters quoted in
 Section 1, the code size, the size of the termination example — are prose,
@@ -158,9 +176,14 @@ to pass.
    pairs in the comparison matrix were actually compared, the other eight
    ordered pairs being N/A; (e) the independent-encoding experiment
    (§7.1) has **not** been run and is described as a plan, not a result;
-   and (f) §6 says which of its four failures look structural and which are
-   contingent on the four deployments we happened to write. If any of these
-   stops being stated, the paper is overclaiming.
+   (f) §6 says which of its four failures look structural and which are
+   contingent on the four deployments we happened to write; and (g) the
+   headline count — four of Σ₂'s five parties undetectable — is read from
+   `\SigmaTwoUndetectable`, never typed. It said "three" for months while
+   the artifact said four, which is the fourth time a prose claim has
+   contradicted the artifact; if a future edit types the number back in, two
+   tests fail. If any of these stops being stated, the paper is
+   overclaiming.
 5. **Counts audit.** Three counts in the prose are checkable against the
    repository and will rot: the line count in Section 1, the deployment count
    in Section 5, and the fourteen rows of Table 2 (which the tripwire test

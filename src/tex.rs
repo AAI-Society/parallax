@@ -2,9 +2,16 @@
 //!
 //! Every table the paper prints in its results sections is generated here (or
 //! by `scripts/regen-results.sh`) and read in from `results/`, so a figure in
-//! the PDF cannot outlive the code that produced it. Everything in this
-//! module emits a *bare* `tabular` — the caption and the surrounding float
-//! live in `paper/main.tex`, because those are prose.
+//! the PDF cannot outlive the code that produced it. The table fragments are
+//! *bare* `tabular`s — the caption and the surrounding float live in
+//! `paper/main.tex`, because those are prose.
+//!
+//! `counts_macros` is the exception, and the exception is the interesting
+//! one. Generating tables stops a *table* drifting from the code; it does
+//! nothing about a sentence next to the table stating the same number in
+//! words. That went wrong four times, most recently in the paper's headline
+//! claim. So the counts the prose states are generated too, as
+//! `\newcommand`s the prose calls, and cannot be typed at all.
 
 use crate::latency::Latency;
 use crate::trust::TrustSet;
@@ -80,20 +87,119 @@ pub fn latency(l: &Latency) -> String {
     }
 }
 
+/// A macro prefix that would not survive `\newcommand`.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "`{prefix}` cannot name a LaTeX macro: a control word is a non-empty run \
+     of letters, so digits, hyphens and underscores are out. Try something \
+     like `SigmaTwo`."
+)]
+pub struct BadMacroPrefix {
+    pub prefix: String,
+}
+
+/// Spells a count as the word the paper's prose wants.
+///
+/// The paper writes small counts out --- "four of the five", not "4 of the
+/// 5" --- so a generated macro that expanded to a digit would fix a
+/// correctness problem by creating a register one. Above twenty it falls
+/// back to digits, which is the right place to stop: a sentence that needs a
+/// number that large is a sentence that should be pointing at a table
+/// instead, and digits read less strangely there than "thirty-seven" would.
+pub fn number_word(n: usize) -> String {
+    const WORDS: [&str; 21] = [
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+    ];
+    WORDS
+        .get(n)
+        .map(|w| (*w).to_string())
+        .unwrap_or_else(|| n.to_string())
+}
+
+/// `\newcommand` definitions for one deployment's counts, for the paper's
+/// *prose* to use.
+///
+/// Every other generated file here is a table body. This one exists because
+/// four separate times now a sentence in the paper has stated a number that
+/// the artifact contradicted --- most recently the headline claim that three
+/// of the five parties behind a TDX measurement are undetectable, when the
+/// answer is four, printed as four by three tables on the facing pages. A
+/// test could have caught that. A macro means it cannot happen: the prose
+/// says `\SigmaTwoUndetectable{}` and the number arrives from the solver.
+///
+/// What this does *not* fix, and what a reader of the paper has to keep
+/// doing by hand: Section 1 also enumerates the undetectable parties by
+/// name. If the count changes, the macro silently updates the number and
+/// leaves the list of names wrong. `tex::tests::the_tdx_headline_count_is_four`
+/// exists to make that change fail loudly rather than pass quietly.
+pub fn counts_macros(prefix: &str, t: &TrustSet) -> Result<String, BadMacroPrefix> {
+    if prefix.is_empty() || !prefix.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Err(BadMacroPrefix {
+            prefix: prefix.to_string(),
+        });
+    }
+    let undetectable = t.0.iter().filter(|a| a.latency == Latency::Never).count();
+    let mut out = header(
+        "parallax solve --format latex-counts",
+        "Macro definitions for the paper's prose, \\input from its preamble.",
+    );
+    for (suffix, value) in [
+        ("Assumptions", t.len()),
+        ("Parties", t.principals().len()),
+        ("Undetectable", undetectable),
+        ("Bounded", t.len() - undetectable),
+    ] {
+        out.push_str(&format!(
+            "\\newcommand{{\\{prefix}{suffix}}}{{{}}}\n",
+            number_word(value)
+        ));
+    }
+    out.push_str("% Not every macro above is used today. They are the four counts a\n");
+    out.push_str("% sentence about a trust set tends to want, and defining an unused\n");
+    out.push_str("% one costs nothing next to typing a used one by hand.\n");
+    Ok(out)
+}
+
 /// The header comment every generated fragment carries, so that a reader who
 /// opens one of these files knows not to edit it and knows what made it.
-pub fn header(producer: &str) -> String {
-    format!(
-        "% Generated by `{producer}` via scripts/regen-results.sh — do not edit.\n\
-         % A bare tabular: the caption and float live in paper/main.tex.\n"
-    )
+///
+/// `note` says what kind of fragment this is. It is a parameter rather than a
+/// constant because these files are not all the same kind: most are bare
+/// `tabular`s, and `counts_macros` emits `\newcommand`s for the preamble. A
+/// header that called the macro file a tabular would be a comment that lies
+/// about the file it heads, two lines above the evidence.
+pub fn header(producer: &str, note: &str) -> String {
+    format!("% Generated by `{producer}` via scripts/regen-results.sh — do not edit.\n% {note}\n")
 }
+
+/// The note every bare-`tabular` fragment carries.
+pub const TABULAR_NOTE: &str = "A bare tabular: the caption and float live in paper/main.tex.";
 
 /// One deployment's residual trust set as a bare `tabular`: the tool's own
 /// answer, in the shape of the paper's hand-derived table, so the two can be
 /// read against each other.
 pub fn trust_set_tabular(t: &TrustSet) -> String {
-    let mut out = header("parallax solve --format latex");
+    let mut out = header("parallax solve --format latex", TABULAR_NOTE);
     out.push_str(
         "\\begin{tabular}{@{}>{\\raggedright\\arraybackslash}p{4.6cm}\
          >{\\raggedright\\arraybackslash}p{5.3cm}ll@{}}\n\\toprule\n",
@@ -237,6 +343,98 @@ mod tests {
             "four columns, three separators, none swallowed: {row}"
         );
         assert!(row.ends_with("\\\\"), "row terminator survived: {row}");
+    }
+
+    /// **The paper's headline number.** Four of the five parties behind an
+    /// Intel TDX measurement have no detection mechanism; only the
+    /// collateral authority is bounded. The paper said three for a long
+    /// time, in the abstract, Section 1 and the Conclusion, while three
+    /// generated tables on the facing pages said four.
+    ///
+    /// Those sentences now read the count from `\SigmaTwoUndetectable`, so
+    /// the *number* cannot disagree with the artifact again. This test
+    /// covers what the macro cannot: Section 1 also names the four
+    /// undetectable parties one by one, and a change in the count would
+    /// leave that list wrong while the macro quietly printed the new number.
+    /// If this fails, do not just update the constant --- go and read
+    /// Section 1's enumeration and the Table 1 rows it summarises.
+    #[test]
+    fn the_tdx_headline_count_is_four() {
+        let d = Deployment::load(Path::new("examples/sigma2-tdx.toml")).unwrap();
+        let t = solve(&d).unwrap();
+        let undetectable: Vec<&str> =
+            t.0.iter()
+                .filter(|a| a.latency == Latency::Never)
+                .map(|a| a.principal.as_str())
+                .collect();
+
+        assert_eq!(
+            undetectable,
+            vec![
+                "did:web:cloud.example.com",
+                "did:web:intel.com",
+                "did:web:rvp.example.org",
+                "urn:qe:tdx",
+            ],
+            "the host, the endorser, the reference-value provider and the quoting \
+             enclave are the four the paper names by hand in Section 1"
+        );
+        assert_eq!(t.principals().len(), 5);
+    }
+
+    /// The macros the paper's prose reads, and the words they carry. The
+    /// paper spells counts out, so a digit here would be a register
+    /// regression as well as a surprise.
+    #[test]
+    fn the_counts_macros_spell_the_headline_numbers_as_words() {
+        let d = Deployment::load(Path::new("examples/sigma2-tdx.toml")).unwrap();
+        let t = solve(&d).unwrap();
+        let tex = counts_macros("SigmaTwo", &t).unwrap();
+
+        assert!(
+            tex.contains("\\newcommand{\\SigmaTwoParties}{five}"),
+            "{tex}"
+        );
+        assert!(
+            tex.contains("\\newcommand{\\SigmaTwoUndetectable}{four}"),
+            "{tex}"
+        );
+        assert!(
+            tex.contains("\\newcommand{\\SigmaTwoBounded}{one}"),
+            "{tex}"
+        );
+        assert!(
+            tex.contains("\\newcommand{\\SigmaTwoAssumptions}{five}"),
+            "{tex}"
+        );
+        assert!(
+            !tex.contains("{4}") && !tex.contains("{5}"),
+            "counts must arrive as words, not digits:\n{tex}"
+        );
+    }
+
+    #[test]
+    fn small_counts_are_words_and_large_ones_fall_back_to_digits() {
+        assert_eq!(number_word(0), "zero");
+        assert_eq!(number_word(4), "four");
+        assert_eq!(number_word(11), "eleven");
+        assert_eq!(number_word(20), "twenty");
+        assert_eq!(number_word(21), "21", "past twenty, digits");
+    }
+
+    /// A prefix that is not a run of letters produces a `\newcommand` LaTeX
+    /// cannot parse, and the failure would land in the paper build rather
+    /// than here.
+    #[test]
+    fn a_prefix_that_cannot_name_a_macro_is_refused() {
+        let t = TrustSet::default();
+        for bad in ["", "sigma2", "Sigma_Two", "Sigma-Two", "2Sigma"] {
+            assert!(
+                counts_macros(bad, &t).is_err(),
+                "`{bad}` must not reach a \\newcommand"
+            );
+        }
+        assert!(counts_macros("SigmaTwo", &t).is_ok());
     }
 
     #[test]

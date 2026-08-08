@@ -54,6 +54,23 @@
 % to be stated.
 \newcommand{\ub}{\_\allowbreak}
 
+% Counts the prose states, generated from the artifact rather than typed.
+%
+% Every other generated file here is a table body. This one is
+% `\newcommand`s, because generating tables only stops a *table* drifting
+% from the code -- it does nothing about the sentence beside the table
+% stating the same number in words. That is exactly what went wrong: the
+% abstract, Section 1 and the Conclusion all said three of the five parties
+% behind a TDX measurement are undetectable, while three generated tables on
+% the facing pages said four. The count is now read from
+% \SigmaTwoUndetectable and cannot be typed wrong.
+%
+% What it does not fix: Section 1 also names those parties one by one. If the
+% count ever changes, this macro updates the number and leaves the list of
+% names stale, so `the_tdx_headline_count_is_four` in src/tex.rs fails on any
+% such change to force a human to look.
+\input{../results/sigma2-counts.tex}
+
 % Placeholders, visible in the PDF while \ifdraft is true.
 %
 % A LaTeX comment marking unfinished content is invisible to everyone reading
@@ -147,8 +164,9 @@ anybody. The Proof-of-Control standard~\cite{pocspec} says of its Tier~3 that
 tools.''
 That sentence is false, and this paper shows it is false rather than
 suspecting it. Deploying on Intel TDX and enumerating what a verifier must
-accept to believe one measurement yields five distinct parties, and four of
-the five have no detection mechanism at all: if they misbehave, nothing in
+accept to believe one measurement yields \SigmaTwoParties{} distinct parties,
+and \SigmaTwoUndetectable{} of the \SigmaTwoParties{} have no detection
+mechanism at all: if they misbehave, nothing in
 the system will ever say so. The fifth is bounded only by how often
 revocation data is refreshed. We give a small calculus that computes this set
 instead of arguing about it. A judgment $\Gamma \vdash P : T, \Delta$ reads
@@ -211,9 +229,10 @@ boot. And you believed that the reference value you compared against ---
 the number that says ``this measurement means \emph{that} code'' --- was
 published by somebody who knows what code it belongs to.
 
-That is five parties. You did not remove trust; you moved it. And the thing
+That is \SigmaTwoParties{} parties. You did not remove trust; you moved it. And the thing
 that should stop the conversation is not the count but the fourth column of
-Table~\ref{tab:tdx}: for four of those five, there is no detection mechanism
+Table~\ref{tab:tdx}: for \SigmaTwoUndetectable{} of those
+\SigmaTwoParties{}, there is no detection mechanism
 at all. If Intel's silicon is subverted, or the quoting enclave's key leaks,
 or the host injects a firmware measurement of its own choosing, or the
 reference values are wrong, the attestation still verifies
@@ -825,14 +844,14 @@ same five parties, the same five capabilities, the same one bounded row.
 \begin{table}[h]
 \centering\small
 \caption{The residual trust set \parallax{} computes for $\Sigma_2$, from
-\texttt{parallax solve --format latex}. The rule and the file each supply
-part of this, and it is worth keeping them apart. The
+\texttt{parallax solve --format latex}. The
 \texttt{tee\ub attestation} rule supplies every capability, every impact, and
-\emph{which} row is bounded --- four of the five are $\Never$ because the
+\emph{which} row is bounded --- \SigmaTwoUndetectable{} of the
+\SigmaTwoParties{} are $\Never$ because the
 rule says the endorser, the quoting enclave, the host and the
 reference-value provider have no detection mechanism. The deployment file
-supplies the five identifiers and one number: the collateral refresh
-interval, which is the bound in the one row that has one.}
+supplies the \SigmaTwoParties{} identifiers and one number: the collateral
+refresh interval, which is the bound in the one row that has one.}
 \label{tab:sigma2}
 \input{../results/sigma2-trust-set.tex}
 \end{table}
@@ -1239,8 +1258,9 @@ assumptions is not rewarded.
 
 The claim that hardware attestation leaves nobody to trust is not a small
 overstatement; it is wrong in a way that changes what a conformance claim
-means. Believing one Intel TDX measurement requires accepting five distinct
-parties, and for four of them there is no mechanism anywhere in the system
+means. Believing one Intel TDX measurement requires accepting
+\SigmaTwoParties{} distinct
+parties, and for \SigmaTwoUndetectable{} of them there is no mechanism anywhere in the system
 that would ever report a violation. That is worth writing down, and the way
 to make sure it gets written down is to compute it rather than argue about it.
 

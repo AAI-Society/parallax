@@ -140,6 +140,16 @@ done
 # typist.
 "$BIN" solve examples/sigma2-tdx.toml --format latex > results/sigma2-trust-set.tex
 
+# The same counts as `\newcommand`s, for the paper's *prose* rather than a
+# table. The paper's headline claim -- how many of the five parties behind a
+# TDX measurement have no detection mechanism -- appears in the abstract,
+# Section 1, a caption and the Conclusion, and was typed in all four places
+# and wrong in three of them while three generated tables on the facing pages
+# said otherwise. Reading it from a macro means it cannot be typed wrong
+# again. See `parallax::tex::counts_macros` for what the macro cannot fix.
+"$BIN" solve examples/sigma2-tdx.toml --format latex-counts \
+  --macro-prefix SigmaTwo > results/sigma2-counts.tex
+
 # The candidate-ordering experiment. Run over the four single-mechanism
 # deployments -- the same four the comparison matrix above covers. Sigma_5 is
 # excluded here on purpose: it is a hybrid built to carry a shared dependency,

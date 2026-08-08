@@ -414,7 +414,7 @@ impl Report {
     /// A bare `tabular` of the per-deployment facts. The caption and the
     /// float live in the paper.
     pub fn render_tex_summary(&self) -> String {
-        let mut out = tex::header("parallax tiers --format tex-summary");
+        let mut out = tex::header("parallax tiers --format tex-summary", tex::TABULAR_NOTE);
         out.push_str("\\begin{tabular}{@{}llrrrl@{}}\n\\toprule\n");
         out.push_str(
             "Deployment & Claim & $|T|$ & Principals & Undetectable & Composed $\\Delta$ \\\\\n",
@@ -437,7 +437,7 @@ impl Report {
 
     /// A bare `tabular` of the candidate orderings and their verdicts.
     pub fn render_tex_orderings(&self) -> String {
-        let mut out = tex::header("parallax tiers --format tex-orderings");
+        let mut out = tex::header("parallax tiers --format tex-orderings", tex::TABULAR_NOTE);
         out.push_str(
             "\\begin{tabular}{@{}l>{\\raggedright\\arraybackslash}p{4.7cm}\
              >{\\raggedright\\arraybackslash}p{5.6cm}@{}}\n\\toprule\n",

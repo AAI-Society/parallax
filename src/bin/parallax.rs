@@ -21,9 +21,15 @@ enum Cmd {
         #[arg(long)]
         shared: bool,
         /// Output format: `table` (default), `json` (the Residual Trust
-        /// Manifest), or `latex` (a bare tabular for the paper to `\input`)
+        /// Manifest), `latex` (a bare tabular for the paper to `\input`), or
+        /// `latex-counts` (`\newcommand`s carrying this deployment's counts,
+        /// so the paper's prose can state them without typing them)
         #[arg(long, default_value = "table")]
         format: String,
+        /// Macro name prefix for `--format latex-counts`, e.g. `SigmaTwo`.
+        /// Letters only: a LaTeX control word is a run of letters.
+        #[arg(long)]
+        macro_prefix: Option<String>,
     },
     /// Report how two deployments' trust sets relate under inclusion
     Compare { a: PathBuf, b: PathBuf },
@@ -133,6 +139,7 @@ fn run() -> Result<ExitCode> {
             file,
             shared,
             format,
+            macro_prefix,
         } => {
             // `--format json --shared` has no honest answer today: the
             // Residual Trust Manifest's `$schema` is a pinned external URL
@@ -161,6 +168,14 @@ fn run() -> Result<ExitCode> {
                 anyhow::bail!(
                     "`--format {format}` does not carry `--shared`: {why}. Use \
                      `--format table --shared` to see them, or drop `--shared`."
+                );
+            }
+            if macro_prefix.is_some() && format != "latex-counts" {
+                anyhow::bail!(
+                    "`--macro-prefix` only means something with `--format \
+                     latex-counts`; passing it alongside `--format {format}` is \
+                     almost certainly a mistyped format, and silently ignoring it \
+                     would print a plausible answer to a question you did not ask."
                 );
             }
             let d = Deployment::load(&file)?;
@@ -216,9 +231,26 @@ fn run() -> Result<ExitCode> {
                 "latex" => {
                     print!("{}", parallax::tex::trust_set_tabular(&t));
                 }
+                "latex-counts" => {
+                    // Required rather than defaulted: the prefix becomes the
+                    // name of a macro the paper calls, so guessing one would
+                    // produce a file whose macros nothing invokes and a
+                    // paper build that fails somewhere else entirely.
+                    let prefix = macro_prefix.as_deref().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "`--format latex-counts` needs `--macro-prefix <NAME>`: the \
+                             prefix names the macros the paper calls (e.g. \
+                             `--macro-prefix SigmaTwo` defines `\\SigmaTwoUndetectable`), \
+                             and there is no sensible default for a name another \
+                             document has to know."
+                        )
+                    })?;
+                    print!("{}", parallax::tex::counts_macros(prefix, &t)?);
+                }
                 other => {
                     anyhow::bail!(
-                        "unknown --format `{other}`; expected `table`, `json` or `latex`"
+                        "unknown --format `{other}`; expected `table`, `json`, `latex` \
+                         or `latex-counts`"
                     );
                 }
             }

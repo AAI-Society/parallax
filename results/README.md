@@ -42,6 +42,13 @@ Do not hand-edit.
   deployments the comparison matrix covers; Σ₅ is a hybrid built to carry a
   shared dependency rather than a fifth design competing for a rung, and
   appears in `deployment-summary.tex` only.
+- `sigma2-counts.tex` — Σ₂'s counts as LaTeX `\newcommand`s spelled out in
+  English (`\SigmaTwoUndetectable` → `four`), from `parallax solve --format
+  latex-counts --macro-prefix SigmaTwo`. Not a table body: the paper
+  `\input`s it in the preamble so its *prose* can state the headline count
+  without typing it. Generating tables stops a table drifting from the code
+  and does nothing about the sentence beside it, which is how the paper came
+  to claim three undetectable parties while three generated tables said four.
 - `policy-checks.txt`, `policy-checks.tex` — each manifest against
   `examples/policy-strict.toml` (`parallax check`), and how many
   assumptions that policy objects to.
