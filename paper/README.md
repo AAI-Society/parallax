@@ -58,6 +58,7 @@ claim has a tripwire test:
 | Typed claim | Where | Pinned by |
 | --- | --- | --- |
 | Four of Σ₂'s five parties are undetectable | abstract, §1, §5.1, §8 | **not typed at all** — `\SigmaTwoUndetectable`; plus `the_headline_count_is_never_typed_into_the_paper` (`tests/acceptance.rs`) and `the_tdx_headline_count_is_four` (`src/tex.rs`) |
+| Mechanism counts, and that one-per-mechanism *inverts* the ranking | §6 | **not typed at all** — `\SigmaNMechanisms`; plus the same acceptance guard and `one_assumption_per_mechanism_would_invert_the_cardinality_ranking` (`src/tiers.rs`) |
 | Σ₂ has five rows, four `∞`, one bounded | §5.1, Table 3 caption | `the_tdx_trust_set_renders_five_rows_with_one_bound` (`src/tex.rs`) |
 | Eight of twelve ordered pairs N/A; two unordered comparisons, both incomparable | §5.2, Table 4 caption | `the_comparison_matrix_rests_on_exactly_two_unordered_comparisons` (`tests/acceptance.rs`) |
 | Principals < \|T\| only for Σ₅ | §5.4, Table 5 caption | `only_the_hybrid_names_fewer_principals_than_it_has_assumptions` (`src/tiers.rs`) |
@@ -83,16 +84,24 @@ The generated files those sections read:
 | `deployment-summary.tex` | Table 5, §5.4 | `parallax tiers --format tex-summary` |
 | `policy-checks.tex` | Table 6, §5.4 | `parallax check`, per manifest |
 | `tier-orderings.tex` | Table 7, §6 | `parallax tiers --format tex-orderings` |
-| `sigma2-counts.tex` | the *prose* of the abstract, §1, §5.1 and §8 | `parallax solve --format latex-counts` |
+| `sigma{1..5}-counts.tex` | the *prose* of the abstract, §1, §5.1, §6 and §8 | `parallax solve --format latex-counts` |
 
-`sigma2-counts.tex` is the odd one out and the most important one. It is not
-a table body — it is `\newcommand`s, `\input` from the preamble, carrying
-Σ₂'s counts spelled as English words (`\SigmaTwoUndetectable` → `four`).
+The `-counts.tex` files are the odd ones out and the most important. They are
+not table bodies — they are `\newcommand`s, `\input` from the preamble,
+carrying each deployment's counts spelled as English words
+(`\SigmaTwoUndetectable` → `four`, `\SigmaOneMechanisms` → `three`).
 Generating tables stops a *table* drifting from the code; it does nothing
-about the sentence beside the table stating the same number in words, which
-is how the abstract, §1 and the conclusion came to claim three undetectable
-parties while three generated tables on the facing pages said four. The
-prose now calls the macro and the number cannot be typed.
+about the sentence beside the table stating the same number in words. That
+has now gone wrong twice: the abstract, §1 and the conclusion claimed three
+undetectable parties while three generated tables on the facing pages said
+four; and §6, in the paragraph written to concede what the paper cannot
+claim, said Σ₁ declares the fewest mechanisms when it declares the most.
+
+Two families of count are therefore generated — trust-set counts and
+mechanism counts — and the prose calls a macro for both. Available:
+`\SigmaNAssumptions`, `\SigmaNParties`, `\SigmaNUndetectable`,
+`\SigmaNBounded`, `\SigmaNMechanisms`, for N in One..Five. **If you write a
+sentence stating a count about a deployment, use one.**
 
 Numbers *outside* Sections 5 and 6 — deployment parameters quoted in
 Section 1, the code size, the size of the termination example — are prose,
@@ -179,11 +188,16 @@ to pass.
    (f) §6 says which of its four failures look structural and which are
    contingent on the four deployments we happened to write; and (g) the
    headline count — four of Σ₂'s five parties undetectable — is read from
-   `\SigmaTwoUndetectable`, never typed. It said "three" for months while
-   the artifact said four, which is the fourth time a prose claim has
-   contradicted the artifact; if a future edit types the number back in, two
-   tests fail. If any of these stops being stated, the paper is
+   `\SigmaTwoUndetectable`, never typed; and (h) §6 concedes that under a
+   one-assumption-per-mechanism convention the cardinality ranking *inverts*
+   (Σ₂ first, Σ₁ and Σ₃ joint last), not merely that it loses its shape, and
+   says which part of "ranks the systems backwards" survives the objection
+   and which does not. If any of these stops being stated, the paper is
    overclaiming.
+
+   Statements (g) and (h) are there because prose contradicted the artifact
+   five times over this paper's life. Both families of count are now
+   generated; see the tripwire table above.
 5. **Counts audit.** Three counts in the prose are checkable against the
    repository and will rot: the line count in Section 1, the deployment count
    in Section 5, and the fourteen rows of Table 2 (which the tripwire test

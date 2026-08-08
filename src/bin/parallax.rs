@@ -245,7 +245,7 @@ fn run() -> Result<ExitCode> {
                              document has to know."
                         )
                     })?;
-                    print!("{}", parallax::tex::counts_macros(prefix, &t)?);
+                    print!("{}", parallax::tex::counts_macros(prefix, &d, &t)?);
                 }
                 other => {
                     anyhow::bail!(

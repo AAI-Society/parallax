@@ -13,6 +13,7 @@
 //! claim. So the counts the prose states are generated too, as
 //! `\newcommand`s the prose calls, and cannot be typed at all.
 
+use crate::deployment::Deployment;
 use crate::latency::Latency;
 use crate::trust::TrustSet;
 
@@ -152,7 +153,7 @@ pub fn number_word(n: usize) -> String {
 /// name. If the count changes, the macro silently updates the number and
 /// leaves the list of names wrong. `tex::tests::the_tdx_headline_count_is_four`
 /// exists to make that change fail loudly rather than pass quietly.
-pub fn counts_macros(prefix: &str, t: &TrustSet) -> Result<String, BadMacroPrefix> {
+pub fn counts_macros(prefix: &str, d: &Deployment, t: &TrustSet) -> Result<String, BadMacroPrefix> {
     if prefix.is_empty() || !prefix.chars().all(|c| c.is_ascii_alphabetic()) {
         return Err(BadMacroPrefix {
             prefix: prefix.to_string(),
@@ -168,15 +169,22 @@ pub fn counts_macros(prefix: &str, t: &TrustSet) -> Result<String, BadMacroPrefi
         ("Parties", t.principals().len()),
         ("Undetectable", undetectable),
         ("Bounded", t.len() - undetectable),
+        // Declared `[[mechanism]]` blocks, not distinct mechanism *kinds*.
+        // Section 6 discusses a hypothetical one-assumption-per-mechanism
+        // convention and needs a number for it; two readings of "how many
+        // mechanisms" would give two different rankings, so the tool commits
+        // to one and the prose says which. This count was typed into the
+        // paper once and was wrong, which is why it is here.
+        ("Mechanisms", d.mechanism.len()),
     ] {
         out.push_str(&format!(
             "\\newcommand{{\\{prefix}{suffix}}}{{{}}}\n",
             number_word(value)
         ));
     }
-    out.push_str("% Not every macro above is used today. They are the four counts a\n");
-    out.push_str("% sentence about a trust set tends to want, and defining an unused\n");
-    out.push_str("% one costs nothing next to typing a used one by hand.\n");
+    out.push_str("% Not every macro above is used today. They are the counts a sentence\n");
+    out.push_str("% about a deployment tends to reach for, and defining an unused one\n");
+    out.push_str("% costs nothing next to typing a used one by hand.\n");
     Ok(out)
 }
 
@@ -389,7 +397,7 @@ mod tests {
     fn the_counts_macros_spell_the_headline_numbers_as_words() {
         let d = Deployment::load(Path::new("examples/sigma2-tdx.toml")).unwrap();
         let t = solve(&d).unwrap();
-        let tex = counts_macros("SigmaTwo", &t).unwrap();
+        let tex = counts_macros("SigmaTwo", &d, &t).unwrap();
 
         assert!(
             tex.contains("\\newcommand{\\SigmaTwoParties}{five}"),
@@ -406,6 +414,10 @@ mod tests {
         assert!(
             tex.contains("\\newcommand{\\SigmaTwoAssumptions}{five}"),
             "{tex}"
+        );
+        assert!(
+            tex.contains("\\newcommand{\\SigmaTwoMechanisms}{one}"),
+            "sigma2 declares a single tee_attestation stanza:\n{tex}"
         );
         assert!(
             !tex.contains("{4}") && !tex.contains("{5}"),
@@ -427,14 +439,15 @@ mod tests {
     /// than here.
     #[test]
     fn a_prefix_that_cannot_name_a_macro_is_refused() {
+        let d = Deployment::load(Path::new("examples/sigma2-tdx.toml")).unwrap();
         let t = TrustSet::default();
         for bad in ["", "sigma2", "Sigma_Two", "Sigma-Two", "2Sigma"] {
             assert!(
-                counts_macros(bad, &t).is_err(),
+                counts_macros(bad, &d, &t).is_err(),
                 "`{bad}` must not reach a \\newcommand"
             );
         }
-        assert!(counts_macros("SigmaTwo", &t).is_ok());
+        assert!(counts_macros("SigmaTwo", &d, &t).is_ok());
     }
 
     #[test]

@@ -20,7 +20,7 @@ done
 # third column instead of failing loudly — see `require_same_claim` in
 # `src/bin/parallax.rs`). Rather than silently truncating the matrix or
 # aligning the examples' claims (which would erase the point of having two
-# different claims across the four single-mechanism deployments), each
+# different claims across the four non-hybrid deployments), each
 # mismatched pair gets an explicit "N/A" row naming why it was skipped, so
 # the matrix stays complete and the omission is legible on its face.
 #
@@ -70,6 +70,17 @@ require_claim() {
 # renames whatever it appears in; `%` opens a comment, so it eats the rest
 # of the row including the `&` separators and the `\\` terminator, and the
 # table quietly loses a column or a line.
+# Result goes in TEX_ESCAPED rather than on stdout, and every call site is a
+# bare statement rather than `$(tex_escape ...)`. That is load-bearing, not
+# style. A command substitution runs in a subshell, so the `exit 1` below
+# killed only the subshell: the guard printed, the substitution yielded the
+# empty string, and the loop wrote a corrupt `\texttt{}` row and carried on.
+# It aborted a few rows later only because the loop is symmetric and
+# eventually hit the guard in the last substitution of an assignment -- a
+# loud failure by accident, after emitting partial corrupt output. Returned
+# through a variable, the `exit` runs in the shell `set -e` governs, and the
+# first bad value stops the script before it writes anything.
+TEX_ESCAPED=""
 tex_escape() {
   case "$1" in
     *[\\{}\$\&\#^%~]*)
@@ -81,7 +92,7 @@ tex_escape() {
       echo "  \`parallax::tex::escape\` rather than widening this case." >&2
       exit 1 ;;
   esac
-  printf '%s' "$1" | sed 's/_/\\_/g'
+  TEX_ESCAPED="$(printf '%s' "$1" | sed 's/_/\\_/g')"
 }
 
 : > results/comparison-matrix.txt
@@ -113,15 +124,19 @@ for a in sigma1-software sigma2-tdx sigma3-quorum sigma4-zk; do
     require_claim "$b" "$claim_b"
     if [ "$claim_a" != "$claim_b" ]; then
       result="N/A (different claims: $claim_a vs $claim_b)"
-      cell="N/A --- different claims (\\texttt{$(tex_escape "$claim_a")} vs \\texttt{$(tex_escape "$claim_b")})"
+      tex_escape "$claim_a"; esc_claim_a="$TEX_ESCAPED"
+      tex_escape "$claim_b"; esc_claim_b="$TEX_ESCAPED"
+      cell="N/A --- different claims (\\texttt{$esc_claim_a} vs \\texttt{$esc_claim_b})"
     else
       result="$("$BIN" compare "examples/$a.toml" "examples/$b.toml" | head -1)"
-      cell="$(tex_escape "$result")"
+      tex_escape "$result"; cell="$TEX_ESCAPED"
     fi
     printf '%-18s %-18s %s\n' "$a" "$b" "$result" \
       >> results/comparison-matrix.txt
+    tex_escape "$a"; esc_a="$TEX_ESCAPED"
+    tex_escape "$b"; esc_b="$TEX_ESCAPED"
     printf '\\texttt{%s} & \\texttt{%s} & %s \\\\\n' \
-      "$(tex_escape "$a")" "$(tex_escape "$b")" "$cell" \
+      "$esc_a" "$esc_b" "$cell" \
       >> results/comparison-matrix.tex
   done
 done
@@ -147,10 +162,24 @@ done
 # and wrong in three of them while three generated tables on the facing pages
 # said otherwise. Reading it from a macro means it cannot be typed wrong
 # again. See `parallax::tex::counts_macros` for what the macro cannot fix.
-"$BIN" solve examples/sigma2-tdx.toml --format latex-counts \
-  --macro-prefix SigmaTwo > results/sigma2-counts.tex
+# One file per deployment, `\input` from the paper's preamble. Two families
+# of count have now been typed into the prose and been wrong -- how many of
+# Sigma_2's parties are undetectable, and how many mechanisms Sigma_1
+# declares -- and both were contradicted by files in this directory. These
+# are the counts a sentence about a deployment reaches for, so the prose
+# reaches for a macro instead.
+i=0
+for s in sigma1-software sigma2-tdx sigma3-quorum sigma4-zk sigma5-hybrid; do
+  i=$((i + 1))
+  case "$i" in
+    1) word=One ;; 2) word=Two ;; 3) word=Three ;; 4) word=Four ;; 5) word=Five ;;
+    *) echo "regen-results.sh: no macro-prefix word for deployment $i" >&2; exit 1 ;;
+  esac
+  "$BIN" solve "examples/$s.toml" --format latex-counts \
+    --macro-prefix "Sigma$word" > "results/sigma$i-counts.tex"
+done
 
-# The candidate-ordering experiment. Run over the four single-mechanism
+# The candidate-ordering experiment. Run over the four non-hybrid
 # deployments -- the same four the comparison matrix above covers. Sigma_5 is
 # excluded here on purpose: it is a hybrid built to carry a shared dependency,
 # not a fifth design competing for a rung, and the matrix does not rank it
@@ -209,8 +238,9 @@ for s in sigma1-software sigma2-tdx sigma3-quorum sigma4-zk sigma5-hybrid; do
   esac
   printf '%-34s %-22s %s violation(s)\n' "$s" "$verdict" "$n" \
     >> results/policy-checks.txt
+  tex_escape "$s"; esc_s="$TEX_ESCAPED"
   printf '\\texttt{%s} & %s & %s \\\\\n' \
-    "$(tex_escape "$s")" "$verdict" "$n" >> results/policy-checks.tex
+    "$esc_s" "$verdict" "$n" >> results/policy-checks.tex
 done
 
 {

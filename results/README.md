@@ -12,7 +12,7 @@ Do not hand-edit.
   `parallax::manifest`) for each canonical example, `parallax solve
   --format json`.
 - `comparison-matrix.txt` — every ordered pair among the four
-  single-mechanism examples (sigma1–sigma4) under `parallax compare`. Pairs
+  non-hybrid examples (sigma1–sigma4) under `parallax compare`. Pairs
   that attest different claims are marked `N/A`, not silently skipped:
   `parallax compare` refuses to rank verifiability across two different
   propositions (exit code 2), so there is no meaningful relation to report
@@ -42,13 +42,16 @@ Do not hand-edit.
   deployments the comparison matrix covers; Σ₅ is a hybrid built to carry a
   shared dependency rather than a fifth design competing for a rung, and
   appears in `deployment-summary.tex` only.
-- `sigma2-counts.tex` — Σ₂'s counts as LaTeX `\newcommand`s spelled out in
-  English (`\SigmaTwoUndetectable` → `four`), from `parallax solve --format
-  latex-counts --macro-prefix SigmaTwo`. Not a table body: the paper
-  `\input`s it in the preamble so its *prose* can state the headline count
-  without typing it. Generating tables stops a table drifting from the code
-  and does nothing about the sentence beside it, which is how the paper came
-  to claim three undetectable parties while three generated tables said four.
+- `sigma{1,2,3,4,5}-counts.tex` — each deployment's counts as LaTeX
+  `\newcommand`s spelled out in English (`\SigmaTwoUndetectable` → `four`,
+  `\SigmaOneMechanisms` → `three`), from `parallax solve --format
+  latex-counts --macro-prefix SigmaN`. Not table bodies: the paper `\input`s
+  them in its preamble so its *prose* can state a count without typing it.
+  Generating tables stops a table drifting from the code and does nothing
+  about the sentence beside it — which is how the paper came to claim three
+  undetectable parties while three generated tables said four, and to claim
+  the software-only host declares the fewest mechanisms when it declares the
+  most.
 - `policy-checks.txt`, `policy-checks.tex` — each manifest against
   `examples/policy-strict.toml` (`parallax check`), and how many
   assumptions that policy objects to.

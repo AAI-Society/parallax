@@ -1187,35 +1187,58 @@ fn the_headline_count_is_never_typed_into_the_paper() {
         .collect::<Vec<_>>()
         .join("\n");
 
-    // Each anchor is the text immediately *after* the count. The macro call
-    // must be what precedes it.
-    let anchors = [
-        " of the \\SigmaTwoParties{} have no detection",
-        " of those\n\\SigmaTwoParties{}, there is no detection",
-        " of the\n\\SigmaTwoParties{} are $\\Never$",
-        " of them there is no mechanism anywhere",
+    // Each entry is (text immediately *after* the count, the macro call that
+    // must precede it). Two families are covered: how many of Sigma_2's
+    // parties are undetectable, and how many mechanisms a deployment
+    // declares. Both were typed into the prose and both were wrong.
+    let sites: [(&str, &str); 7] = [
+        (
+            " of the \\SigmaTwoParties{} have no detection",
+            "\\SigmaTwoUndetectable{}",
+        ),
+        (
+            " of those\n\\SigmaTwoParties{}, there is no detection",
+            "\\SigmaTwoUndetectable{}",
+        ),
+        (
+            " of the\n\\SigmaTwoParties{} are $\\Never$",
+            "\\SigmaTwoUndetectable{}",
+        ),
+        (
+            " of them there is no mechanism anywhere",
+            "\\SigmaTwoUndetectable{}",
+        ),
+        // Section 6's concession, which claimed the opposite of the truth
+        // until the numbers were generated.
+        (" mechanism, $\\Sigma_4$ declares", "\\SigmaTwoMechanisms{}"),
+        (
+            ",\nand $\\Sigma_1$ and $\\Sigma_3$ declare",
+            "\\SigmaFourMechanisms{}",
+        ),
+        (" apiece.", "\\SigmaOneMechanisms{}"),
     ];
-    const MACRO: &str = "\\SigmaTwoUndetectable{}";
 
-    for anchor in anchors {
+    for (anchor, expected) in sites {
+        let macro_call = expected;
         let at = tex.find(anchor).unwrap_or_else(|| {
             panic!(
                 "the sentence ending `{anchor}` is gone from paper/main.tex.\n\
                  If it was deliberately reworded, check the count still comes \
-                 from {MACRO} and update this anchor. If the macro call was \
-                 replaced by a typed word, put the macro back — that is the \
-                 defect this test exists for."
+                 from {macro_call} and update this anchor. If the macro call \
+                 was replaced by a typed word, put the macro back — that is \
+                 the defect this test exists for."
             )
         });
         let before = &tex[..at];
         assert!(
-            before.ends_with(MACRO),
+            before.ends_with(macro_call),
             "the count before `{anchor}` is typed, not generated.\n\
              It ends with: {:?}\n\
-             It must end with {MACRO}, whose value comes from solving \
-             examples/sigma2-tdx.toml. A typed count here is how the paper \
-             came to claim three undetectable parties when the artifact said \
-             four.",
+             It must end with {macro_call}, whose value is generated from the \
+             deployment files. A typed count here is how the paper came to \
+             claim three undetectable parties when the artifact said four, \
+             and to claim the software-only host declares the fewest \
+             mechanisms when it declares the most.",
             &before[before.len().saturating_sub(40)..]
         );
     }
@@ -1227,7 +1250,7 @@ fn the_headline_count_is_never_typed_into_the_paper() {
         assert!(
             !tex.contains(word),
             "`{word}` is still in paper/main.tex; the count is {} and comes \
-             from {MACRO}",
+             from \\SigmaTwoUndetectable{{}}",
             parallax::tex::number_word(4)
         );
     }

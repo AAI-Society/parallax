@@ -56,20 +56,29 @@
 
 % Counts the prose states, generated from the artifact rather than typed.
 %
-% Every other generated file here is a table body. This one is
-% `\newcommand`s, because generating tables only stops a *table* drifting
-% from the code -- it does nothing about the sentence beside the table
-% stating the same number in words. That is exactly what went wrong: the
-% abstract, Section 1 and the Conclusion all said three of the five parties
-% behind a TDX measurement are undetectable, while three generated tables on
-% the facing pages said four. The count is now read from
-% \SigmaTwoUndetectable and cannot be typed wrong.
+% Every other generated file here is a table body. These are `\newcommand`s,
+% because generating tables only stops a *table* drifting from the code -- it
+% does nothing about the sentence beside the table stating the same number in
+% words. Twice now that is exactly what went wrong. The abstract, Section 1
+% and the Conclusion all said three of the five parties behind a TDX
+% measurement are undetectable, while three generated tables on the facing
+% pages said four. And Section 6, in the paragraph written to concede what
+% the paper is not entitled to claim, said Sigma_1 declares the fewest
+% mechanisms when it declares the most. Both families of count now come from
+% macros and cannot be typed wrong.
 %
-% What it does not fix: Section 1 also names those parties one by one. If the
-% count ever changes, this macro updates the number and leaves the list of
-% names stale, so `the_tdx_headline_count_is_four` in src/tex.rs fails on any
-% such change to force a human to look.
+% What this does not fix: Section 1 also names the undetectable parties one
+% by one. If the count changed, the macro would update the number and leave
+% the list of names stale, so `the_tdx_headline_count_is_four` in src/tex.rs
+% fails on any such change to force a human to look. Likewise
+% `one_assumption_per_mechanism_would_invert_the_cardinality_ranking` in
+% src/tiers.rs pins the *shape* of Section 6's concession, which no macro
+% covers.
+\input{../results/sigma1-counts.tex}
 \input{../results/sigma2-counts.tex}
+\input{../results/sigma3-counts.tex}
+\input{../results/sigma4-counts.tex}
+\input{../results/sigma5-counts.tex}
 
 % Placeholders, visible in the PDF while \ifdraft is true.
 %
@@ -181,7 +190,8 @@ lattice and needs no tabling. Of the deployments we encoded, the two pairs
 that attest the same proposition and can therefore be compared at all come
 out \emph{incomparable} under set inclusion rather than merely different,
 which would mean no ordinal tier ladder can rank them. We then run each of the
-four proposed ways of ordering deployments by verifiability against those same
+four ways we can think of to order deployments by verifiability --- our own
+list, not a survey --- against those same
 encodings. All four fail, and each fails differently: ordering by the size of
 the trust set ranks a bare software host above a witness quorum, which inverts
 the word. We are explicit about the
@@ -329,8 +339,8 @@ five encoded deployments.
 are honest, with any violation detectable within $\Delta$. Composition is
 join in two lattices --- union on trust sets, max on detection latencies.
 \item \textbf{The tool} (Section~\ref{sec:formal}, Section~\ref{sec:eval}).
-\parallax{}, about 1\,600 lines of Rust excluding tests and about as much
-again in tests, reads a deployment as TOML and
+\parallax{}, about 1\,800 lines of Rust excluding tests and roughly twice
+that again in tests, reads a deployment as TOML and
 emits the residual trust set, a machine-readable manifest, a comparison
 between two deployments, a shared-dependency analysis, and a policy check.
 \item \textbf{Termination, the easy way} (Section~\ref{sec:termination}). The
@@ -348,7 +358,7 @@ in depth. Of the encoded deployments, the two pairs that can be compared at
 all --- comparison requires both sides to attest the same proposition ---
 come out \emph{incomparable}.
 \item \textbf{Whether the ladder can be repaired} (Section~\ref{sec:tiers}).
-Four candidate orderings, run against the four single-mechanism
+Four candidate orderings, run against the four non-hybrid
 deployments. All four fail,
 each in its own way: counting assumptions ranks the systems backwards, set
 inclusion ranks almost nothing, composed detection latency is $\Never$ for
@@ -624,9 +634,23 @@ calculus it visibly is not.
 
 \emph{\texttt{witness\_quorum} names every witness, not $k$ of them.} The
 capability is \texttt{non\_collusion\_$k$\_of\_$n$} and it is attributed to
-each of the $n$. That is the honest encoding of a threshold rule --- the
-assumption is about the set, not about any individual --- and it is also
-where Section~\ref{sec:open}'s principal-independence problem bites hardest.
+each of the $n$. Two things are going on there and they are worth separating,
+because Section~\ref{sec:tiers} turns on the difference.
+
+Naming all $n$ is not the arguable part. Drop any witness from the set and
+the threshold changes, so every one of them is load-bearing for the claim,
+and a trust set that listed only $k$ of them would have to say which $k$ ---
+which the deployment cannot know in advance. All $n$ belong.
+
+The \emph{count} is arguable. What a threshold rule asks a verifier to
+accept is one proposition, about the set: that no $k$ of these $n$ collude.
+Our assumption tuple is keyed by a principal, so it has no way to say ``one
+assumption, about this set of $n$.'' A set-valued assumption has nowhere to
+live except unrolled across its members, and so $|T|$ charges a quorum $n$
+times for something a verifier accepts once. That is a limitation of the
+representation rather than a claim about the world, we do not have a fix for
+it, and Section~\ref{sec:tiers} shows what it costs. It is also where
+Section~\ref{sec:open}'s principal-independence problem bites hardest.
 
 \subsection{Delegation, and why it is a fixpoint}
 
@@ -1112,10 +1136,11 @@ open, including how an unfamiliar manifest gets evaluated at all.
 The experiment is a computation over four trust sets the tool derived from
 four files we authored, and it cannot show that no ordering exists. It shows
 that these four candidates fail on these four deployments. Two of the four
-failures look structural rather than accidental --- cardinality will rank
-backwards on any deployment where being checkable costs principals, and
-collusion cost is absent from the input no matter what the input is --- and
-we would expect those two to reproduce anywhere. The other two are contingent
+failures look structural rather than accidental --- cardinality charges a
+deployment for every party it names, and collusion cost is absent from the
+input no matter what the input is --- and
+we would expect those two to reproduce anywhere. The first comes with a
+caveat about our encoding that we set out below. The other two are contingent
 on the evidence. Set inclusion is empty here because these four trust sets
 happen to be pairwise disjoint or claim-mismatched; a fifth deployment
 somebody else wrote could produce a genuine subset pair. Composed $\Delta$ is
@@ -1123,24 +1148,50 @@ constant here because no design we encoded eliminates its last silent
 assumption; a design that did would separate immediately. Neither of those
 experiments has been run.
 
-One of the two we called structural needs a caveat of its own, because it is
-the first thing a referee should push on. Cardinality puts $\Sigma_3$ last
-only because \texttt{witness\ub quorum} attributes
-\texttt{non\ub collusion\ub $k$\ub of\ub $n$} to each of the $n$ witnesses
-rather than once to the mechanism. Under a one-assumption-per-mechanism
-convention, $\Sigma_3$'s seven witness assumptions collapse to one and it
-stops sitting at the bottom. $\Sigma_1$ on top survives either
-way --- it has the fewest mechanisms as well as the fewest assumptions ---
-but ``backwards'' does not. So the claim that being checkable costs
-principals is, in part, a claim about our encoding convention.
-Section~\ref{sec:formal} argues for that convention on its own terms: the
-assumption a threshold rule makes really is about each of the $n$, not about
-some anonymous $k$ of them, and naming $k$ parties would mean naming parties
-the deployment cannot identify in advance. We still think it is the honest
-encoding. But it is an encoding decision, and a reader who rejects it should
-read ``cardinality ranks the systems backwards'' as ``cardinality ranks the
-systems backwards under the encoding of Section~\ref{sec:formal}'' --- which
-is weaker, and which is what we are entitled to say.
+One of the two we called structural needs a caveat of its own, and it is the
+first thing a referee should push on.
+
+Cardinality puts $\Sigma_3$ last only because \texttt{witness\ub quorum}
+attributes \texttt{non\ub collusion\ub $k$\ub of\ub $n$} to each of the $n$
+witnesses rather than once to the mechanism. Suppose you reject that and
+count one assumption per declared mechanism instead. The ranking does not
+merely lose its shape; it turns over. $\Sigma_2$ declares
+\SigmaTwoMechanisms{} mechanism, $\Sigma_4$ declares \SigmaFourMechanisms{},
+and $\Sigma_1$ and $\Sigma_3$ declare \SigmaOneMechanisms{} apiece. The
+hardware-attested deployment comes first and the software-only host ties the
+witness quorum for last --- which is the opposite of the paragraph above, not
+a tie-break away from it.
+
+We had this wrong in an earlier draft, in this paragraph, which is the
+paragraph about what we are not entitled to claim. It said $\Sigma_1$ has the
+fewest mechanisms as well as the fewest assumptions. It has the most. The
+numbers above now come from the deployment files rather than from us.
+
+There is a narrower objection that does leave $\Sigma_1$ on top: collapse
+only the quorum's $n$ non-collusion assumptions and leave every other rule
+alone. But nothing in ``one assumption per mechanism'' singles that reading
+out, and we should not get to pick the version of the objection that
+flatters us.
+
+So how much of ``cardinality ranks the systems backwards'' survives? The part
+that does not depend on the convention is about \emph{principals} rather than
+assumptions. Every one of $\Sigma_3$'s witnesses is load-bearing on any
+reading --- drop one and the threshold changes --- so the principals column
+of Table~\ref{tab:summary} is not an encoding artifact, and it ranks
+$\Sigma_3$ last too. What \emph{is} an artifact is the assumption count:
+Section~\ref{sec:formal} explains that our tuple is keyed by a principal and
+therefore cannot express one assumption about a set of $n$, so a threshold
+gets charged $n$ times for a proposition a verifier accepts once.
+
+That leaves us saying less than we would like, and we would rather say the
+smaller true thing. Cardinality ranks a deployment worse for naming more
+parties, and being checkable by strangers generally means naming more
+parties; we think that much holds anywhere. Whether it ranks these four
+particular deployments backwards depends on a decomposition we chose, and a
+reader who chooses differently gets a different --- and, under the obvious
+alternative, an even less defensible --- answer. Neither reading rescues the
+ladder, which is the section's point, but only one of them is ours to
+assert.
 
 % ================================================================
 \section{What We Still Don't Know}

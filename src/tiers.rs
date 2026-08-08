@@ -58,6 +58,11 @@ pub struct Encoded {
     pub undetectable: usize,
     /// The composed `Δ`: the join over `T`, i.e. the worst member.
     pub system_latency: Latency,
+    /// Declared `[[mechanism]]` blocks. Not part of any ordering the tool
+    /// implements — it is here because Section 6 discusses what cardinality
+    /// would do under a one-assumption-per-mechanism convention, and that
+    /// discussion needs a number the paper is not allowed to type.
+    pub mechanisms: usize,
     pub trust: TrustSet,
 }
 
@@ -70,6 +75,7 @@ impl Encoded {
             principals: t.principals().len(),
             undetectable: t.0.iter().filter(|a| a.latency == Latency::Never).count(),
             system_latency: t.system_latency(),
+            mechanisms: d.mechanism.len(),
             trust: t.clone(),
         }
     }
@@ -479,7 +485,7 @@ mod tests {
         Encoded::new(&d, &t)
     }
 
-    /// The four single-mechanism deployments, in the order the paper names
+    /// The four non-hybrid deployments, in the order the paper names
     /// them. This is the set the experiment runs over.
     fn four() -> Vec<Encoded> {
         [
@@ -694,6 +700,66 @@ mod tests {
                 e.principals
             );
         }
+    }
+
+    /// Section 6 concedes what cardinality does under a
+    /// one-assumption-per-mechanism convention, and the paper got this
+    /// wrong: it claimed Σ₁ "has the fewest mechanisms as well as the
+    /// fewest assumptions", when Σ₁ declares the *most* and Σ₂ the fewest.
+    /// The concession therefore has to go further than it did — under that
+    /// convention the ranking does not merely lose its ordering, it
+    /// inverts, with the hardware-attested deployment first and the
+    /// software-only host tied for last.
+    ///
+    /// The prose reads these numbers from `\SigmaNMechanisms` macros so it
+    /// cannot restate them wrongly. This pins the *shape* of the claim,
+    /// which no macro covers.
+    #[test]
+    fn one_assumption_per_mechanism_would_invert_the_cardinality_ranking() {
+        let r = report(four()).unwrap();
+        let by_mechanism: Vec<(&str, usize)> = r
+            .deployments
+            .iter()
+            .map(|e| (e.name.as_str(), e.mechanisms))
+            .collect();
+        assert_eq!(
+            by_mechanism,
+            vec![
+                ("sigma1-software", 3),
+                ("sigma2-tdx", 1),
+                ("sigma3-quorum", 3),
+                ("sigma4-zk", 2),
+            ]
+        );
+
+        let rungs = rank_by(
+            &r.deployments,
+            |e| e.mechanisms,
+            |e| e.mechanisms.to_string(),
+        );
+        assert_eq!(
+            rungs.first().unwrap().names,
+            vec!["sigma2-tdx"],
+            "counting mechanisms puts the TDX deployment first, not last"
+        );
+        assert_eq!(
+            rungs.last().unwrap().names,
+            vec!["sigma1-software", "sigma3-quorum"],
+            "and ties the software-only host with the witness quorum for last"
+        );
+
+        // The two conventions disagree at both ends, which is the whole
+        // reason Section 6 has to concede rather than tie-break.
+        let by_assumptions = candidate(&r, "cardinality").ranking.clone().unwrap();
+        assert_eq!(
+            by_assumptions.first().unwrap().names,
+            vec!["sigma1-software"]
+        );
+        assert_ne!(
+            by_assumptions.first().unwrap().names,
+            rungs.first().unwrap().names,
+            "the conventions must disagree about who is most verifiable"
+        );
     }
 
     /// The ranking must be a fact about the deployments, not about the order
