@@ -20,6 +20,8 @@ pub enum DeploymentError {
     UnknownPrincipal { context: String, id: String },
     #[error("witness quorum needs 1 <= k <= n, got k={k} n={n}")]
     BadQuorum { k: usize, n: usize },
+    #[error("`{id}` delegates to itself, which adds no trust")]
+    SelfDelegation { id: String },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -163,6 +165,9 @@ impl Deployment {
                     });
                 }
             }
+            if d.sub == d.sup {
+                return Err(DeploymentError::SelfDelegation { id: d.sub.clone() });
+            }
         }
         for (i, m) in self.mechanism.iter().enumerate() {
             for id in m.named_principals() {
@@ -295,6 +300,17 @@ signer = "did:web:typo"
         let d: Deployment = toml::from_str(src).unwrap();
         let err = d.validate().unwrap_err();
         assert!(format!("{err}").contains("did:web:typo"));
+    }
+
+    #[test]
+    fn validate_rejects_a_self_delegation() {
+        let src = format!(
+            "{TDX}\n[[delegation]]\nsub = \"did:web:intel.com\"\nsup = \"did:web:intel.com\"\n"
+        );
+        let d: Deployment = toml::from_str(&src).unwrap();
+        let err = d.validate().unwrap_err();
+        assert!(matches!(err, DeploymentError::SelfDelegation { .. }));
+        assert!(format!("{err}").contains("did:web:intel.com"));
     }
 
     #[test]

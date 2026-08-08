@@ -21,7 +21,11 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("error: {e:#}");
+            // Not `{e:#}`: our error types already interpolate their own
+            // source into `Display` (see `DeploymentError::Io`,
+            // `SolveError::Latency`), so anyhow's alternate formatter would
+            // print the same cause a second time via the source chain.
+            eprintln!("error: {e}");
             ExitCode::from(2)
         }
     }

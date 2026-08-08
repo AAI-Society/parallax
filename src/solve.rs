@@ -36,8 +36,10 @@ ascent! {
         load_bearing(claim, p),
         held_by(claim, p, t);
 
-    // A principal that is load-bearing only through delegation still carries
-    // one assumption of its own: that its delegation is honest and unrevoked.
+    // Every delegate carries one assumption of its own: that its delegation
+    // is honest and unrevoked. This fires unconditionally for any `sub` that
+    // speaks for a load-bearing `sup`, whether or not `sub` also has
+    // mechanisms of its own.
     residual(claim.clone(), TrustSet::singleton(Assumption {
         principal: sub.clone(),
         capability: "delegation_integrity".to_string(),
@@ -139,6 +141,53 @@ sup = "a"
         assert!(
             ps.contains("a") && ps.contains("b") && ps.contains("c"),
             "the cycle makes all three load-bearing, got {ps:?}"
+        );
+    }
+
+    #[test]
+    fn transitive_delegation_reaches_the_far_end_of_an_acyclic_chain() {
+        // A cycle is symmetric under edge reversal, and depth-1 delegation is
+        // already covered by the `delegation_integrity` rule alone, so
+        // neither discriminates the direction of the transitive rule. Only
+        // an acyclic chain of depth >= 2 does: only `a` has a mechanism, and
+        // `d` reaches it through three hops (`b -> a -> ... -> d -> cc`).
+        // With the rule inverted, `load_bearing` never reaches past `b`, and
+        // only 2 principals show up instead of 4.
+        let d = load(
+            r#"
+name = "chain"
+claim = "c"
+[[principal]]
+id = "a"
+role = "R"
+[[principal]]
+id = "b"
+role = "R"
+[[principal]]
+id = "cc"
+role = "R"
+[[principal]]
+id = "d"
+role = "R"
+[[mechanism]]
+kind = "signing"
+signer = "a"
+[[delegation]]
+sub = "b"
+sup = "a"
+[[delegation]]
+sub = "cc"
+sup = "b"
+[[delegation]]
+sub = "d"
+sup = "cc"
+"#,
+        );
+        let t = solve(&d).unwrap();
+        let ps = t.principals();
+        assert!(
+            ps.contains("a") && ps.contains("b") && ps.contains("cc") && ps.contains("d"),
+            "delegation must propagate the full three-hop chain, got {ps:?}"
         );
     }
 
