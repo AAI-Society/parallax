@@ -14,7 +14,12 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Compute the residual trust set of a deployment
-    Solve { file: PathBuf },
+    Solve {
+        file: PathBuf,
+        /// Report principals that more than one mechanism depends on
+        #[arg(long)]
+        shared: bool,
+    },
     /// Report how two deployments' trust sets relate under inclusion
     Compare { a: PathBuf, b: PathBuf },
     /// Show assumptions present in one deployment but not the other
@@ -55,7 +60,7 @@ fn require_same_claim(a: &Deployment, b: &Deployment) -> Result<()> {
 fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Solve { file } => {
+        Cmd::Solve { file, shared } => {
             let d = Deployment::load(&file)?;
             let t = parallax::solve::solve(&d)?;
             println!(
@@ -77,6 +82,20 @@ fn run() -> Result<ExitCode> {
                 t.len(),
                 t.principals().len()
             );
+            if shared {
+                let sd = parallax::shared::shared_dependencies(&t);
+                if sd.is_empty() {
+                    println!("\nNo principal spans more than one mechanism.");
+                } else {
+                    println!("\nSHARED DEPENDENCIES — layers that are not independent:");
+                    for s in &sd {
+                        println!("  {} appears in {}", s.principal, s.mechanisms.join(", "));
+                        for c in &s.capabilities {
+                            println!("      {c}");
+                        }
+                    }
+                }
+            }
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Compare { a, b } => {

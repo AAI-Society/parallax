@@ -1,0 +1,47 @@
+# A layered design: a hardware TEE for execution integrity, plus a
+# zero-knowledge proof of the state transition. Marketed as defence in depth.
+name = "sigma5-hybrid"
+claim = "execution_valid"
+
+[[principal]]
+id = "did:web:intel.com"
+role = "SiliconManufacturer"
+
+[[principal]]
+id = "did:web:pcs.intel.com"
+role = "CertificationAuthority"
+
+[[principal]]
+id = "urn:qe:tdx"
+role = "QuotingEnclave"
+
+[[principal]]
+id = "did:web:cloud.example.com"
+role = "CloudOperator"
+
+[[principal]]
+id = "did:web:buildco.example"
+role = "BuildPipeline"
+
+[[principal]]
+id = "did:web:ceremony.example"
+role = "CeremonyParticipants"
+
+[[principal]]
+id = "did:web:auditor.example"
+role = "CircuitAuditor"
+
+[[mechanism]]
+kind = "tee_attestation"
+endorser = "did:web:intel.com"
+quoting_enclave = "urn:qe:tdx"
+collateral_authority = "did:web:pcs.intel.com"
+collateral_refresh = "12h"
+reference_values = "did:web:buildco.example"
+host = "did:web:cloud.example.com"
+
+[[mechanism]]
+kind = "zk_proof"
+ceremony = "did:web:ceremony.example"
+compiler = "did:web:buildco.example"
+auditor = "did:web:auditor.example"

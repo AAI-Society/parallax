@@ -1,5 +1,6 @@
 use parallax::compare::{compare, diff, Relation};
 use parallax::deployment::Deployment;
+use parallax::shared::shared_dependencies;
 use parallax::solve::solve;
 use parallax::Latency;
 use std::collections::BTreeSet;
@@ -282,4 +283,17 @@ fn compare_cli_reports_incomparable_for_tdx_and_zk() {
     assert_eq!(out.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Incomparable"), "got: {stdout}");
+}
+
+/// Acceptance test 3: the non-obvious result. The hybrid deployment's TEE and
+/// ZK layers are sold as independent, but both depend on one build pipeline.
+/// The tool must find this from the description alone.
+#[test]
+fn the_hybrid_deployments_two_layers_share_a_build_pipeline() {
+    let d = Deployment::load(Path::new("examples/sigma5-hybrid.toml")).unwrap();
+    let t = solve(&d).unwrap();
+    let shared = shared_dependencies(&t);
+    assert_eq!(shared.len(), 1, "exactly one shared principal");
+    assert_eq!(shared[0].principal, "did:web:buildco.example");
+    assert_eq!(shared[0].mechanisms.len(), 2, "spans both layers");
 }
