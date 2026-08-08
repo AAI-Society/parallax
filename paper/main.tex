@@ -508,11 +508,15 @@ parsed as durations; \texttt{never} is accepted and means $\Never$.
 \begin{table}[h]
 \centering\footnotesize
 \caption{The composition rules, as implemented in \texttt{src/mechanism.rs}.
-For thirteen of these fourteen rows, $\Never$ means the declaration cannot
-express a bound at all: it is a property of the mechanism, not a default a
-deployment can override. The exception is \texttt{anchoring}'s settlement
-assumption, where $\Never$ \emph{is} an overridable default, applied when a
-settlement layer is declared without a finality bound.}
+Fourteen rows, and the $\Delta$ column divides them three ways. Ten carry an
+unconditional $\Never$: the declaration cannot express a bound at all, so it
+is a property of the mechanism rather than a default a deployment can
+override. Three carry no $\Never$ at all --- the anchoring interval, the
+gossip propagation delay and the \texttt{tee\ub attestation} collateral
+refresh are declared durations, and a deployment must supply one. The
+remaining row, \texttt{anchoring}'s settlement assumption, is the only one
+where $\Never$ \emph{is} an overridable default, applied when a settlement
+layer is declared without a finality bound.}
 \label{tab:rules}
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}p{2.4cm}>{\raggedright\arraybackslash}p{5.0cm}>{\raggedright\arraybackslash}p{3.0cm}p{2.3cm}@{}}
@@ -652,6 +656,34 @@ reordering compare \textsc{Equal} with an empty diff, one asserting that tags
 are a stable multiset under reordering, and one asserting that an
 \texttt{a}, \texttt{b}, \texttt{a} sequence assigns the second \texttt{a}
 ordinal 1 by content rather than 2 by position.
+
+Removing positional sensitivity did not remove \emph{lexical} sensitivity,
+and we found the second one the same way we found the first. Canonical
+rendering initially emitted each duration field as the text the author had
+typed, so \texttt{12h} and \texttt{720m} --- the same 43\,200 seconds, the
+same $\Delta$ in every derived assumption --- produced different tags, and a
+deployment was once again incomparable to a rewrite of itself. The same held
+for \texttt{never} against \texttt{Never}, since the duration parser is
+case-insensitive and the renderer was not. Duration fields are now rendered
+from the \emph{parsed} value rather than the source text, which makes the
+rendering fallible and is the right trade: an unparseable duration is an
+error, not a mechanism whose identity is its own typo. We record this
+because the general lesson is not ``do not index by position'' but the
+weaker and more useful one: any part of a declaration that reaches a tag
+must reach it through the normalising function that defines what that part
+\emph{means}, or the tag encodes spelling instead of content.
+
+Two further constructions in this area are refused rather than
+interpreted. A deployment declaring no mechanisms at all solves to the empty
+trust set, which takes $\Delta = \mathrm{Bounded}(0)$ and sits below every
+other trust set under inclusion --- so a two-line file would be reported as
+the most verifiable system in any comparison it entered. And two
+byte-identical mechanism stanzas would, under the ordinal rule above, be
+tagged distinctly and then read by the shared-dependency analysis as two
+independent layers, which two identical declarations never are. Both are
+rejected at validation. Neither is a case where a defensible answer exists
+and the tool merely picks the wrong one; in both, answering at all is the
+error.
 
 The canonical rendering is unambiguous only because principal identifiers
 cannot contain the grammar's delimiters. That is enforced once, when a

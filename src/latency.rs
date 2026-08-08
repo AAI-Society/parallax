@@ -30,6 +30,23 @@ impl Latency {
                 input: s.to_string(),
             })
     }
+
+    /// The one canonical rendering of a parsed latency: `never`, or a whole
+    /// number of seconds. Defined once, here, because it is not merely a
+    /// display convenience — `mechanism::canonical` renders duration fields
+    /// through it, so this string participates in mechanism identity and
+    /// therefore in whether two deployments compare `Equal`. `parse` is
+    /// many-to-one (`12h`, `720m` and `43200s` all mean the same thing, and
+    /// `never`/`Never`/`NEVER` all mean `Never`); this is the inverse that
+    /// picks one spelling, so the same meaning always renders the same way.
+    /// `shared.rs` and the CLI print the same labels for the same reason:
+    /// one spelling of a latency everywhere the tool speaks.
+    pub fn label(&self) -> String {
+        match self {
+            Latency::Never => "never".to_string(),
+            Latency::Bounded(s) => format!("{s}s"),
+        }
+    }
 }
 
 impl Lattice for Latency {
@@ -124,5 +141,24 @@ mod tests {
     #[test]
     fn rejects_garbage_without_panicking() {
         assert!(Latency::parse("soon").is_err());
+    }
+
+    /// `parse` is many-to-one, so `label` must collapse every spelling of a
+    /// value onto one string. `mechanism::canonical` renders duration
+    /// fields through this pair, which is what makes two deployments
+    /// differing only in duration spelling compare `Equal`; if this
+    /// property broke, that would come back as a false `Incomparable`.
+    #[test]
+    fn label_is_the_same_for_every_spelling_of_the_same_duration() {
+        for spelling in ["12h", "720m", "43200s", "43200 seconds"] {
+            assert_eq!(
+                Latency::parse(spelling).unwrap().label(),
+                "43200s",
+                "`{spelling}` must normalise like every other spelling of 12h"
+            );
+        }
+        for spelling in ["never", "Never", "NEVER"] {
+            assert_eq!(Latency::parse(spelling).unwrap().label(), "never");
+        }
     }
 }

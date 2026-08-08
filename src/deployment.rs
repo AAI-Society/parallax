@@ -1,5 +1,7 @@
+use crate::latency::LatencyError;
+use crate::mechanism::{canonical, kind_of};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 #[derive(Debug, thiserror::Error)]
@@ -24,6 +26,33 @@ pub enum DeploymentError {
     SelfDelegation { id: String },
     #[error("principal id `{id}` contains `{ch}`, which is reserved")]
     ReservedCharacter { id: String, ch: char },
+    /// Two `[[mechanism]]` stanzas with identical canonical content. See
+    /// `validate`'s comment for why this is refused rather than tolerated.
+    #[error(
+        "mechanisms #{first} and #{second} are the same declaration \
+         (`{kind}`, identical in every field); a repeated stanza is a \
+         copy-paste error, not two independent layers — delete one, or \
+         change a parameter if they are genuinely different"
+    )]
+    DuplicateMechanism {
+        first: usize,
+        second: usize,
+        kind: String,
+    },
+    /// A deployment with no `[[mechanism]]` at all. See `validate`.
+    #[error(
+        "`{name}` declares no mechanisms, so it supports no claim: its \
+         residual trust set would be empty, which reads as \
+         `perfectly verifiable` and compares as a subset of every other \
+         deployment. Declare at least one mechanism."
+    )]
+    NoMechanisms { name: String },
+    /// A duration field that `mechanism::canonical` could not parse.
+    /// Surfaced at validation because canonical mechanism identity is
+    /// computed there, so an unparseable duration is caught at load rather
+    /// than at solve.
+    #[error("bad duration: {0}")]
+    BadDuration(#[from] LatencyError),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -193,6 +222,22 @@ impl Deployment {
                 return Err(DeploymentError::SelfDelegation { id: d.sub.clone() });
             }
         }
+        // A deployment with no mechanisms solves to the empty trust set,
+        // and the empty set is not a neutral answer: `system_latency` gives
+        // it `Bounded(0)` (nothing to detect), it is a subset of every
+        // other trust set, and its manifest satisfies every policy. So a
+        // two-line file naming nothing at all reads as "perfectly
+        // verifiable" and wins every comparison it is entered into — a
+        // confident, plausible, wrong answer of exactly the kind this tool
+        // exists to avoid producing. A deployment that declares no
+        // mechanism supports no claim, so refuse it here rather than
+        // ranking it first.
+        if self.mechanism.is_empty() {
+            return Err(DeploymentError::NoMechanisms {
+                name: self.name.clone(),
+            });
+        }
+
         for (i, m) in self.mechanism.iter().enumerate() {
             for id in m.named_principals() {
                 if !declared.contains(id) {
@@ -210,6 +255,36 @@ impl Deployment {
                     });
                 }
             }
+        }
+
+        // Two byte-identical `[[mechanism]]` stanzas are refused rather
+        // than tolerated. `mechanism_tags` gives repeated identical
+        // declarations distinct `#n` ordinals (so nothing silently
+        // collapses), and `shared_dependencies` treats a distinct tag as a
+        // distinct layer (so nothing silently merges). Each rule is right
+        // on its own; composed, they assert that two identical declarations
+        // are two independent layers — which they never are. A duplicated
+        // stanza made every principal in it report as a shared dependency
+        // across two "layers" whose tags differed only in `#0` vs `#1`, and
+        // inflated the trust set enough that the file compared a strict
+        // superset of itself.
+        //
+        // Refusing at validation is the loud option, and the right one: a
+        // repeated stanza is a copy-paste error, not a design. Keying the
+        // layer map on ordinal-stripped content would instead make the tool
+        // quietly do something sensible with a file its author did not mean
+        // to write.
+        let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+        for (i, m) in self.mechanism.iter().enumerate() {
+            let c = canonical(m)?;
+            if let Some(first) = seen.get(&c) {
+                return Err(DeploymentError::DuplicateMechanism {
+                    first: *first,
+                    second: i,
+                    kind: kind_of(&c).to_string(),
+                });
+            }
+            seen.insert(c, i);
         }
         Ok(())
     }
@@ -353,7 +428,16 @@ witnesses = ["did:web:a"]
 k = 0
 "#;
         let d: Deployment = toml::from_str(src).unwrap();
-        assert!(d.validate().is_err());
+        // Matched on the variant, not merely `is_err()`: `validate` has
+        // seven ways to fail and several of them would fire on a
+        // near-miss fixture, so a bare `is_err()` passes whether or not the
+        // quorum check runs at all. Task 11 found this test's sibling in
+        // `tests/robustness.rs` passing for exactly that wrong reason.
+        let err = d.validate().unwrap_err();
+        assert!(
+            matches!(err, DeploymentError::BadQuorum { k: 0, n: 1 }),
+            "expected BadQuorum{{k:0,n:1}}, got {err:?}"
+        );
     }
 
     #[test]
@@ -377,5 +461,130 @@ role = "R"
             DeploymentError::ReservedCharacter { ref id, ch } if id == "did:web:a,b" && ch == ','
         ));
         assert!(format!("{err}").contains("did:web:a,b"));
+    }
+
+    /// CRITICAL regression: appending a byte-identical copy of a
+    /// `[[mechanism]]` stanza used to double the trust set, report every
+    /// principal in it as a shared dependency across two "layers" whose
+    /// 200-character tags differed only in `#0` vs `#1`, and make the file
+    /// compare a strict `Superset` of itself. See `validate`'s comment for
+    /// why this is refused rather than quietly deduplicated.
+    #[test]
+    fn validate_rejects_a_duplicated_mechanism() {
+        let src = format!(
+            "{TDX}\n[[mechanism]]\nkind = \"tee_attestation\"\n\
+             endorser = \"did:web:intel.com\"\n\
+             quoting_enclave = \"urn:qe:tdx\"\n\
+             collateral_authority = \"did:web:pcs.intel.com\"\n\
+             collateral_refresh = \"12h\"\n\
+             reference_values = \"did:web:rvp.example.org\"\n\
+             host = \"did:web:cloud.example.com\"\n"
+        );
+        let d: Deployment = toml::from_str(&src).unwrap();
+        let err = d.validate().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                DeploymentError::DuplicateMechanism { first: 0, second: 1, ref kind }
+                    if kind == "tee_attestation"
+            ),
+            "expected DuplicateMechanism, got {err:?}"
+        );
+    }
+
+    /// The duplicate check runs on *canonical* content, so it also catches
+    /// a copy whose fields were reordered or whose durations were respelled
+    /// — the two axes `canonical` normalises away. A `is_err()`-only check
+    /// would not distinguish this from the fields simply not matching.
+    #[test]
+    fn validate_rejects_a_duplicated_mechanism_respelled() {
+        let src = format!(
+            "{TDX}\n[[mechanism]]\nkind = \"tee_attestation\"\n\
+             host = \"did:web:cloud.example.com\"\n\
+             reference_values = \"did:web:rvp.example.org\"\n\
+             collateral_refresh = \"720m\"\n\
+             collateral_authority = \"did:web:pcs.intel.com\"\n\
+             quoting_enclave = \"urn:qe:tdx\"\n\
+             endorser = \"did:web:intel.com\"\n"
+        );
+        let d: Deployment = toml::from_str(&src).unwrap();
+        assert!(
+            matches!(
+                d.validate().unwrap_err(),
+                DeploymentError::DuplicateMechanism { .. }
+            ),
+            "720m is 12h and field order is not identity: this is the same stanza twice"
+        );
+    }
+
+    /// Two mechanisms of the same kind that genuinely differ must still be
+    /// accepted — the duplicate check keys on full canonical content, not
+    /// on the mechanism kind.
+    #[test]
+    fn validate_accepts_two_distinct_mechanisms_of_the_same_kind() {
+        let src = r#"
+name = "two-signers"
+claim = "c"
+
+[[principal]]
+id = "did:web:a"
+role = "R"
+
+[[principal]]
+id = "did:web:b"
+role = "R"
+
+[[mechanism]]
+kind = "signing"
+signer = "did:web:a"
+
+[[mechanism]]
+kind = "signing"
+signer = "did:web:b"
+"#;
+        let d: Deployment = toml::from_str(src).unwrap();
+        assert!(d.validate().is_ok(), "{:?}", d.validate());
+    }
+
+    /// A deployment with no mechanisms solves to the empty set, which
+    /// `system_latency` scores `Bounded(0)` and set inclusion ranks below
+    /// everything. Left to stand, a two-line file would be reported as the
+    /// most verifiable deployment in any comparison it entered. See
+    /// `validate`'s comment.
+    #[test]
+    fn validate_rejects_a_deployment_with_no_mechanisms() {
+        let d: Deployment = toml::from_str("name = \"empty\"\nclaim = \"c\"\n").unwrap();
+        let err = d.validate().unwrap_err();
+        assert!(
+            matches!(err, DeploymentError::NoMechanisms { ref name } if name == "empty"),
+            "expected NoMechanisms, got {err:?}"
+        );
+    }
+
+    /// An unparseable duration now fails at validation, because canonical
+    /// mechanism identity is computed there. Failing at load rather than at
+    /// solve is strictly earlier and no less loud.
+    #[test]
+    fn validate_rejects_an_unparseable_duration() {
+        let src = r#"
+name = "bad-duration"
+claim = "c"
+
+[[principal]]
+id = "did:web:log"
+role = "R"
+
+[[mechanism]]
+kind = "anchoring"
+log_operator = "did:web:log"
+interval = "eventually"
+"#;
+        let d: Deployment = toml::from_str(src).unwrap();
+        let err = d.validate().unwrap_err();
+        assert!(
+            matches!(err, DeploymentError::BadDuration(_)),
+            "expected BadDuration, got {err:?}"
+        );
+        assert!(format!("{err}").contains("eventually"));
     }
 }

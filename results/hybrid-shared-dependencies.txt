@@ -13,7 +13,7 @@ urn:qe:tdx                         quote_signing_honesty                  never 
 SHARED DEPENDENCIES — layers that are not independent:
   did:web:buildco.example
     tee_attestation
-      tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=12h,reference_values=did:web:buildco.example,host=did:web:cloud.example.com)#0
+      tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=43200s,reference_values=did:web:buildco.example,host=did:web:cloud.example.com)#0
         golden_value_correctness (never)
     zk_proof
       zk_proof(ceremony=did:web:ceremony.example,compiler=did:web:buildco.example,auditor=did:web:auditor.example)#0

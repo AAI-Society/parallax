@@ -1,8 +1,7 @@
 use crate::deployment::Deployment;
-use crate::latency::Latency;
+use crate::mechanism::kind_of;
 use crate::solve::DELEGATION_TAG_PREFIX;
 use crate::trust::TrustSet;
-use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A principal that more than one mechanism-layer depends on — either by
@@ -13,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// TEE with zero-knowledge proofs is described as defence in depth, but if the
 /// same build pipeline produces both the measured reference values and the
 /// circuit constraints, one compromise corrupts both layers at once.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct SharedDependency {
     pub principal: String,
     /// One entry per mechanism layer this principal is load-bearing in.
@@ -21,7 +20,7 @@ pub struct SharedDependency {
 }
 
 /// One mechanism layer a shared principal is load-bearing in.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct Layer {
     /// The full canonical mechanism tag, e.g. `tee_attestation(...)#0`.
     pub mechanism: String,
@@ -37,17 +36,6 @@ pub struct Layer {
     /// delegates to a principal the mechanism names directly, not because
     /// the mechanism names this principal itself.
     pub via_delegation: bool,
-}
-
-fn kind_of(tag: &str) -> String {
-    tag.split('(').next().unwrap_or(tag).to_string()
-}
-
-fn latency_label(l: &Latency) -> String {
-    match l {
-        Latency::Never => "never".to_string(),
-        Latency::Bounded(s) => format!("{s}s"),
-    }
 }
 
 /// Every principal a mechanism names directly, indexed by mechanism tag,
@@ -71,7 +59,7 @@ fn direct_membership(t: &TrustSet) -> BTreeMap<String, BTreeMap<String, BTreeSet
             .or_default()
             .entry(a.mechanism.clone())
             .or_default()
-            .insert(format!("{} ({})", a.capability, latency_label(&a.latency)));
+            .insert(format!("{} ({})", a.capability, a.latency.label()));
     }
     out
 }
@@ -154,7 +142,7 @@ pub fn shared_dependencies(d: &Deployment, t: &TrustSet) -> Vec<SharedDependency
                 let entry = layers
                     .entry(tag.clone())
                     .or_insert_with(|| LayerAccumulator {
-                        kind: kind_of(tag),
+                        kind: kind_of(tag).to_string(),
                         capabilities: BTreeSet::new(),
                         via_delegation: false,
                     });
@@ -183,7 +171,7 @@ pub fn shared_dependencies(d: &Deployment, t: &TrustSet) -> Vec<SharedDependency
                     let entry = layers
                         .entry(tag.clone())
                         .or_insert_with(|| LayerAccumulator {
-                            kind: kind_of(tag),
+                            kind: kind_of(tag).to_string(),
                             capabilities: BTreeSet::new(),
                             via_delegation: true,
                         });
@@ -219,6 +207,7 @@ pub fn shared_dependencies(d: &Deployment, t: &TrustSet) -> Vec<SharedDependency
 mod tests {
     use super::*;
     use crate::deployment::{Delegation, MechanismSpec};
+    use crate::latency::Latency;
     use crate::mechanism::{assumptions, mechanism_tags};
     use crate::trust::{Assumption, Impact, TrustSet};
     use ascent::Lattice;
@@ -519,7 +508,7 @@ mod tests {
                 auditor: "a".into(),
             },
         ];
-        for tag in mechanism_tags(&specs) {
+        for tag in mechanism_tags(&specs).unwrap() {
             assert!(
                 !tag.starts_with(DELEGATION_TAG_PREFIX),
                 "mechanism tag `{tag}` collides with the delegation-tag prefix; \
@@ -550,7 +539,7 @@ mod tests {
             finality: None,
         };
         let specs = [fast, slow];
-        let tags = mechanism_tags(&specs);
+        let tags = mechanism_tags(&specs).unwrap();
         assert_ne!(
             tags[0], tags[1],
             "differing interval must yield distinct tags"

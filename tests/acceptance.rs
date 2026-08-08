@@ -689,3 +689,314 @@ sup = "intel"
         "expected an actionable follow-up command naming `intel`, got: {stdout}"
     );
 }
+
+/// CRITICAL regression from the final whole-branch review: mechanism tags
+/// rendered duration fields as raw source text, so a deployment compared
+/// `Incomparable` to a semantically identical rewrite of itself. `12h` and
+/// `720m` are the same 43200-second bound and produce byte-identical
+/// `detection_latency` values in the manifest, but they used to produce
+/// different mechanism tags, hence different assumption tuples, hence two
+/// trust sets neither of which contained the other.
+///
+/// This is the same defect as the positional-tag bug the paper describes at
+/// `sec:orderindep` — a deployment incomparable to a rewrite of itself —
+/// along a different axis. It falsifies that section's "order-independent
+/// by construction" claim and it breaks the independent-encoding experiment
+/// the README and the paper both prescribe: two authors who spell the same
+/// bound in different units would diverge on every single row.
+#[test]
+fn a_deployment_is_equal_to_a_rewrite_that_only_respells_its_durations() {
+    let original = std::fs::read_to_string("examples/sigma2-tdx.toml").unwrap();
+    assert!(
+        original.contains("collateral_refresh = \"12h\""),
+        "fixture drift: this test respells sigma2's 12h collateral refresh"
+    );
+    let respelled = original.replace(
+        "collateral_refresh = \"12h\"",
+        "collateral_refresh = \"720m\"",
+    );
+    let path = write_temp("respelled-durations.toml", &respelled);
+
+    let a = Deployment::load(Path::new("examples/sigma2-tdx.toml")).unwrap();
+    let b = Deployment::load(&path).unwrap();
+    let ta = solve(&a).unwrap();
+    let tb = solve(&b).unwrap();
+
+    assert_eq!(
+        compare(&ta, &tb),
+        Relation::Equal,
+        "720m is 12h; respelling a duration must not change the trust set"
+    );
+    let (only_a, only_b) = diff(&ta, &tb);
+    assert!(
+        only_a.is_empty() && only_b.is_empty(),
+        "expected an empty diff, got -{only_a:?} +{only_b:?}"
+    );
+
+    // And through the CLI, which is what the repro and CI actually run.
+    let cmp = bin()
+        .args([
+            "compare",
+            "examples/sigma2-tdx.toml",
+            path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&cmp.stdout).contains("Equal"));
+    let dif = bin()
+        .args(["diff", "examples/sigma2-tdx.toml", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(
+        dif.status.code(),
+        Some(0),
+        "diff must exit 0: {}",
+        String::from_utf8_lossy(&dif.stdout)
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+/// The companion negative pin, and the one that stops the fix above from
+/// being "normalise everything to the same tag": `15m` and `1h` are a real
+/// difference in the detection window, and must still be reported. The unit
+/// test `shared::tests::two_anchoring_mechanisms_differing_only_by_interval_are_reported`
+/// covers the same property at the shared-dependency layer.
+#[test]
+fn a_genuinely_different_duration_still_diverges() {
+    let original = std::fs::read_to_string("examples/sigma2-tdx.toml").unwrap();
+    let changed = original.replace(
+        "collateral_refresh = \"12h\"",
+        "collateral_refresh = \"24h\"",
+    );
+    let path = write_temp("changed-durations.toml", &changed);
+    let a = Deployment::load(Path::new("examples/sigma2-tdx.toml")).unwrap();
+    let b = Deployment::load(&path).unwrap();
+    assert_ne!(
+        compare(&solve(&a).unwrap(), &solve(&b).unwrap()),
+        Relation::Equal,
+        "24h is not 12h and must not be normalised into it"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+/// IMPORTANT regression: `parallax diff` printed only principal and
+/// capability, so a real change to a declared duration rendered as five
+/// identical `-` lines above five identical `+` lines — the reader could
+/// see that something diverged but not what. This is the CI-facing command
+/// whose output *is* the independent-encoding experiment's evidence, so it
+/// must carry the semantic content: detection latency, impact, and which
+/// mechanism layer moved.
+#[test]
+fn diff_output_shows_what_actually_changed() {
+    let original = std::fs::read_to_string("examples/sigma2-tdx.toml").unwrap();
+    let changed = original.replace(
+        "collateral_refresh = \"12h\"",
+        "collateral_refresh = \"24h\"",
+    );
+    let path = write_temp("diff-detail.toml", &changed);
+    let out = bin()
+        .args(["diff", "examples/sigma2-tdx.toml", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    // The collateral authority's detection window is the thing that
+    // actually changed: 12h on the left, 24h on the right.
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l.starts_with('-') && l.contains("43200s")),
+        "the removed side must show the old 12h bound, got:\n{stdout}"
+    );
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l.starts_with('+') && l.contains("86400s")),
+        "the added side must show the new 24h bound, got:\n{stdout}"
+    );
+    // Impact and mechanism kind are present too, so a row that changed
+    // neither latency nor principal still says which layer it belongs to.
+    assert!(stdout.contains("Revocation"), "got:\n{stdout}");
+    assert!(stdout.contains("tee_attestation"), "got:\n{stdout}");
+}
+
+/// CRITICAL regression: a policy whose only content is a misspelled key
+/// deserialised to the maximally permissive default, so `check` printed
+/// `OK` and exited 0 against a manifest with four undetectable principals.
+/// The C10.3 gate failed open on a one-character typo. It must now exit 2
+/// (bad input) and name the key.
+#[test]
+fn check_refuses_a_policy_with_a_misspelled_key_instead_of_passing_it() {
+    let manifest_path = write_temp("typo-policy-manifest.json", &tdx_manifest_json());
+    let policy_path = write_temp("typo-policy.toml", "forbid_undetectible = true\n");
+    let out = bin()
+        .args([
+            "check",
+            manifest_path.to_str().unwrap(),
+            "--policy",
+            policy_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&manifest_path);
+    let _ = std::fs::remove_file(&policy_path);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a typo'd policy key must be an error, not a silent pass"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("OK"),
+        "the gate must not report OK on a policy it could not parse, got: {stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("forbid_undetectible"),
+        "the error must name the misspelled key, got: {stderr}"
+    );
+}
+
+/// IMPORTANT regression: `$schema` was never read on the way in, so a
+/// manifest declaring a schema this build does not implement got a
+/// confident verdict rather than a refusal.
+#[test]
+fn check_refuses_a_manifest_declaring_an_unknown_schema() {
+    let doctored =
+        tdx_manifest_json().replace(parallax::manifest::SCHEMA, "https://example.org/v99.json");
+    assert!(doctored.contains("example.org/v99.json"), "fixture drift");
+    let manifest_path = write_temp("foreign-schema.json", &doctored);
+    let out = bin()
+        .args([
+            "check",
+            manifest_path.to_str().unwrap(),
+            "--policy",
+            "examples/policy-strict.toml",
+        ])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&manifest_path);
+    assert_eq!(out.status.code(), Some(2), "unknown schema is bad input");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("$schema"), "got: {stderr}");
+    assert!(stderr.contains("example.org/v99.json"), "got: {stderr}");
+}
+
+/// IMPORTANT regression: `introduced_by_kind` is parallax's own additive
+/// extension, but it was required on deserialise, so `check` rejected any
+/// manifest written by someone following the published schema — and
+/// checking other people's manifests is the entire point of C10.3.
+#[test]
+fn check_accepts_a_manifest_that_omits_parallaxs_own_extension_field() {
+    let mut v: serde_json::Value = serde_json::from_str(&tdx_manifest_json()).unwrap();
+    for e in v["residual_trust_set"].as_array_mut().unwrap() {
+        assert!(
+            e.as_object_mut()
+                .unwrap()
+                .remove("introduced_by_kind")
+                .is_some(),
+            "fixture drift: the extension field should have been there to remove"
+        );
+    }
+    let manifest_path = write_temp(
+        "no-kind-extension.json",
+        &serde_json::to_string_pretty(&v).unwrap(),
+    );
+    let policy_path = write_temp("no-kind-extension-policy.toml", "");
+    let out = bin()
+        .args([
+            "check",
+            manifest_path.to_str().unwrap(),
+            "--policy",
+            policy_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&manifest_path);
+    let _ = std::fs::remove_file(&policy_path);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a schema-conformant manifest must check, got stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// CRITICAL regression: appending a byte-identical copy of a
+/// `[[mechanism]]` stanza used to double the trust set (10 assumptions,
+/// 5 principals), report all five principals under SHARED DEPENDENCIES with
+/// two "layers" whose tags differed only in `#0` vs `#1`, and make the file
+/// compare a strict `Superset` of itself. A duplicated stanza is a
+/// copy-paste error, so it is refused at validation.
+#[test]
+fn a_verbatim_duplicated_mechanism_is_refused_not_treated_as_a_second_layer() {
+    let original = std::fs::read_to_string("examples/sigma2-tdx.toml").unwrap();
+    let block = original
+        .split("[[mechanism]]")
+        .nth(1)
+        .expect("sigma2 declares a mechanism");
+    let duplicated = format!("{original}\n[[mechanism]]{block}");
+    let path = write_temp("duplicated-mechanism.toml", &duplicated);
+
+    let err = Deployment::load(&path).expect_err("a duplicated stanza must not load");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("same declaration") && msg.contains("tee_attestation"),
+        "the error must say which stanzas duplicate, got: {msg}"
+    );
+
+    let out = bin()
+        .args(["solve", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(out.status.code(), Some(2), "and the CLI must exit 2");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("10 assumptions"),
+        "it must not report a doubled trust set, got: {stdout}"
+    );
+}
+
+/// IMPORTANT regression: a deployment with no mechanisms solved to the empty
+/// set, which `system_latency` scores `Bounded(0)` and set inclusion ranks
+/// below everything. A two-line file therefore read as "perfectly
+/// verifiable", compared a `Subset` of a real TDX deployment, and passed
+/// `policy-strict.toml` with `OK`. It supports no claim, so it is refused.
+#[test]
+fn a_deployment_with_no_mechanisms_is_refused_rather_than_ranked_first() {
+    let path = write_temp(
+        "no-mechanisms.toml",
+        "name = \"nothing\"\nclaim = \"execution_valid\"\n",
+    );
+
+    let solve_out = bin()
+        .args(["solve", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(solve_out.status.code(), Some(2), "solve must refuse it");
+    let stderr = String::from_utf8_lossy(&solve_out.stderr);
+    assert!(
+        stderr.contains("no mechanisms") && stderr.contains("supports no claim"),
+        "the error must say why, got: {stderr}"
+    );
+
+    // The comparison is the dangerous part: the empty set wins every
+    // ranking it is entered into. It must not get that far.
+    let cmp = bin()
+        .args([
+            "compare",
+            path.to_str().unwrap(),
+            "examples/sigma2-tdx.toml",
+        ])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(cmp.status.code(), Some(2));
+    assert!(
+        !String::from_utf8_lossy(&cmp.stdout).contains("Subset"),
+        "an empty deployment must never be reported as the more verifiable one"
+    );
+}

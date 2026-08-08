@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use parallax::deployment::Deployment;
+use parallax::mechanism::kind_of;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -47,17 +48,6 @@ enum Cmd {
         #[arg(short, long)]
         principal: String,
     },
-}
-
-/// `tag.split('(').next()` is the same short-label derivation as
-/// `shared.rs`'s and `manifest.rs`'s `kind_of`: mechanism tags are the
-/// canonical `kind(field=value,...)#n` form and can run past 100 characters,
-/// so printing that verbatim as the headline is unreadable. This prints the
-/// short kind label first and the full tag indented underneath, matching how
-/// `solve --shared` already presents mechanism tags — a deliberate deviation
-/// from the brief's literal one-line `"introduced by {mechanism}"` format.
-fn kind_of(tag: &str) -> &str {
-    tag.split('(').next().unwrap_or(tag)
 }
 
 /// Rust's runtime ignores `SIGPIPE` by default (see
@@ -158,13 +148,12 @@ fn run() -> Result<ExitCode> {
                         "PRINCIPAL", "CAPABILITY", "DETECT"
                     );
                     for a in &t.0 {
-                        let lat = match &a.latency {
-                            parallax::Latency::Never => "never".to_string(),
-                            parallax::Latency::Bounded(s) => format!("{s}s"),
-                        };
                         println!(
                             "{:<34} {:<38} {:<12} {:?}",
-                            a.principal, a.capability, lat, a.impact
+                            a.principal,
+                            a.capability,
+                            a.latency.label(),
+                            a.impact
                         );
                     }
                     println!(
@@ -225,11 +214,41 @@ fn run() -> Result<ExitCode> {
             let ta = parallax::solve::solve(&da)?;
             let tb = parallax::solve::solve(&db)?;
             let (only_a, only_b) = parallax::compare::diff(&ta, &tb);
+            // Every field that distinguishes one assumption from another,
+            // not just principal and capability. `diff` is the CI-facing
+            // command whose output *is* the independent-encoding
+            // experiment's evidence, and a change to a single declared
+            // duration moves every assumption of the mechanism that
+            // declared it (the mechanism tag is part of assumption
+            // identity). Printed with two columns, that rendered as five
+            // identical `-` lines above five identical `+` lines, showing
+            // the reader that something diverged while withholding what.
+            // The detection latency and impact are the semantic content;
+            // the mechanism kind says which layer moved. The full
+            // provenance tag is deliberately not printed — it routinely
+            // exceeds 200 characters and would bury the row — so use
+            // `parallax explain` for that.
+            if !only_a.is_empty() || !only_b.is_empty() {
+                println!(
+                    " {:<32} {:<38} {:<12} {:<12} MECHANISM",
+                    "PRINCIPAL", "CAPABILITY", "DETECT", "IMPACT"
+                );
+            }
+            let row = |sign: char, x: &parallax::Assumption| {
+                println!(
+                    "{sign}{:<32} {:<38} {:<12} {:<12} {}",
+                    x.principal,
+                    x.capability,
+                    x.latency.label(),
+                    format!("{:?}", x.impact),
+                    kind_of(&x.mechanism),
+                );
+            };
             for x in &only_a {
-                println!("-{:<32} {}", x.principal, x.capability);
+                row('-', x);
             }
             for x in &only_b {
-                println!("+{:<32} {}", x.principal, x.capability);
+                row('+', x);
             }
             let code = if only_a.is_empty() && only_b.is_empty() {
                 0
@@ -241,6 +260,15 @@ fn run() -> Result<ExitCode> {
         Cmd::Check { manifest, policy } => {
             let m: parallax::manifest::Manifest =
                 serde_json::from_str(&std::fs::read_to_string(&manifest)?)?;
+            // Before any verdict: this build must actually implement the
+            // schema the manifest declares. `$schema` used to be read past
+            // without ever being compared, so a manifest claiming an
+            // unknown schema got a confident `OK` — a policy decision made
+            // against a document whose field meanings the tool was
+            // guessing at. Refusing is the only honest answer, and this
+            // check runs before the policy is even parsed so the failure
+            // cannot be confused with a policy violation (exit 2, not 1).
+            m.check_schema()?;
             let p: parallax::policy::Policy = toml::from_str(&std::fs::read_to_string(&policy)?)?;
             let violations = parallax::policy::evaluate(&p, &m)?;
             if violations.is_empty() {

@@ -81,7 +81,7 @@ ascent! {
 pub fn solve(d: &Deployment) -> Result<TrustSet, SolveError> {
     let mut prog = AscentProgram::default();
 
-    let tags = mechanism_tags(&d.mechanism);
+    let tags = mechanism_tags(&d.mechanism)?;
     for (spec, t) in d.mechanism.iter().zip(tags.iter()) {
         for a in assumptions(spec, t)? {
             let holder = a.principal.clone();
@@ -318,9 +318,23 @@ sup = "sup2"
         assert!(p_assumptions.contains(&"delegation(sup=sup2)"));
     }
 
+    /// `solve` itself is total on a mechanism-free deployment — it returns
+    /// the empty set rather than failing — but that set is a trap: it
+    /// scores `Bounded(0)` and compares below every other trust set. The
+    /// answer is to never let such a deployment reach `solve`, which
+    /// `Deployment::validate` now enforces; this pins both halves so a
+    /// future change cannot quietly drop the guard and leave `solve`'s
+    /// harmless-looking empty return as the tool's answer.
     #[test]
-    fn a_deployment_with_no_mechanisms_has_an_empty_trust_set() {
+    fn a_deployment_with_no_mechanisms_is_rejected_before_it_can_solve() {
         let d = load("name = \"empty\"\nclaim = \"c\"\n");
-        assert!(solve(&d).unwrap().is_empty());
+        assert!(
+            d.validate().is_err(),
+            "a mechanism-free deployment must not get as far as solve"
+        );
+        assert!(
+            solve(&d).unwrap().is_empty(),
+            "and if it somehow did, the empty set is what it would yield"
+        );
     }
 }

@@ -41,11 +41,18 @@ output, and the abstract's artifact note says so. Do not broaden that note.
 
 **Table 2 is hand-maintained**, and is the paper's contract with
 `src/mechanism.rs`. `every_rule_appears_in_the_papers_table` in that file is
-a tripwire: it fails if the set of (mechanism, capability) pairs the code can
-emit stops matching the table's fourteen rows, and a compile-time match guard
-fails if a `MechanismSpec` variant is added. If either fires, update the
-table *and* its caption (which counts the rows and names the one row where
-`never` is an overridable default) in the same commit.
+a tripwire: it fails if the set of (mechanism, capability, Δ, impact)
+4-tuples the code can emit stops matching the table's fourteen rows, and a
+compile-time match guard fails if a `MechanismSpec` variant is added. All
+four of the table's columns are pinned — an earlier version compared only
+mechanism and capability, which left the Δ and impact columns free to drift
+from the code with the whole suite green. The test also checks the two
+counts the caption asks a reader to believe: ten rows carry an
+unconditional `never`, four carry a declared duration. The caption's
+remaining claim — that `anchoring`'s settlement assumption is the one row
+where `never` is an overridable *default* — is pinned separately by
+`anchoring_settlement_without_finality_defaults_to_never`. If any of these
+fires, update the table *and* its caption in the same commit.
 
 ## Build
 
@@ -81,9 +88,16 @@ to pass.
    in the missing fields. Check the rest too — a bibliography assembled at
    draft time is not a verified one.
 3. **Numbers refresh.** Run `./scripts/regen-results.sh` from the repository
-   root and rebuild. Then `grep -c '\\placeholder' main.tex` — every hit is
+   root and rebuild. Then `grep -c '\\placeholder{' main.tex` — every hit is
    generated content that still has to replace prose, and none should survive
-   to submission. Only then set `\draftfalse`.
+   to submission. Only then set `\draftfalse`. This is no longer only a
+   checklist item: the `paper` CI job prints the count on every run and
+   *fails* the build if `\draftfalse` is set while any placeholder remains,
+   which is the dangerous combination — with drafts off a surviving
+   placeholder does not warn, it vanishes and leaves the surrounding prose
+   reading as a finished claim. It does not fail while the paper is still
+   marked `\drafttrue`, because the placeholders are then visible in the
+   PDF by design and a permanently red job teaches everyone to ignore it.
 4. **Claims audit.** Four statements are the ones most likely to drift into
    overclaiming as the paper is edited, and all four are currently correct:
    (a) the tool has been run on five deployments plus a negative control, all

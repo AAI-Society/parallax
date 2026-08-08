@@ -11,7 +11,7 @@
         "unit": "seconds"
       },
       "failure_impact": "split_view",
-      "introduced_by": "anchoring(log_operator=did:web:logop3.example,interval=15m,settlement=-,finality=-)#0",
+      "introduced_by": "anchoring(log_operator=did:web:logop3.example,interval=900s,settlement=-,finality=-)#0",
       "introduced_by_kind": "anchoring"
     },
     {

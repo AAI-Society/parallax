@@ -5,7 +5,20 @@ use serde::{Deserialize, Serialize};
 /// A relying party's local trust policy. Conformance obligation C10.3: verifier
 /// software mechanically rejects a manifest that exceeds this, rather than
 /// leaving the comparison to a human reading prose.
+///
+/// `deny_unknown_fields` is load-bearing, not tidiness. Every field below is
+/// `#[serde(default)]` and every default is the permissive one, so without
+/// it a policy file whose entire content is `forbid_undetectible = true` —
+/// one letter wrong — deserialises to `Policy::default()`, the maximally
+/// permissive policy, and `check` prints `OK` and exits 0 against a manifest
+/// full of undetectable principals. The C10.3 gate would fail *open* on a
+/// typo, which is the worst possible direction for a gate to fail in.
+/// `MechanismSpec`, `Deployment`, `Principal` and `Delegation` all carry
+/// this attribute for the same reason; `Policy` shipped without it. Do not
+/// remove it to make an unrecognised key "forward compatible": a policy key
+/// this build does not understand is a policy this build cannot enforce.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Policy {
     /// When set, only these principals may appear.
     #[serde(default)]
@@ -280,5 +293,40 @@ host = "cloud"
             ),
             "pcs at exactly the bound must not be reported as exceeding it, got {v:?}"
         );
+    }
+
+    /// CRITICAL regression: without `deny_unknown_fields`, a policy whose
+    /// only content is a misspelled key deserialised to the maximally
+    /// permissive `Policy::default()` and `check` answered `OK`. The gate
+    /// failed open on a one-character error. Every field here defaults to
+    /// permissive, so an unrecognised key must be a parse error and never
+    /// an unenforced clause.
+    #[test]
+    fn a_misspelled_policy_key_is_a_parse_error_not_a_silently_empty_policy() {
+        let err = toml::from_str::<Policy>("forbid_undetectible = true\n")
+            .expect_err("a misspelled key must not deserialise to a permissive default");
+        assert!(
+            format!("{err}").contains("forbid_undetectible"),
+            "the error must name the key the author got wrong, got: {err}"
+        );
+
+        // And the correctly spelled key still works, so the test above is
+        // not passing merely because the field was renamed or removed.
+        let p: Policy = toml::from_str("forbid_undetectable = true\n").unwrap();
+        assert!(p.forbid_undetectable);
+        assert_eq!(
+            evaluate(&p, &tdx_manifest()).unwrap().len(),
+            4,
+            "the manifest this typo would have waved through has four violations"
+        );
+    }
+
+    /// The empty policy must still parse — `deny_unknown_fields` rejects
+    /// unknown keys, not absent ones — since a fully permissive policy is a
+    /// legitimate configuration and `tests/acceptance.rs` uses one.
+    #[test]
+    fn an_empty_policy_file_still_parses() {
+        let p: Policy = toml::from_str("").unwrap();
+        assert!(evaluate(&p, &tdx_manifest()).unwrap().is_empty());
     }
 }

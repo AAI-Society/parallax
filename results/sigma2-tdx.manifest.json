@@ -11,7 +11,7 @@
         "type": "infinite_undetectable"
       },
       "failure_impact": "soundness",
-      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=12h,reference_values=did:web:rvp.example.org,host=did:web:cloud.example.com)#0",
+      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=43200s,reference_values=did:web:rvp.example.org,host=did:web:cloud.example.com)#0",
       "introduced_by_kind": "tee_attestation"
     },
     {
@@ -22,7 +22,7 @@
         "type": "infinite_undetectable"
       },
       "failure_impact": "soundness",
-      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=12h,reference_values=did:web:rvp.example.org,host=did:web:cloud.example.com)#0",
+      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=43200s,reference_values=did:web:rvp.example.org,host=did:web:cloud.example.com)#0",
       "introduced_by_kind": "tee_attestation"
     },
     {
@@ -33,7 +33,7 @@
         "unit": "seconds"
       },
       "failure_impact": "revocation",
-      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=12h,reference_values=did:web:rvp.example.org,host=did:web:cloud.example.com)#0",
+      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=43200s,reference_values=did:web:rvp.example.org,host=did:web:cloud.example.com)#0",
       "introduced_by_kind": "tee_attestation"
     },
     {
@@ -44,7 +44,7 @@
         "type": "infinite_undetectable"
       },
       "failure_impact": "soundness",
-      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=12h,reference_values=did:web:rvp.example.org,host=did:web:cloud.example.com)#0",
+      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=43200s,reference_values=did:web:rvp.example.org,host=did:web:cloud.example.com)#0",
       "introduced_by_kind": "tee_attestation"
     },
     {
@@ -55,7 +55,7 @@
         "type": "infinite_undetectable"
       },
       "failure_impact": "soundness",
-      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=12h,reference_values=did:web:rvp.example.org,host=did:web:cloud.example.com)#0",
+      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=43200s,reference_values=did:web:rvp.example.org,host=did:web:cloud.example.com)#0",
       "introduced_by_kind": "tee_attestation"
     }
   ],

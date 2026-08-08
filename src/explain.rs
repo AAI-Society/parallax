@@ -1,10 +1,9 @@
 use crate::deployment::Deployment;
 use crate::solve::DELEGATION_TAG_PREFIX;
 use crate::trust::TrustSet;
-use serde::Serialize;
 use std::collections::BTreeSet;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct ExplainEntry {
     pub capability: String,
     pub mechanism: String,
@@ -17,7 +16,7 @@ pub struct ExplainEntry {
     pub via_delegation: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct Explanation {
     pub principal: String,
     pub entries: Vec<ExplainEntry>,
