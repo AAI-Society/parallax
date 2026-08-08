@@ -16,19 +16,21 @@ pub enum DeploymentError {
         #[source]
         source: toml::de::Error,
     },
-    #[error("delegation names undeclared principal `{0}`")]
-    UnknownPrincipal(String),
-    #[error("witness quorum needs k <= n, got k={k} n={n}")]
+    #[error("{context} names undeclared principal `{id}`")]
+    UnknownPrincipal { context: String, id: String },
+    #[error("witness quorum needs 1 <= k <= n, got k={k} n={n}")]
     BadQuorum { k: usize, n: usize },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Principal {
     pub id: String,
     pub role: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Delegation {
     pub sub: String,
     pub sup: String,
@@ -37,7 +39,7 @@ pub struct Delegation {
 /// A mechanism as written in the deployment file. Composition rules live in
 /// `mechanism.rs`; this type is only the parsed surface.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MechanismSpec {
     TeeAttestation {
         endorser: String,
@@ -74,7 +76,57 @@ pub enum MechanismSpec {
     },
 }
 
+impl MechanismSpec {
+    /// Every principal this mechanism names. Used by `validate`, and by the
+    /// shared-dependency analysis in a later task.
+    pub fn named_principals(&self) -> Vec<&str> {
+        match self {
+            MechanismSpec::TeeAttestation {
+                endorser,
+                quoting_enclave,
+                collateral_authority,
+                collateral_refresh: _,
+                reference_values,
+                host,
+            } => vec![
+                endorser.as_str(),
+                quoting_enclave.as_str(),
+                collateral_authority.as_str(),
+                reference_values.as_str(),
+                host.as_str(),
+            ],
+            MechanismSpec::Signing { signer } => vec![signer.as_str()],
+            MechanismSpec::HashChain { log_operator } => vec![log_operator.as_str()],
+            MechanismSpec::Anchoring {
+                log_operator,
+                interval: _,
+                settlement,
+                finality: _,
+            } => {
+                let mut ids = vec![log_operator.as_str()];
+                if let Some(settlement) = settlement {
+                    ids.push(settlement.as_str());
+                }
+                ids
+            }
+            MechanismSpec::Gossip {
+                peers,
+                propagation: _,
+            } => peers.iter().map(String::as_str).collect(),
+            MechanismSpec::WitnessQuorum { witnesses, k: _ } => {
+                witnesses.iter().map(String::as_str).collect()
+            }
+            MechanismSpec::ZkProof {
+                ceremony,
+                compiler,
+                auditor,
+            } => vec![ceremony.as_str(), compiler.as_str(), auditor.as_str()],
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Deployment {
     pub name: String,
     pub claim: String,
@@ -105,13 +157,24 @@ impl Deployment {
         for d in &self.delegation {
             for id in [&d.sub, &d.sup] {
                 if !declared.contains(id.as_str()) {
-                    return Err(DeploymentError::UnknownPrincipal(id.clone()));
+                    return Err(DeploymentError::UnknownPrincipal {
+                        context: "delegation".into(),
+                        id: id.clone(),
+                    });
                 }
             }
         }
-        for m in &self.mechanism {
+        for (i, m) in self.mechanism.iter().enumerate() {
+            for id in m.named_principals() {
+                if !declared.contains(id) {
+                    return Err(DeploymentError::UnknownPrincipal {
+                        context: format!("mechanism #{i}"),
+                        id: id.to_string(),
+                    });
+                }
+            }
             if let MechanismSpec::WitnessQuorum { witnesses, k } = m {
-                if *k > witnesses.len() {
+                if *k == 0 || *k > witnesses.len() {
                     return Err(DeploymentError::BadQuorum {
                         k: *k,
                         n: witnesses.len(),
@@ -139,6 +202,18 @@ role = "SiliconManufacturer"
 id = "did:web:pcs.intel.com"
 role = "CertificationAuthority"
 
+[[principal]]
+id = "urn:qe:tdx"
+role = "QuotingEnclave"
+
+[[principal]]
+id = "did:web:rvp.example.org"
+role = "ReferenceValueProvider"
+
+[[principal]]
+id = "did:web:cloud.example.com"
+role = "CloudOperator"
+
 [[mechanism]]
 kind = "tee_attestation"
 endorser = "did:web:intel.com"
@@ -154,7 +229,7 @@ host = "did:web:cloud.example.com"
         let d: Deployment = toml::from_str(TDX).unwrap();
         assert_eq!(d.name, "sigma2-tdx");
         assert_eq!(d.claim, "measurement_valid");
-        assert_eq!(d.principal.len(), 2);
+        assert_eq!(d.principal.len(), 5);
         assert_eq!(d.mechanism.len(), 1);
         assert!(matches!(
             d.mechanism[0],
@@ -187,5 +262,57 @@ kind = "telepathy"
     fn validate_accepts_a_well_formed_deployment() {
         let d: Deployment = toml::from_str(TDX).unwrap();
         assert!(d.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_a_misspelled_optional_field_without_panicking() {
+        let src = r#"
+name = "bad"
+claim = "c"
+[[mechanism]]
+kind = "anchoring"
+log_operator = "did:web:x"
+interval = "1h"
+settlment = "did:web:y"
+"#;
+        assert!(toml::from_str::<Deployment>(src).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_a_mechanism_naming_an_undeclared_principal() {
+        let src = r#"
+name = "bad"
+claim = "c"
+
+[[principal]]
+id = "did:web:intel.com"
+role = "SiliconManufacturer"
+
+[[mechanism]]
+kind = "signing"
+signer = "did:web:typo"
+"#;
+        let d: Deployment = toml::from_str(src).unwrap();
+        let err = d.validate().unwrap_err();
+        assert!(format!("{err}").contains("did:web:typo"));
+    }
+
+    #[test]
+    fn validate_rejects_a_zero_threshold_quorum() {
+        let src = r#"
+name = "bad"
+claim = "c"
+
+[[principal]]
+id = "did:web:a"
+role = "Witness"
+
+[[mechanism]]
+kind = "witness_quorum"
+witnesses = ["did:web:a"]
+k = 0
+"#;
+        let d: Deployment = toml::from_str(src).unwrap();
+        assert!(d.validate().is_err());
     }
 }
