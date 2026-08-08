@@ -734,7 +734,7 @@ mod tests {
     fn generated_latex_escapes_the_underscores_in_claim_names() {
         let tex = report(four()).unwrap().render_tex_summary();
         assert!(
-            tex.contains("\\texttt{measurement\\_valid}"),
+            tex.contains("\\texttt{measurement\\_\\allowbreak valid}"),
             "claim names must be escaped, got:\n{tex}"
         );
         assert!(

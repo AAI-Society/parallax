@@ -9,7 +9,8 @@
 use crate::latency::Latency;
 use crate::trust::TrustSet;
 
-/// Escapes the one LaTeX special character that can reach a generated cell.
+/// Escapes the one LaTeX special character that can reach a generated cell,
+/// and marks it as a place the line may break.
 ///
 /// Deployment names are `[a-z0-9-]`, claim and capability names are
 /// snake_case identifiers, and principal ids are DIDs and URNs, so `_` is
@@ -19,8 +20,16 @@ use crate::trust::TrustSet;
 /// `$`, `{`, `}`, `~` or `^`, extend this function rather than discovering
 /// it as a build failure in `paper/`. The same caveat, and the same reason,
 /// as `tex_escape` in `scripts/regen-results.sh`.
+///
+/// The trailing `\allowbreak` is not decoration. Capability names here run
+/// past thirty characters (`measurement_injection_resistance`), TeX will not
+/// hyphenate inside `\texttt`, and a table column narrow enough to hold the
+/// rest of the row is narrower than that — so without a stated break
+/// opportunity the cell overflows into the margin. This is the same fix as
+/// the paper's own `\ub` macro, applied to the cells the paper does not
+/// write by hand.
 pub fn escape(s: &str) -> String {
-    s.replace('_', "\\_")
+    s.replace('_', "\\_\\allowbreak ")
 }
 
 /// A detection latency as the paper writes it. `Never` is `\infty` in the
@@ -77,7 +86,8 @@ mod tests {
     fn underscores_are_escaped_and_nothing_else_is_touched() {
         assert_eq!(
             escape("golden_value_correctness"),
-            "golden\\_value\\_correctness"
+            "golden\\_\\allowbreak value\\_\\allowbreak correctness",
+            "each underscore is escaped and carries a break opportunity"
         );
         assert_eq!(escape("did:web:intel.com"), "did:web:intel.com");
         assert_eq!(escape("sigma1-software"), "sigma1-software");
@@ -112,7 +122,7 @@ mod tests {
             1,
             "only the collateral authority carries a bound:\n{tex}"
         );
-        assert!(tex.contains("\\texttt{golden\\_value\\_correctness}"));
+        assert!(tex.contains("\\texttt{golden\\_\\allowbreak value\\_\\allowbreak correctness}"));
         assert!(
             !tex.contains("{golden_value_correctness}"),
             "unescaped:\n{tex}"
