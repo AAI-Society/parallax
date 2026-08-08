@@ -78,29 +78,52 @@ fn direct_membership(t: &TrustSet) -> BTreeMap<String, BTreeMap<String, BTreeSet
 ///
 /// For each principal `P`:
 /// - `M(P)` is the set of mechanism tags where `P` appears directly.
-/// - `D(P)` is, for each declared delegation with `sub == P`, the mechanism
-///   tags its `sup` appears in directly (not `sup`'s own delegation reach —
-///   this is deliberately non-transitive, matching the declared delegation
-///   graph one edge at a time).
+/// - `D(P)` is the set of mechanism tags belonging to every principal
+///   reachable from `P` by following declared `sub -> sup` delegation edges
+///   to *any* depth — the transitive closure, not just one hop.
+///
+/// `D(P)` must be transitive because `solve.rs`'s `load_bearing` relation is:
+/// if `P` speaks for `Q` and `Q` speaks for `R`, `P` lands in the trust set
+/// as load-bearing for whatever claim `R` supports, even though `P` never
+/// delegates to `R` directly. A one-hop `D(P)` would credit `P` with `Q`'s
+/// direct membership only, and count nothing when `Q` itself is a bare
+/// delegate with no mechanism of its own — invisibly missing exactly the
+/// two-layer share the analysis exists to catch, just one hop further down
+/// the chain than the flat-tag bug this whole module was rewritten to fix.
 ///
 /// `P` is reported when `|M(P) ∪ D(P)| > 1`: it is load-bearing, directly or
-/// through delegation, in more than one layer. A principal named twice
-/// within one mechanism, or delegating into a principal within the *same*
-/// mechanism it is already part of, is correctly silent — `M(P) ∪ D(P)` is
-/// one tag either way.
+/// through any length of delegation, in more than one layer. A principal
+/// named twice within one mechanism, or delegating (at any depth) into a
+/// principal within the *same* mechanism it is already part of, is
+/// correctly silent — `M(P) ∪ D(P)` is one tag either way.
+///
+/// The delegation graph can contain cycles (self-delegation is rejected at
+/// load time, but longer cycles are legal and `solve.rs` itself has to
+/// terminate on them — see `solve::tests::cyclic_delegation_terminates`).
+/// The closure below is a worklist walk over a bounded, finite principal
+/// set with an explicit visited set, so it terminates the same way.
 pub fn shared_dependencies(d: &Deployment, t: &TrustSet) -> Vec<SharedDependency> {
     let direct = direct_membership(t);
 
-    let mut principals: BTreeSet<&str> = direct.keys().map(String::as_str).collect();
+    // The declared delegation graph, `sub -> sups`, used to walk `D(P)`'s
+    // transitive closure below.
+    let mut edges: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for del in &d.delegation {
-        principals.insert(del.sub.as_str());
+        edges
+            .entry(del.sub.as_str())
+            .or_default()
+            .push(del.sup.as_str());
     }
+
+    let mut principals: BTreeSet<&str> = direct.keys().map(String::as_str).collect();
+    principals.extend(edges.keys().copied());
 
     let mut out = Vec::new();
     for p in principals {
         let mut layers = Vec::new();
         let mut tags_seen: BTreeSet<&str> = BTreeSet::new();
 
+        // M(P): direct membership.
         if let Some(mechs) = direct.get(p) {
             for (tag, caps) in mechs {
                 tags_seen.insert(tag.as_str());
@@ -113,8 +136,17 @@ pub fn shared_dependencies(d: &Deployment, t: &TrustSet) -> Vec<SharedDependency
             }
         }
 
-        for del in d.delegation.iter().filter(|del| del.sub == p) {
-            if let Some(mechs) = direct.get(del.sup.as_str()) {
+        // D(P): transitive closure over `sub -> sup` edges reachable from
+        // `p`, to any depth. `visited` guards against cycles; a worklist
+        // (rather than recursion) keeps this from blowing the stack on a
+        // long chain and makes the cycle guard easy to reason about.
+        let mut visited: BTreeSet<&str> = BTreeSet::new();
+        let mut worklist: Vec<&str> = edges.get(p).cloned().unwrap_or_default();
+        while let Some(q) = worklist.pop() {
+            if !visited.insert(q) {
+                continue; // already walked (cycle, or reached by another path)
+            }
+            if let Some(mechs) = direct.get(q) {
                 for (tag, caps) in mechs {
                     if !tags_seen.insert(tag.as_str()) {
                         continue; // already counted, directly or via another delegate
@@ -126,6 +158,9 @@ pub fn shared_dependencies(d: &Deployment, t: &TrustSet) -> Vec<SharedDependency
                         via_delegation: true,
                     });
                 }
+            }
+            if let Some(next) = edges.get(q) {
+                worklist.extend(next.iter().copied());
             }
         }
 
@@ -282,6 +317,67 @@ mod tests {
         let found = shared_dependencies(&deployment(&[]), &s);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].layers.len(), 3);
+    }
+
+    /// D(P) must be the *transitive* closure of delegation reach, not one
+    /// hop. `p -> q -> r -> s` is a three-hop chain where only `s` has
+    /// direct mechanism membership; `q` and `r` are bare delegates with no
+    /// mechanism of their own, so a one-hop `D` would credit `p` (and `q`,
+    /// and `r`) with nothing. All four principals are load-bearing for
+    /// `s`'s single mechanism (matching `solve.rs`'s transitive
+    /// `load_bearing`), but that's still only one *layer*, so nobody here
+    /// should be reported.
+    #[test]
+    fn a_three_hop_chain_reaching_one_layer_is_not_shared() {
+        let s = set(&[("s", "cap", "mech_a#0")]);
+        let d = deployment(&[("p", "q"), ("q", "r"), ("r", "s")]);
+        assert!(
+            shared_dependencies(&d, &s).is_empty(),
+            "one mechanism reached through a chain is still one layer"
+        );
+    }
+
+    /// The transitive-closure counterpart to
+    /// `delegation_into_two_different_mechanisms_is_reported`: `p` reaches
+    /// mechanism A through a two-hop chain (`p -> q1 -> sup1`) and
+    /// mechanism B through a different two-hop chain (`p -> q2 -> sup2`).
+    /// `p` never delegates directly to either `sup`, so this is invisible
+    /// to a one-hop `D(P)` — the same false-negative class as the flat-tag
+    /// bug, one hop further down the chain.
+    #[test]
+    fn a_principal_reaching_two_different_layers_through_two_hop_chains_is_reported() {
+        let s = set(&[("sup1", "cap_a", "mech_a#0"), ("sup2", "cap_b", "mech_b#0")]);
+        let d = deployment(&[("p", "q1"), ("q1", "sup1"), ("p", "q2"), ("q2", "sup2")]);
+        let found = shared_dependencies(&d, &s);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].principal, "p");
+        assert_eq!(
+            found[0].layers.len(),
+            2,
+            "spans both layers through two-hop delegation chains"
+        );
+        assert!(found[0].layers.iter().all(|l| l.via_delegation));
+        let mechs: BTreeSet<&str> = found[0]
+            .layers
+            .iter()
+            .map(|l| l.mechanism.as_str())
+            .collect();
+        assert_eq!(mechs, BTreeSet::from(["mech_a#0", "mech_b#0"]));
+    }
+
+    /// A cyclic delegation graph (`a -> b -> c -> a`, mirroring
+    /// `solve::tests::cyclic_delegation_terminates`) must not hang the
+    /// transitive closure. Only `a` has direct mechanism membership, so
+    /// `M(a) ∪ D(a)` is still one tag and nobody should be reported — the
+    /// point of this test is that it terminates at all.
+    #[test]
+    fn a_cyclic_delegation_graph_terminates_and_reports_nothing_for_one_mechanism() {
+        let s = set(&[("a", "cap", "mech_a#0")]);
+        let d = deployment(&[("a", "b"), ("b", "c"), ("c", "a")]);
+        assert!(
+            shared_dependencies(&d, &s).is_empty(),
+            "a cycle around one mechanism is still one layer, and must terminate"
+        );
     }
 
     /// Preserve item, exercised through the real mechanism pipeline rather
