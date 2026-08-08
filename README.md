@@ -55,6 +55,15 @@ for the shared-dependency view.
 build if regenerating produces a diff, so a figure in the paper cannot
 drift from the code that produced it. See `results/README.md`.
 
+## The paper
+
+`paper/` holds the LaTeX source for **P01 — A Trust Calculus for Attestation
+Tiers**, which this tool exists to support. It is a working draft: the
+argument sections are written, the results sections are placeholdered, and
+every number it cites is `\input` from `results/` rather than typed. Build it
+with `cd paper && tectonic -Z shell-escape main.tex`; see
+[`paper/README.md`](paper/README.md).
+
 ## Licence
 
 Apache-2.0 throughout, code and paper alike. See `LICENSE` and `NOTICE`.

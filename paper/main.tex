@@ -1,0 +1,919 @@
+% P01 — A Trust Calculus for Attestation Tiers — arXiv preprint
+% Build: tectonic -Z shell-escape main.tex  (XeTeX engine; fetches packages)
+% STATUS: working draft. Results sections are placeholdered and read
+% generated LaTeX from ../results/. Do not type numbers into this file.
+%
+% Preamble, colour palette, \aaimark and the cover-page TikZ block are copied
+% from ../../ov-poc-standard/paper/main.tex so the two papers look like one
+% series. One deliberate difference: that paper loads `minted`, which needs a
+% pygmentize binary on the build host. This paper has no syntax-highlighted
+% listings, so minted is not loaded and the build has one fewer external
+% dependency. `listings` is configured identically in case that changes.
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{tikz}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{amsmath, amssymb}
+\usepackage{listings}
+\definecolor{codepanel}{HTML}{F7F5F1}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{caption}
+\usepackage{siunitx}
+\usepackage{amsthm}
+\newtheorem{definition}{Definition}
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}{Proposition}
+\usepackage[section]{placeins}
+
+% Advanced AI Society brand palette
+\definecolor{aailime}{HTML}{CFFF04}
+\definecolor{aailimetint}{HTML}{F2FFB8}
+\definecolor{aaiink}{HTML}{0A0A0A}
+\definecolor{aaired}{HTML}{FFE3E4}
+\definecolor{aaineutral}{HTML}{E7E3DD}
+\definecolor{aaipaper}{HTML}{F0EDEA}
+\definecolor{aaimuted}{HTML}{8F8A82}
+\definecolor{aaidarklime}{HTML}{7A9900}
+
+\lstset{basicstyle=\ttfamily\footnotesize, breaklines=true, frame=single,
+        framerule=0.3pt, xleftmargin=1em, columns=fullflexible}
+\captionsetup{font=small, labelfont=bf}
+
+\newcommand{\parallax}{\texttt{parallax}}
+\newcommand{\Never}{\infty}
+% An underscore inside a code identifier, with a break opportunity after it.
+% Capability names run to 32 characters and will not fit a table column
+% otherwise; TeX will not hyphenate inside \texttt, so the break points have
+% to be stated.
+\newcommand{\ub}{\_\allowbreak}
+
+% The Society's bracket mark, drawn natively (lime on the dark band)
+\newcommand{\aaimark}[1]{%
+\begin{tikzpicture}[x=#1, y=#1, line cap=butt]
+  \fill[aailime] (0,0) rectangle (0.16,1);
+  \fill[aailime] (0.16,0) rectangle (0.42,0.24);
+  \fill[aailime] (0.16,0.76) rectangle (0.42,1);
+  \fill[aailime] (1.04,0) rectangle (1.20,1);
+  \fill[aailime] (0.78,0) rectangle (1.04,0.24);
+  \fill[aailime] (0.78,0.76) rectangle (1.04,1);
+\end{tikzpicture}}
+
+\begin{document}
+
+% ---------------------------------------------------------------- cover page
+\thispagestyle{empty}
+
+\begin{tikzpicture}[remember picture, overlay]
+  \fill[aaiink] (current page.north west) rectangle
+    ([yshift=-6.35cm]current page.north east);
+  \fill[aailime] ([yshift=-6.35cm]current page.north west) rectangle
+    ([yshift=-6.53cm]current page.north east);
+  \node[anchor=north west, inner sep=0pt]
+    at ([xshift=1in, yshift=-0.95cm]current page.north west) {\aaimark{0.62cm}};
+  \node[anchor=north west, inner sep=0pt, text width=14.2cm]
+    at ([xshift=1in+1.15cm, yshift=-0.98cm]current page.north west)
+    {\sffamily\bfseries\footnotesize\color{aailime}%
+     ADVANCED AI SOCIETY\; \textcolor{aaimuted}{$\cdot$}\; PROOF-OF-CONTROL
+     INITIATIVE\\[3pt]
+     {\normalfont\sffamily\footnotesize\color{aaimuted}
+      Working draft v0.1 $\cdot$ August 2026 $\cdot$ for co-author review
+      prior to submission}};
+  \node[anchor=north west, inner sep=0pt, text width=\textwidth]
+    at ([xshift=1in, yshift=-2.55cm]current page.north west)
+    {\sffamily\bfseries\fontsize{21.5}{26}\selectfont\color{aaipaper}%
+     A Trust Calculus for Attestation Tiers: Computing Residual Trust and
+     Re-Deriving Verifiability};
+  \node[anchor=north west, inner sep=0pt, text width=\textwidth]
+    at ([xshift=1in, yshift=-5.55cm]current page.north west)
+    {\sffamily\small\color{aaipaper}%
+     \textcolor{aailime}{\rule[0.5ex]{1.6em}{2pt}}\hspace{0.6em}%
+     Which parties must you still trust, and for how long would you not know?};
+\end{tikzpicture}
+
+\vspace*{5.9cm}
+
+% Compact author block
+{\small\noindent
+\textbf{Jim Schwoebel}\textsuperscript{1,2}
+
+\smallskip\noindent
+{\footnotesize
+\textsuperscript{1}\,Quome \quad
+\textsuperscript{2}\,Advanced AI Society, \url{https://advancedaisociety.org}%
+\footnote{Prepared within the Proof-of-Control Initiative of the Advanced AI
+Society. Authorship is limited to contributors to this manuscript; additional
+co-authors will be added only upon explicit consent and substantive
+contribution.}}}
+
+\vspace{0.9em}
+\noindent\textcolor{aailime}{\rule{\textwidth}{1.6pt}}
+\vspace{0.2em}
+
+\begin{center}
+{\sffamily\bfseries\small ABSTRACT}
+\end{center}
+\vspace{-0.5em}
+\noindent{\small
+Attestation systems are routinely described as removing the need to trust
+anybody. The Proof-of-Control standard~\cite{pocspec} says of its Tier~3 that
+``there is nobody left to trust; anyone can check the evidence with published
+tools.''
+That sentence is false, and this paper shows it is false rather than
+suspecting it. Deploying on Intel TDX and enumerating what a verifier must
+accept to believe one measurement yields five distinct parties, and three of
+the five have no detection mechanism at all: if they misbehave, nothing in
+the system will ever say so. We give a small calculus that computes this set
+instead of arguing about it. A judgment $\Gamma \vdash P : T, \Delta$ reads
+``proposition $P$ holds provided the parties in $T$ are honest, and a
+violation would be detected within $\Delta$''; mechanisms compose by joining
+$T$ under union and $\Delta$ under max, over two lattices of finite height.
+We implement it in \parallax{}, a Rust tool that reads a deployment
+description and prints the residual trust set, and we show that termination
+on cyclic delegation --- the case the original design proposed to handle with
+tabled resolution --- follows from finite lattice height alone and needs no
+tabling. On the deployments we have encoded, the trust sets are
+\emph{incomparable} under set inclusion rather than merely different, which
+would mean no ordinal tier ladder can rank them. We are explicit about the
+limit that matters most: the solver computes over the dependencies somebody
+wrote down, and cannot discover one that was left out.}
+
+\vspace{0.6em}
+\noindent{\small\textbf{Artifact.} \parallax{}~\cite{parallaxtool} is
+Apache-2.0. Every number
+this paper cites is regenerated from the tool by
+\texttt{scripts/regen-results.sh}, and the build fails if a committed figure
+disagrees with the code that produced it.}
+
+\clearpage
+
+\tableofcontents
+\clearpage
+
+% ================================================================
+\section{The Problem}
+\label{sec:intro}
+
+Somebody hands you a signed attestation. It says a particular piece of
+software, with a particular measurement, ran inside a hardware-protected
+environment on a machine you do not own~\cite{intelTdx}. The pitch is that you
+no longer have
+to take anyone's word for it: the hardware vouches for the software, the
+signature vouches for the hardware, and you can check the whole thing yourself
+with published tools.
+
+So check it. Here is what you actually did.
+
+You verified a signature chain rooted in a key that Intel provisioned. You
+believed that key was issued to real silicon, because Intel's certification
+service said so. You believed the quote was produced by a quoting enclave
+that measured the domain honestly and did not leak its signing key. You
+believed the host machine did not inject a different firmware measurement at
+boot. And you believed that the reference value you compared against ---
+the number that says ``this measurement means \emph{that} code'' --- was
+published by somebody who knows what code it belongs to.
+
+That is five parties. You did not remove trust; you moved it. And the thing
+that should stop the conversation is not the count but the fourth column of
+Table~\ref{tab:tdx}: for three of those five, there is no detection mechanism
+at all. If Intel's silicon is subverted, or the quoting enclave's key leaks,
+or the reference values are wrong, the attestation still verifies
+cryptographically. Nothing anywhere in the system contradicts it. The failure
+is silent and it is permanent.
+
+\begin{table}[h]
+\centering\small
+\caption{What a verifier must accept to believe a single Intel TDX
+measurement, derived by deploying the Proof-of-Control reference
+implementation and enumerating what was left. The fourth column is the point.}
+\label{tab:tdx}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{2.4cm}
+                  >{\raggedright\arraybackslash}p{4.2cm}
+                  >{\raggedright\arraybackslash}p{4.8cm}
+                  >{\raggedright\arraybackslash}p{2.9cm}@{}}
+\toprule
+\textbf{Party} & \textbf{What you must assume} &
+\textbf{What a breach buys the adversary} & \textbf{Detectable in} \\
+\midrule
+Intel &
+the TDX module, microcode and CPU behave as specified; the provisioning key
+is not misissued &
+arbitrary quote forgery, state extraction, memory manipulation inside the
+hardware boundary &
+\textcolor{aaidarklime}{\textbf{never}} \\
+\addlinespace
+Intel's certification service (PCS) &
+the collateral fetched to check a quote is authentic (TCB recovery info,
+CRLs, QE certs) &
+revoked, vulnerable or emulated hardware presented as a valid target &
+collateral refresh interval ($\approx$\,\SI{12}{\hour}) \\
+\addlinespace
+The quoting enclave &
+it measures TD reports accurately and signs without key leakage &
+forged execution claims on a compromised host &
+\textcolor{aaidarklime}{\textbf{never}} \\
+\addlinespace
+The cloud operator &
+the host does not extract domain memory outside the TDX threat model; the
+firmware measured into RTMRs is what it claims &
+deceptive measurement injection at boot; side-channel extraction &
+\textcolor{aaidarklime}{\textbf{never}} \\
+\addlinespace
+Whoever publishes reference values &
+the MRTD compared against belongs to the code you believe it does &
+valid attestation of subverted software inside a genuine TD &
+\textcolor{aaidarklime}{\textbf{never}} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Anchoring the evidence log to a public ledger removes none of these. It is a
+real and valuable property --- it makes the \emph{history} publicly auditable
+--- but the \emph{measurement} still rests on the chain above. And, as
+Section~\ref{sec:formal} shows, anchoring does not even come for free: it
+ingests a new assumption about the settlement layer's execution fidelity
+while it is converting the old one.
+
+\paragraph{Two properties that are being conflated.} The tier ladder runs
+together two things a careful reader will separate:
+
+\begin{itemize}[itemsep=1pt,topsep=2pt]
+\item \textbf{Public verifiability} --- anyone may check the evidence, with
+published tools, without permission from the party being checked.
+\item \textbf{Trust independence} --- no named party's honesty is
+load-bearing for the conclusion.
+\end{itemize}
+
+Hardware attestation buys the first outright. It leaves the second largely
+intact. Confusing them is what produces a sentence like ``there is nobody
+left to trust,'' and that sentence sits at the binary threshold the whole
+standard is organized around. If the threshold is mis-drawn, every
+conformance claim above it says less than its definition promises.
+
+\paragraph{Arguing about this is not working.} Everyone in the field agrees,
+when pressed, that hardware roots are assumptions. What nobody has is a way to
+settle a specific disagreement about a specific deployment. Reviewer says
+``you are still trusting the build pipeline''; vendor says ``no, the
+attestation covers that''; and there the matter rests, because there is no
+procedure that takes a system description and returns an answer. That is what
+we set out to build.
+
+\paragraph{What we did.} We wrote down a judgment form, gave composition rules
+for each mechanism the standard admits, implemented them, and ran them on
+five encoded deployments.
+
+\begin{enumerate}[itemsep=1pt,topsep=2pt]
+\item \textbf{The calculus} (Section~\ref{sec:formal}). A judgment $\Gamma
+\vdash P : T, \Delta$: the proposition $P$ holds provided the parties in $T$
+are honest, with any violation detectable within $\Delta$. Composition is
+join in two lattices --- union on trust sets, max on detection latencies.
+\item \textbf{The tool} (Section~\ref{sec:formal}, Section~\ref{sec:eval}).
+\parallax{}, roughly 2\,000 lines of Rust, reads a deployment as TOML and
+emits the residual trust set, a machine-readable manifest, a comparison
+between two deployments, a shared-dependency analysis, and a policy check.
+\item \textbf{Termination, the easy way} (Section~\ref{sec:termination}). The
+original design proposed tabled (SLG) resolution so that circular delegation
+would terminate. It is not needed. The fixpoint lives in the powerset of a
+finite assumption set, which has finite height, so bottom-up evaluation halts
+regardless of cycles. We say why the harder machinery solves a problem we do
+not have.
+\item \textbf{What we found} (Section~\ref{sec:eval}). The tool reproduces the
+five-party set in Table~\ref{tab:tdx} from a deployment description that does
+not name those five parties as a group, and it finds a shared build-pipeline
+dependency underneath a hybrid TEE-plus-ZK design that is marketed as defence
+in depth. On the deployments we encoded, trust sets come out
+\emph{incomparable}.
+\item \textbf{What is wrong with all of this} (Section~\ref{sec:open}). Led by
+the completeness problem, which we think is the strongest objection to the
+whole approach and which we have not solved.
+\end{enumerate}
+
+\paragraph{One thing we are not claiming.} \parallax{} has been run on five
+deployments, all of which we wrote. It reproduces a trust set we had already
+derived by hand, and it found a shared dependency in a deployment we
+constructed. It has not been pointed at somebody else's production system,
+and no claim in this paper should be read as saying it has. Section
+\ref{sec:eval} says exactly which examples exist and Section~\ref{sec:open}
+says what that leaves open.
+
+% ================================================================
+\section{What Others Have Built}
+\label{sec:related}
+
+\paragraph{The roles exist; the obligations do not.} The IETF's remote
+attestation architecture, RFC 9334~\cite{rfc9334}, already gives us the
+vocabulary: Attester, Verifier, Relying Party, Endorser, Reference Value
+Provider. This is the closest existing thing and we adopt its names. But
+RFC~9334 is \emph{descriptive}. It says who plays what part in an attestation
+exchange. It does not say what breaks when a part is played dishonestly, and
+that --- not the role taxonomy --- is what a relying party needs. Reading
+RFC~9334 tells you an Endorser exists. It does not tell you that if the
+Endorser lies, nothing anywhere in the protocol will ever notice.
+
+\paragraph{Authorization logics: the right primitives, the wrong direction.}
+Abadi, Burrows, Lampson and Plotkin's calculus for access
+control~\cite{abadi1993}, and the Taos work that grew from
+it~\cite{lampson1992}, gave us \textsf{says} and \textsf{speaks-for}. Those
+are exactly the right shape for ``Intel says this measurement,'' and our
+delegation relation is \textsf{speaks-for} under another name. Nexus
+authorization logic~\cite{nal} is the closest prior art of all: an
+authorization logic built specifically for attestation-based systems. NAL
+divides the bases for believing a claim into three kinds --- \emph{axiomatic}
+(believed by policy fiat), \emph{analytic} (derived by mechanical analysis of
+code), and \emph{synthetic} (produced by a trusted transformation or an
+isolated execution environment). That is already a taxonomy of \emph{why} a
+claim is believed, and it maps onto what we compute: every assumption in a
+residual trust set is, in NAL's terms, an axiomatic or synthetic basis that
+survived. What NAL does not do is emit the set.
+
+Nor do the declarative policy languages. SecPAL~\cite{secpal},
+DKAL~\cite{dkal} and Binder~\cite{binder} evaluate an authorization query
+against a fixed trust root and return yes or no. None of them inverts the
+question. Given a query that succeeded, none will tell you the minimal set of
+principals whose honesty the success depended on. That inversion is the
+technical core of this paper, and as far as we can find it has not been done
+--- not because it is hard in these systems, but because the systems were
+built for a different job. Their trust root is a given; ours is the answer.
+
+\paragraph{Transparency converts trust; it does not remove it.} Certificate
+Transparency~\cite{rfc6962,rfc9162} and CONIKS~\cite{coniks} are the canonical
+demonstrations that you can take a party you had to trust unconditionally and
+turn it into a party whose misbehaviour will be noticed within a bounded time.
+This is a genuine and large win, and it is also not the same win as removing
+the party. That distinction --- conversion, not removal --- is the one the
+tier ladder most needs and most lacks, and it is why detection latency is a
+first-class term in our judgment rather than a footnote. A log operator with
+a \SI{15}{\minute} gossip bound is still in your trust set. It is in there with
+a number next to it.
+
+\paragraph{Hardware roots are assumptions, and the attacks say so
+precisely.} Foreshadow~\cite{foreshadow}, SGAxe~\cite{sgaxe},
+Plundervolt~\cite{plundervolt} and \AE{}PIC Leak~\cite{aepic}, alongside
+Costan and Devadas's architectural analysis~\cite{costan2016}, establish that
+enclave isolation is a property that has repeatedly failed. The shape of these
+attacks matters more than their existence: they break isolation \emph{without}
+invalidating the signing key. The quote remains cryptographically valid while
+the claim it makes is false. Any calculus that treats ``the signature
+verified'' as discharging the hardware assumption is therefore modelling the
+wrong thing, which is why the endorser appears in our output with
+$\Delta = \Never$ rather than not appearing at all.
+
+\paragraph{Restructuring trust cryptographically.} Direct Anonymous
+Attestation~\cite{daa} is worth naming because it shows how much of a trust
+structure can be moved rather than merely documented. We do not do that here;
+we compute over the structure as built.
+
+\paragraph{Tabled resolution, which we ended up not needing.} SLG
+resolution~\cite{slg} and XSB~\cite{xsb} are the standard answer to a logic
+program that diverges on cyclic data, and the design this paper implements
+originally specified them for exactly that reason: real deployments contain
+mutual and circular attestation, and plain SLD resolution does not terminate
+on them. Section~\ref{sec:termination} explains why we did not need it.
+
+% ================================================================
+\section{Writing It Down Precisely}
+\label{sec:formal}
+
+Sentences like ``you still have to trust the vendor'' are fine until two
+people disagree about what they cover, so here it is in symbols. Everything
+in this section is what the code does; the composition rules below are
+transcribed from \texttt{src/mechanism.rs} and \texttt{src/solve.rs} in the
+artifact, not drafted for the paper.
+
+\subsection{The judgment}
+
+Let $\mathcal{P}$ be a finite set of named principals and $\mathcal{C}$ a
+finite set of capability names --- ``signs quotes honestly,'' ``publishes
+correct reference values,'' and so on. A \emph{detection latency} is either a
+finite bound or nothing at all:
+\begin{equation}
+\Delta \in \mathcal{L} = \{\,\mathrm{Bounded}(t) : t \in \mathbb{N}\,\}
+                          \cup \{\Never\}.
+\end{equation}
+$\Never$ is not a large number. It means there is no detection mechanism, so
+the violation is silent forever. Keeping it as a distinct symbol rather than
+a big integer is deliberate: it is the difference this paper exists to make
+visible.
+
+An \emph{assumption} is a four-tuple plus a provenance tag,
+\begin{equation}
+a = (p,\ c,\ \Delta,\ \iota,\ m)
+  \in \mathcal{P} \times \mathcal{C} \times \mathcal{L}
+      \times \mathcal{I} \times \mathcal{M},
+\end{equation}
+read as: \emph{principal $p$ must be honest about capability $c$; a violation
+would be detected within $\Delta$; a breach buys the adversary $\iota$; and
+this assumption entered because of mechanism $m$.} The impact $\iota$ ranges
+over \textsc{Soundness} (a false claim can be made to verify),
+\textsc{Revocation} (revoked or vulnerable components pass as valid),
+\textsc{SplitView} (equivocation is possible, but leaves contradictory
+evidence), and \textsc{Availability} (evidence can be withheld, not forged).
+A \emph{residual trust set} $T$ is a finite set of assumptions.
+
+The judgment is
+\begin{equation}
+\Gamma \vdash P : T,\ \Delta
+\end{equation}
+--- \emph{proposition $P$ holds provided every party in $T$ is honest about
+the capability named, and any violation is detected within $\Delta$}. In the
+implementation $\Gamma$ is the deployment description: the declared
+principals, the mechanisms and their parameters, and the delegation edges. $P$
+is the deployment's single \texttt{claim} string. $\Delta$ is derived from
+$T$, not carried alongside it: $\Delta = \bigsqcup_{a \in T} \Delta_a$.
+
+\subsection{The two lattices}
+
+\paragraph{Latency.} $\mathcal{L}$ is ordered with every bound below $\Never$
+and finite bounds ordered by magnitude. Join takes the worse case and $\Never$
+absorbs:
+\begin{equation}
+\Delta_1 \sqcup \Delta_2 =
+\begin{cases}
+\Never & \text{if } \Delta_1 = \Never \text{ or } \Delta_2 = \Never,\\
+\mathrm{Bounded}(\max(t_1, t_2)) & \text{otherwise.}
+\end{cases}
+\end{equation}
+Meet takes the better case, with $\Never$ as the identity. The reading of
+join is that a system is only as detectable as its least detectable part.
+Whether that is the right reading is an open question and
+Section~\ref{sec:open} returns to it. The empty trust set has
+$\Delta = \mathrm{Bounded}(0)$: nothing to detect.
+
+\paragraph{Trust sets.} $(\mathcal{T}, \subseteq)$ is the powerset of the
+assumptions derivable from a deployment, ordered by inclusion, with join
+$=$ union and meet $=$ intersection. This is a \emph{partial} order and that
+is the load-bearing fact of the paper: two trust sets can be
+\emph{incomparable}, each containing an assumption the other lacks. When that
+happens neither deployment is ``more verifiable'' than the other, and no
+ordinal tier can rank them.
+
+We wrote the order by hand rather than deriving it, and the reason is worth
+recording because it is a trap. Rust's derived ordering on an ordered set
+type is lexicographic and \emph{total}: under it $\{2\}$ is not $\le
+\{1,2\}$, so \texttt{join} could return a value that is not above its own
+operands, violating the lattice contract in a way that produces wrong answers
+rather than a crash.
+
+\subsection{The composition rules}
+
+Each mechanism contributes the assumptions a verifier must accept in order to
+believe a claim that mechanism supports. Write $\mathcal{A}(m)$ for that
+contribution. All latencies below are the mechanism's declared parameters,
+parsed as durations; \texttt{never} is accepted and means $\Never$.
+
+\begin{table}[h]
+\centering\footnotesize
+\caption{The composition rules, as implemented in \texttt{src/mechanism.rs}.
+$\Never$ in the latency column means the declaration cannot express a bound
+for that assumption --- it is a property of the mechanism, not a default that
+a deployment can override.}
+\label{tab:rules}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}p{2.4cm}>{\raggedright\arraybackslash}p{5.0cm}>{\raggedright\arraybackslash}p{3.0cm}p{2.3cm}@{}}
+\toprule
+\textbf{Mechanism} & \textbf{Assumption (principal, capability)} &
+\textbf{$\Delta$} & \textbf{Impact} \\
+\midrule
+\texttt{signing} & signer, \texttt{key\ub custody} & $\Never$ &
+\textsc{Soundness} \\
+\addlinespace
+\texttt{hash\ub chain} & log operator,
+\texttt{append\ub only\ub monotonicity} & $\Never$ & \textsc{Soundness} \\
+\addlinespace
+\texttt{anchoring} & log operator,
+\texttt{append\ub only\ub non\ub equivocation} & anchoring interval &
+\textsc{SplitView} \\
+ & settlement layer (if declared),
+\texttt{consensus\ub execution\ub fidelity} & declared finality, else
+$\Never$ & \textsc{Soundness} \\
+\addlinespace
+\texttt{gossip} & each peer, \texttt{view\ub synchronization} &
+propagation delay & \textsc{SplitView} \\
+\addlinespace
+\texttt{witness\ub quorum} & each witness,
+\texttt{non\ub collusion\ub $k$\ub of\ub $n$} & $\Never$ &
+\textsc{Soundness} \\
+\addlinespace
+\texttt{tee\ub attestation} & endorser,
+\texttt{silicon\ub and\ub microcode\ub integrity} & $\Never$ &
+\textsc{Soundness} \\
+ & quoting enclave, \texttt{quote\ub signing\ub honesty} & $\Never$ &
+\textsc{Soundness} \\
+ & collateral authority,
+\texttt{accurate\ub collateral\ub issuance} & collateral refresh &
+\textsc{Revocation} \\
+ & reference-value provider,
+\texttt{golden\ub value\ub correctness} & $\Never$ & \textsc{Soundness} \\
+ & host, \texttt{measurement\ub injection\ub resistance} & $\Never$ &
+\textsc{Soundness} \\
+\addlinespace
+\texttt{zk\ub proof} & ceremony, \texttt{toxic\ub waste\ub destruction} &
+$\Never$ & \textsc{Soundness} \\
+ & compiler, \texttt{sound\ub arithmetization} & $\Never$ &
+\textsc{Soundness} \\
+ & auditor, \texttt{constraint\ub completeness} & $\Never$ &
+\textsc{Soundness} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three of these deserve a sentence each.
+
+\emph{\texttt{tee\_attestation} is Table~\ref{tab:tdx}.} The five rows of the
+rule are the five rows of the TDX table, and only the collateral authority
+carries a bound. This is the sense in which the tool reproduces the
+hand-derived result: the deployment file declares six principal identifiers
+and a mechanism kind, and the five-party set falls out of the rule.
+
+\emph{\texttt{anchoring} is a trade, not a gain.} It converts the log
+operator's assumption from unbounded to bounded --- the intended win, and the
+transparency-systems result of Section~\ref{sec:related} made mechanical. But
+if a settlement layer is declared, the rule \emph{adds} an assumption about
+that layer's execution fidelity. A deep reorganization rolls back published
+attestation evidence. Anchoring is usually described as pure gain; in this
+calculus it visibly is not.
+
+\emph{\texttt{witness\_quorum} names every witness, not $k$ of them.} The
+capability is \texttt{non\_collusion\_$k$\_of\_$n$} and it is attributed to
+each of the $n$. That is the honest encoding of a threshold rule --- the
+assumption is about the set, not about any individual --- and it is also
+where Section~\ref{sec:open}'s principal-independence problem bites hardest.
+
+\subsection{Delegation, and why it is a fixpoint}
+
+Mechanisms name principals directly. Deployments also contain delegation: $q$
+\textsf{speaks-for} $r$ means that believing $r$ commits you to trusting $q$.
+Four rules close the set:
+
+\begin{enumerate}[itemsep=1pt,topsep=2pt]
+\item A principal named by a mechanism supporting claim $P$ is load-bearing
+for $P$.
+\item If $r$ is load-bearing for $P$ and $q$ \textsf{speaks-for} $r$, then $q$
+is load-bearing for $P$. (Delegation is transitive. This is the rule that
+diverges under naive SLD resolution.)
+\item Every load-bearing principal contributes its own assumptions to the
+residual set.
+\item Every delegate carries one assumption of its own: that its delegation
+is honest and unrevoked --- capability \texttt{delegation\ub integrity}, with
+$\Delta = \Never$ and \textsc{Soundness} impact --- whether or not it has
+mechanisms. Delegating to a party you did not otherwise depend on still puts
+that party in your trust set.
+\end{enumerate}
+
+Rule 4 fires per delegation \emph{edge}, tagged with the specific $r$ it
+delegates through, not once per delegate. That detail was a bug before it was
+a design: a flat tag made every delegation assumption in a deployment
+byte-identical, so a principal delegating into two different mechanisms
+collapsed to one deduplicated assumption and a genuine shared dependency
+disappeared from the output.
+
+\subsection{Provenance, and why the comparison is order-independent}
+\label{sec:orderindep}
+
+The fifth component of an assumption, the mechanism tag $m$, exists so that
+shared-dependency analysis can tell ``two independent layers happen to name
+the same party'' from ``one layer named twice.'' Without it, the same
+principal appearing under a TEE and under a ZK circuit would deduplicate into
+a single assumption and the most interesting finding in
+Section~\ref{sec:eval} would be invisible.
+
+Because $m$ participates in assumption identity, it also participates in
+comparison --- and that is where we got it wrong. Tags were originally
+positional, of the form \texttt{kind\#index}, index being the mechanism's
+position in the deployment file. The consequence is easy to state and was
+embarrassing to find: \textbf{a deployment compared as incomparable to a
+reordering of itself.} Two files listing the same mechanisms in a different
+order produced different tags, hence different assumption tuples, hence two
+trust sets neither of which contained the other.
+
+This matters beyond tidiness. The answer this paper offers to the
+completeness problem (Section~\ref{sec:open}) is to have a second author
+encode the same deployment independently and diff the two trust sets, treating
+any divergence as a finding. That experiment is worthless if the comparison
+reports divergence for two encodings that differ only in the order somebody
+typed the stanzas --- it would produce a divergence every time and mean
+nothing.
+
+Tags are now derived from \emph{canonical content}, not position: a mechanism
+renders to a fixed-order string with list-valued fields sorted, and repeated
+identical declarations are distinguished by an ordinal among mechanisms
+sharing that content rather than by file position. So reordering distinct
+mechanisms cannot change any tag, while two genuinely repeated declarations
+stay distinct. The comparison is order-independent by construction, and the
+property is pinned by tests --- one asserting that a deployment and its
+reordering compare \textsc{Equal} with an empty diff, one asserting that tags
+are a stable multiset under reordering, and one asserting that an
+\texttt{a}, \texttt{b}, \texttt{a} sequence assigns the second \texttt{a}
+ordinal 1 by content rather than 2 by position.
+
+The canonical rendering is unambiguous only because principal identifiers
+cannot contain the grammar's delimiters. That is enforced once, when a
+deployment is validated, and it is the kind of invariant that a later
+convenience change could quietly break; the code says so at the point where
+it would be broken.
+
+% ================================================================
+\section{Why It Terminates}
+\label{sec:termination}
+
+The design this implements proposed encoding the calculus as Datalog with
+tabled (SLG) resolution~\cite{slg,xsb}, or a Souffl\'{e}
+equivalent~\cite{souffle}, because real deployments contain
+circular delegation --- $A$ vouches for $B$ vouches for $C$ vouches for $A$
+--- and a top-down proof search will chase that cycle forever. That reasoning
+is correct about SLD resolution and unnecessary here, and the difference is
+worth being precise about, because ``we used a simpler method'' is a claim a
+referee is entitled to check.
+
+Here is the argument.
+
+\begin{proposition}[Termination]
+For any finite deployment description, the residual trust set is reached in
+finitely many steps, regardless of cycles in the delegation graph.
+\end{proposition}
+
+\begin{proof}[Argument]
+Fix a deployment with a finite set of declared principals $\mathcal{P}$, a
+finite list of mechanisms $M$, and a finite set of delegation edges $E$. Let
+$A$ be the set of assumptions that can ever be derived. $A$ is finite: each
+mechanism $m \in M$ contributes $|\mathcal{A}(m)|$ assumptions, which is a
+constant for every rule except \texttt{gossip} and \texttt{witness\_quorum},
+where it is the number of declared peers or witnesses; and each delegation
+edge contributes exactly one \texttt{delegation\_integrity} assumption tagged
+with its target. So $|A| \le \sum_{m \in M} |\mathcal{A}(m)| + |E|$.
+
+The residual set is the least fixpoint of a monotone operator on
+$(\mathcal{P}(A), \subseteq)$. Every rule is monotone --- no rule ever removes
+an assumption or a load-bearing fact --- and the lattice has height $|A|$,
+which is finite. A monotone operator on a complete lattice has a least
+fixpoint~\cite{tarski}, and on a lattice of finite height Kleene iteration
+reaches it after at most $|A|$ rounds. Cycles in the \textsf{speaks-for} relation cannot change
+this, because rule 2 derives facts in the finite domain $\mathcal{C} \times
+\mathcal{P}$ rather than generating new terms: a cycle simply means the same
+finite set of facts is re-derivable by more than one path, and re-deriving a
+fact already present adds nothing and terminates the round.
+\end{proof}
+
+The reason tabling is unnecessary, stated plainly: SLD resolution diverges on
+cyclic data because it is a top-down search that generates goals, and nothing
+stops it from generating the same goal forever. Tabling fixes that by
+remembering goals it has already tried. But we are not doing a top-down proof
+search. We evaluate bottom-up over ground facts in a finite domain, so the
+thing tabling remembers is the thing bottom-up evaluation computes anyway.
+The machinery solves a problem this formulation does not have. In practice we
+express the rules in \texttt{ascent}~\cite{ascent}, a Datalog embedded in Rust
+with support for lattice-valued relations, which does semi-naive bottom-up
+evaluation; the lattice-valued relation is exactly the residual trust set,
+with union as its join.
+
+This is not only an argument. A test in the artifact builds a delegation cycle
+through 300 principals, spanning two mechanism layers, and solves it: every
+principal comes out load-bearing, as the cycle requires, and the whole test
+including parsing runs in well under a second on a laptop in an unoptimized
+build. We report that as evidence of termination, not as a performance
+result; we have not characterized how the runtime grows, and
+Section~\ref{sec:open} lists the complexity bound as unverified.
+
+% ================================================================
+\section{Does It Actually Work?}
+\label{sec:eval}
+
+% RESULTS PLACEHOLDER — populated from ../results/ by scripts/regen-results.sh.
+% Do not type numbers here by hand. The comparison matrix below is generated
+% LaTeX; the per-deployment trust sets and the shared-dependency listing are
+% still to be wired in from ../results/*.json and
+% ../results/hybrid-shared-dependencies.txt.
+
+Five deployments are encoded and shipped with the artifact:
+$\Sigma_1$, a software-only host with signed measurement logs; $\Sigma_2$,
+Intel TDX with ECDSA quotes and PCS collateral; $\Sigma_3$, a 5-of-7 witness
+quorum over a transparency log; $\Sigma_4$, a Groth16 rollup with an on-chain
+verifier; and $\Sigma_5$, a hybrid combining a TEE with a ZK proof. All five
+were written by us. Nothing here has been validated against somebody else's
+production deployment, and the five examples are the entire evidence base for
+every number in this section.
+
+\subsection{Reproducing the hand-derived TDX set}
+% RESULTS PLACEHOLDER — trust set for Sigma_2 from ../results/sigma2-tdx.manifest.json.
+
+The first success criterion is that the tool produces the five parties of
+Table~\ref{tab:tdx} from the $\Sigma_2$ description, with the collateral
+authority as the only bounded-detection entry, without those five being named
+as a group in the encoding. It does. The detailed manifest belongs here and
+will be generated rather than typed.
+
+\subsection{The comparison matrix}
+
+Table~\ref{tab:matrix} is generated directly by
+\texttt{scripts/regen-results.sh} from the tool's own output; the build fails
+if it disagrees with the code.
+
+\begin{table}[h]
+\centering\small
+\caption{Every ordered pair among the four single-mechanism deployments under
+set inclusion. Pairs attesting different propositions are marked N/A rather
+than omitted: \parallax{} refuses to rank verifiability across two different
+claims, and a truncated matrix would be indistinguishable from a broken run.}
+\label{tab:matrix}
+\input{../results/comparison-matrix.tex}
+\end{table}
+
+Every pair the tool will rank at all --- that is, every pair attesting the
+same proposition --- comes out \textsc{Incomparable}. If that holds up, it is
+the headline: under set inclusion there is no partial order over these
+designs, so no ordinal tier ladder can be sound, and conformance should
+publish a trust set rather than a tier.
+
+\subsection{The shared dependency}
+% RESULTS PLACEHOLDER — from ../results/hybrid-shared-dependencies.txt.
+
+The second success criterion is a non-obvious finding. $\Sigma_5$ layers a
+hardware TEE under a zero-knowledge proof and is the shape of design that gets
+described as defence in depth. The tool reports that both layers rest on the
+same build pipeline: it supplies the reference values the TEE measurement is
+compared against \emph{and} compiles the circuit whose constraints the proof
+relies on. One build-pipeline compromise corrupts both simultaneously. The
+two layers are not independent.
+
+We should be careful about how much credit this deserves. We constructed
+$\Sigma_5$, so the tool found something we put there. The claim is that the
+analysis finds it from the description --- the shared principal is not
+remarked on anywhere in the file --- and that a matched variant with genuinely
+separate pipelines reports nothing, so the check is not simply always firing.
+Whether it finds such things in deployments nobody constructed is untested.
+
+\subsection{Detection latency and policy}
+% RESULTS PLACEHOLDER — system latency per deployment from ../results/*.json;
+% policy-check outcomes from examples/policy-strict.toml.
+
+The composed $\Delta$ for each deployment, and the outcome of checking each
+manifest against a strict local policy, belong here.
+
+% ================================================================
+\section{Re-Deriving the Tiers}
+\label{sec:tiers}
+
+% RESULTS PLACEHOLDER — depends on the full ordering experiment across
+% Sigma_1..Sigma_5, which has not been run.
+
+The remaining experiment is to test each candidate total ordering ---
+cardinality, collusion cost, set inclusion, detection-latency bound --- against
+the encoded deployments and report which survive. The prediction is that none
+does, for independent reasons: cardinality treats one opaque silicon vendor as
+equivalent to ten transparent witnesses; collusion cost is adversary-relative,
+so a domestic enterprise and a cross-border protocol rank the same two designs
+oppositely; and set inclusion, per Table~\ref{tab:matrix}, does not hold. If
+that is the outcome, the contribution is the manifest schema plus a
+policy-evaluation procedure rather than a repaired ladder. We have not run it
+yet, and we would rather leave this section visibly empty than fill it with
+the answer we expect.
+
+% ================================================================
+\section{What We Still Don't Know}
+\label{sec:open}
+
+\subsection{The completeness problem, which is the real objection}
+
+A solver computes over the dependencies that were \emph{encoded}. It cannot
+discover one that was not.
+
+This is the thing to worry about, and it is worse than an ordinary
+limitation, because the failure mode is not silence but confidence. A tool
+that prints a tidy five-element trust set while a sixth dependency exists
+off-model has converted an open question into a wrong answer, and it has done
+so in a format designed to be trusted. That is worse than no tool. If you
+take one thing from this paper, we would rather it be this sentence than the
+incomparability result.
+
+We do not have a solution. We have three partial answers, none satisfying:
+
+\begin{enumerate}[itemsep=2pt,topsep=2pt]
+\item \textbf{Independent encoding and diff.} Have a second author encode the
+same deployment without seeing the first encoding, and diff the trust sets.
+Any divergence is a finding about the calculus rather than a bug to fix
+quietly. The tool supports this --- \texttt{parallax diff} exits non-zero
+when two trust sets differ, so it can be a CI gate --- and
+Section~\ref{sec:orderindep} explains why the comparison had to be made
+order-independent before the experiment could mean anything. We have not run
+it with a genuinely independent author. Until we do, this is a plan, not a
+result. Note also what it can and cannot detect: it finds dependencies one
+author saw and the other missed. It is blind to a dependency that neither
+saw, which is the case we are most afraid of.
+\item \textbf{Adversarial review of the description.} Treat the deployment
+file as the artifact under attack rather than the tool. We have not built a
+procedure for this.
+\item \textbf{Printing the caveat with every output.} Every manifest the tool
+emits should carry, in band, the statement that it enumerates modelled
+dependencies only. This is the weakest of the three and the only one that is
+free.
+\end{enumerate}
+
+\subsection{The rules are not proved sound}
+
+Table~\ref{tab:rules} is a set of design decisions, not theorems. Nothing here
+proves that if the parties in $T$ are honest then $P$ actually holds, against
+an operational model in which a named principal may deviate arbitrarily.
+Soundness is where the artifact's value ultimately has to come from, and it is
+future work. What we have is a mechanization of rules that agree with a
+careful hand analysis on the cases we checked.
+
+\subsection{Principal independence is asserted, never computed}
+
+A quorum rule reduces to a non-collusion predicate over named parties, and
+nothing in the calculus prevents five of seven ``independent'' witnesses from
+sharing a jurisdiction, a cloud region, a corporate parent, or a hardware
+supplier. The tool finds shared \emph{principals} --- that is the $\Sigma_5$
+result --- but a shared principal is the easy case, because at least both
+layers named the same identifier. Two distinct identifiers that happen to be
+subsidiaries of the same company are invisible to it.
+
+Whether independence can be computed from a description at all, or must be
+asserted by somebody who knows the world, is open and consequential. Our
+suspicion is that it must be asserted, in which case the honest design is for
+the manifest to record who asserted it.
+
+\subsection{Whether $\Delta$ should compose as a max}
+
+We compose detection latency as a join that takes the worse bound, with
+$\Never$ absorbing. The argument for it is that a system is only as detectable
+as its least detectable part, which is the right thing to tell somebody
+deciding whether to rely on the evidence. The arguments against it are real:
+
+Two independent monitors watching the same party do not obviously give you the
+worse of their two latencies; you might argue for the better, since either one
+detecting is enough. A chain of detection steps --- an anchor that must be
+published, then gossiped, then noticed --- might argue for a sum. And a
+judgment carries a validity window that the composed $\Delta$ does not
+represent: what a $\SI{12}{\hour}$ collateral bound means when the quote is
+checked \SI{13}{\hour} later is a question we currently answer by degenerating
+to the unmonitored case, which is a choice and not a derivation.
+
+Max is defensible and it is what is implemented. We do not claim it is
+derived.
+
+\subsection{The evidence base is five deployments, all ours}
+
+Every result in Section~\ref{sec:eval} comes from five examples we wrote. The
+tool reproduces a trust set we had already derived by hand --- which is
+evidence it implements what we intended, and weaker evidence that what we
+intended is right --- and finds a shared dependency in a deployment we
+constructed to contain one. Neither of those is validation against reality.
+The complexity claim from the original design, that computing $T(\Sigma)$ is
+polynomial in principals $\times$ credentials, is likewise unverified: we have
+a termination argument (Section~\ref{sec:termination}) and one 300-node
+example, not a bound.
+
+\subsection{If the ladder goes, what replaces it}
+
+Supposing incomparability holds and conformance publishes a manifest instead
+of a tier, three questions open that we do not answer. How does a relying
+party with a local policy evaluate an unfamiliar manifest? The tool has a
+policy checker, which is a start and not an answer. How are principals named
+stably enough to compare manifests written by different people --- our
+examples use DIDs, which pushes the problem somewhere else rather than solving
+it. And what stops manifest inflation, where a vendor lists many trivial
+assumptions to look rigorous? A trust set is only useful if listing more
+assumptions is not rewarded.
+
+% ================================================================
+\section{Conclusion}
+
+The claim that hardware attestation leaves nobody to trust is not a small
+overstatement; it is wrong in a way that changes what a conformance claim
+means. Believing one Intel TDX measurement requires accepting five distinct
+parties, and for three of them there is no mechanism anywhere in the system
+that would ever report a violation. That is worth writing down, and the way
+to make sure it gets written down is to compute it rather than argue about it.
+
+The calculus in this paper is small: a judgment with a trust set and a
+detection bound, a composition rule per mechanism, two lattices, and a least
+fixpoint. Its termination on the case everyone worries about --- circular
+delegation --- follows from finite lattice height and needs none of the
+machinery originally proposed for it. Its output on the deployments we encoded
+suggests that residual trust sets are incomparable rather than ordered, which
+would mean the ladder is the wrong abstraction and conformance should publish
+a set.
+
+And the tool cannot see what nobody encoded. We would rather that be the
+sentence people remember than the incomparability result, because a residual
+trust set is a claim about what you depend on, and a confident claim of that
+kind is exactly the thing this paper began by objecting to.
+
+% ================================================================
+\section*{Acknowledgments}
+
+Prepared within the Proof-of-Control Initiative of the Advanced AI Society.
+The Initiative's working groups, board and advisory board are credited
+separately; contributions to this manuscript are the basis for authorship.
+
+\bibliographystyle{unsrt}
+\bibliography{references}
+
+\end{document}

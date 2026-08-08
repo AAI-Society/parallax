@@ -1,0 +1,241 @@
+% Bibliography for P01 — A Trust Calculus for Attestation Tiers.
+%
+% Entries marked [verify] carry metadata that has not been checked against
+% the primary source. Confirm before submission; see README.md.
+
+% ---------------------------------------------------------------- attestation
+@techreport{rfc9334,
+  author      = {Birkholz, Henk and Thaler, Dave and Richardson, Michael and Smith, Ned and Pan, Wei},
+  title       = {Remote {AT}testation procedure{S} ({RATS}) Architecture},
+  institution = {Internet Engineering Task Force},
+  type        = {RFC},
+  number      = {9334},
+  year        = {2023},
+  url         = {https://www.rfc-editor.org/rfc/rfc9334}
+}
+
+@misc{intelTdx,
+  author       = {{Intel Corporation}},
+  title        = {Intel Trust Domain Extensions ({Intel TDX}) Module Architecture
+                  Specification},
+  howpublished = {\url{https://www.intel.com/content/www/us/en/developer/tools/trust-domain-extensions/documentation.html}},
+  note         = {[verify] document revision and date},
+  year         = {2023}
+}
+
+@inproceedings{daa,
+  author    = {Brickell, Ernie and Camenisch, Jan and Chen, Liqun},
+  title     = {Direct Anonymous Attestation},
+  booktitle = {Proceedings of the 11th ACM Conference on Computer and
+               Communications Security (CCS)},
+  pages     = {132--145},
+  year      = {2004}
+}
+
+% -------------------------------------------------- authorization logics
+@article{abadi1993,
+  author  = {Abadi, Mart\'{\i}n and Burrows, Michael and Lampson, Butler and
+             Plotkin, Gordon},
+  title   = {A Calculus for Access Control in Distributed Systems},
+  journal = {ACM Transactions on Programming Languages and Systems},
+  volume  = {15},
+  number  = {4},
+  pages   = {706--734},
+  year    = {1993}
+}
+
+@article{lampson1992,
+  author  = {Lampson, Butler and Abadi, Mart\'{\i}n and Burrows, Michael and
+             Wobber, Edward},
+  title   = {Authentication in Distributed Systems: Theory and Practice},
+  journal = {ACM Transactions on Computer Systems},
+  volume  = {10},
+  number  = {4},
+  pages   = {265--310},
+  year    = {1992}
+}
+
+@article{nal,
+  author  = {Schneider, Fred B. and Walsh, Kevin and Sirer, Emin G\"{u}n},
+  title   = {Nexus Authorization Logic ({NAL}): Design Rationale and
+             Applications},
+  journal = {ACM Transactions on Information and System Security},
+  volume  = {14},
+  number  = {1},
+  pages   = {8:1--8:28},
+  year    = {2011}
+}
+
+@article{secpal,
+  author  = {Becker, Moritz Y. and Fournet, C\'{e}dric and Gordon, Andrew D.},
+  title   = {{SecPAL}: Design and Semantics of a Decentralized Authorization
+             Language},
+  journal = {Journal of Computer Security},
+  volume  = {18},
+  number  = {4},
+  pages   = {619--665},
+  year    = {2010}
+}
+
+@inproceedings{dkal,
+  author    = {Gurevich, Yuri and Neeman, Itay},
+  title     = {{DKAL}: Distributed-Knowledge Authorization Language},
+  booktitle = {21st IEEE Computer Security Foundations Symposium (CSF)},
+  pages     = {149--162},
+  year      = {2008}
+}
+
+@inproceedings{binder,
+  author    = {DeTreville, John},
+  title     = {Binder, a Logic-Based Security Language},
+  booktitle = {IEEE Symposium on Security and Privacy},
+  pages     = {105--113},
+  year      = {2002}
+}
+
+% ---------------------------------------------------------- transparency
+@techreport{rfc6962,
+  author      = {Laurie, Ben and Langley, Adam and Kasper, Emilia},
+  title       = {Certificate Transparency},
+  institution = {Internet Engineering Task Force},
+  type        = {RFC},
+  number      = {6962},
+  year        = {2013},
+  url         = {https://www.rfc-editor.org/rfc/rfc6962}
+}
+
+@techreport{rfc9162,
+  author      = {Laurie, Ben and Messeri, Eran and Stradling, Rob},
+  title       = {Certificate Transparency Version 2.0},
+  institution = {Internet Engineering Task Force},
+  type        = {RFC},
+  number      = {9162},
+  year        = {2021},
+  url         = {https://www.rfc-editor.org/rfc/rfc9162}
+}
+
+@inproceedings{coniks,
+  author    = {Melara, Marcela S. and Blankstein, Aaron and Bonneau, Joseph and
+               Felten, Edward W. and Freedman, Michael J.},
+  title     = {{CONIKS}: Bringing Key Transparency to End Users},
+  booktitle = {24th USENIX Security Symposium},
+  pages     = {383--398},
+  year      = {2015}
+}
+
+% ------------------------------------------------------- attestation critiques
+@inproceedings{foreshadow,
+  author    = {Van Bulck, Jo and Minkin, Marina and Weisse, Ofir and Genkin, Daniel
+               and Kasikci, Baris and Piessens, Frank and Silberstein, Mark
+               and Wenisch, Thomas F. and Yarom, Yuval and Strackx, Raoul},
+  title     = {Foreshadow: Extracting the Keys to the {Intel SGX} Kingdom with
+               Transient Out-of-Order Execution},
+  booktitle = {27th USENIX Security Symposium},
+  pages     = {991--1008},
+  year      = {2018}
+}
+
+@misc{sgaxe,
+  author       = {van Schaik, Stephan and Kwong, Andrew and Genkin, Daniel and
+                  Yarom, Yuval},
+  title        = {{SGAxe}: How {SGX} Fails in Practice},
+  howpublished = {\url{https://sgaxe.com/files/SGAxe.pdf}},
+  note         = {Technical report},
+  year         = {2020}
+}
+
+@inproceedings{plundervolt,
+  author    = {Murdock, Kit and Oswald, David and Garcia, Flavio D. and
+               Van Bulck, Jo and Gruss, Daniel and Piessens, Frank},
+  title     = {Plundervolt: Software-based Fault Injection Attacks against
+               {Intel SGX}},
+  booktitle = {IEEE Symposium on Security and Privacy},
+  pages     = {1466--1482},
+  year      = {2020}
+}
+
+@inproceedings{aepic,
+  author    = {Borrello, Pietro and Kogler, Andreas and Schwarzl, Martin and
+               Lipp, Moritz and Gruss, Daniel and Schwarz, Michael},
+  title     = {{\AE}{PIC} Leak: Architecturally Leaking Uninitialized Data from
+               the Microarchitecture},
+  booktitle = {31st USENIX Security Symposium},
+  pages     = {3917--3934},
+  year      = {2022}
+}
+
+@misc{costan2016,
+  author       = {Costan, Victor and Devadas, Srinivas},
+  title        = {{Intel SGX} Explained},
+  howpublished = {IACR Cryptology ePrint Archive, Report 2016/086},
+  url          = {https://eprint.iacr.org/2016/086},
+  year         = {2016}
+}
+
+% ------------------------------------------------------- logic-program engines
+@article{slg,
+  author  = {Chen, Weidong and Warren, David S.},
+  title   = {Tabled Evaluation with Delaying for General Logic Programs},
+  journal = {Journal of the ACM},
+  volume  = {43},
+  number  = {1},
+  pages   = {20--74},
+  year    = {1996}
+}
+
+@article{xsb,
+  author  = {Swift, Terrance and Warren, David S.},
+  title   = {{XSB}: Extending {P}rolog with Tabled Logic Programming},
+  journal = {Theory and Practice of Logic Programming},
+  volume  = {12},
+  number  = {1-2},
+  pages   = {157--187},
+  year    = {2012}
+}
+
+@inproceedings{souffle,
+  author    = {Jordan, Herbert and Scholz, Bernhard and Suboti\'{c}, Pavle},
+  title     = {Souffl\'{e}: On Synthesis of Program Analyzers},
+  booktitle = {Computer Aided Verification (CAV)},
+  pages     = {422--430},
+  year      = {2016}
+}
+
+@inproceedings{ascent,
+  author    = {Sahebolamri, Arash and Gilray, Thomas and Micinski, Kristopher},
+  title     = {Seamless Deductive Inference via Macros},
+  booktitle = {Proceedings of the 31st ACM SIGPLAN International Conference on
+               Compiler Construction (CC)},
+  pages     = {77--88},
+  note      = {[verify] pages and proceedings details},
+  year      = {2022}
+}
+
+@article{tarski,
+  author  = {Tarski, Alfred},
+  title   = {A Lattice-Theoretical Fixpoint Theorem and Its Applications},
+  journal = {Pacific Journal of Mathematics},
+  volume  = {5},
+  number  = {2},
+  pages   = {285--309},
+  year    = {1955}
+}
+
+% ------------------------------------------------------------------ this work
+@misc{pocspec,
+  author       = {{Advanced AI Society, Proof-of-Control Initiative}},
+  title        = {Proof-of-Control: An Open Standard for Runtime Verifiability
+                  and Cryptographic Oversight in Autonomous AI Execution},
+  howpublished = {Working draft},
+  note         = {[verify] repository URL and version at submission time},
+  year         = {2026}
+}
+
+@misc{parallaxtool,
+  author       = {Schwoebel, Jim},
+  title        = {\texttt{parallax}: Computing the Residual Trust Set of an
+                  Attestation Deployment},
+  howpublished = {Apache-2.0 licensed software},
+  note         = {[verify] public repository URL at submission time},
+  year         = {2026}
+}

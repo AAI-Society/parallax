@@ -18,3 +18,15 @@ jobs:
             echo "results/ is stale — run ./scripts/regen-results.sh and commit"
             exit 1
           }
+
+  # Separate from `rust` on purpose: the paper build needs no toolchain and
+  # the Rust job needs no LaTeX, so running them independently keeps either
+  # failure legible and lets them run in parallel. The paper `\input`s
+  # results/comparison-matrix.tex from the committed tree; the `rust` job is
+  # what proves that file is current.
+  paper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: WtfJoke/setup-tectonic@v3
+      - run: cd paper && tectonic -Z shell-escape main.tex
