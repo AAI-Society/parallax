@@ -292,8 +292,78 @@ fn compare_cli_reports_incomparable_for_tdx_and_zk() {
 fn the_hybrid_deployments_two_layers_share_a_build_pipeline() {
     let d = Deployment::load(Path::new("examples/sigma5-hybrid.toml")).unwrap();
     let t = solve(&d).unwrap();
-    let shared = shared_dependencies(&t);
+    let shared = shared_dependencies(&d, &t);
     assert_eq!(shared.len(), 1, "exactly one shared principal");
     assert_eq!(shared[0].principal, "did:web:buildco.example");
-    assert_eq!(shared[0].mechanisms.len(), 2, "spans both layers");
+    assert_eq!(shared[0].layers.len(), 2, "spans both layers");
+    let kinds: std::collections::BTreeSet<&str> =
+        shared[0].layers.iter().map(|l| l.kind.as_str()).collect();
+    assert_eq!(
+        kinds,
+        ["tee_attestation", "zk_proof"].into_iter().collect(),
+        "the shared principal is direct in both layers, not via delegation"
+    );
+    assert!(shared[0].layers.iter().all(|l| !l.via_delegation));
+}
+
+/// Negative-direction pin for acceptance test 3, requested by the Task 7
+/// review: a hybrid deployment whose TEE and ZK layers genuinely use
+/// different build pipelines must report no shared dependency at all.
+#[test]
+fn the_hybrid_variant_with_independent_pipelines_has_no_shared_dependency() {
+    let d = Deployment::load(Path::new(
+        "examples/sigma5-hybrid-independent-pipelines.toml",
+    ))
+    .unwrap();
+    let t = solve(&d).unwrap();
+    assert!(
+        shared_dependencies(&d, &t).is_empty(),
+        "genuinely independent build pipelines must not be flagged as shared"
+    );
+}
+
+/// `parallax solve --shared` must surface the shared-dependency block on the
+/// hybrid deployment, naming both layers and the shared principal.
+#[test]
+fn solve_shared_flag_reports_the_hybrid_deployments_shared_pipeline() {
+    let out = bin()
+        .args(["solve", "examples/sigma5-hybrid.toml", "--shared"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("SHARED DEPENDENCIES"), "got: {stdout}");
+    assert!(stdout.contains("did:web:buildco.example"), "got: {stdout}");
+    assert!(stdout.contains("tee_attestation"), "got: {stdout}");
+    assert!(stdout.contains("zk_proof"), "got: {stdout}");
+}
+
+/// `parallax solve --shared` must print the explicit "nothing shared"
+/// message, not just omit the block, when a deployment has only one
+/// mechanism.
+#[test]
+fn solve_shared_flag_reports_nothing_for_a_single_mechanism_deployment() {
+    let out = bin()
+        .args(["solve", "examples/sigma2-tdx.toml", "--shared"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("No principal spans more than one mechanism."),
+        "got: {stdout}"
+    );
+}
+
+/// Without `--shared`, the solve output must not mention shared
+/// dependencies at all — the flag must be opt-in.
+#[test]
+fn solve_without_shared_flag_omits_the_shared_dependency_block() {
+    let out = bin()
+        .args(["solve", "examples/sigma5-hybrid.toml"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("SHARED DEPENDENCIES"), "got: {stdout}");
 }

@@ -1,0 +1,52 @@
+# Variant of the Σ₅ hybrid where the TEE and ZK layers use genuinely
+# different build pipelines. Pins the negative-direction case: when the
+# two layers really are independent, no principal should be flagged.
+name = "sigma5-hybrid-independent-pipelines"
+claim = "execution_valid"
+
+[[principal]]
+id = "did:web:intel.com"
+role = "SiliconManufacturer"
+
+[[principal]]
+id = "did:web:pcs.intel.com"
+role = "CertificationAuthority"
+
+[[principal]]
+id = "urn:qe:tdx"
+role = "QuotingEnclave"
+
+[[principal]]
+id = "did:web:cloud.example.com"
+role = "CloudOperator"
+
+[[principal]]
+id = "did:web:buildco.example"
+role = "BuildPipeline"
+
+[[principal]]
+id = "did:web:zkbuild.example"
+role = "CircuitCompiler"
+
+[[principal]]
+id = "did:web:ceremony.example"
+role = "CeremonyParticipants"
+
+[[principal]]
+id = "did:web:auditor.example"
+role = "CircuitAuditor"
+
+[[mechanism]]
+kind = "tee_attestation"
+endorser = "did:web:intel.com"
+quoting_enclave = "urn:qe:tdx"
+collateral_authority = "did:web:pcs.intel.com"
+collateral_refresh = "12h"
+reference_values = "did:web:buildco.example"
+host = "did:web:cloud.example.com"
+
+[[mechanism]]
+kind = "zk_proof"
+ceremony = "did:web:ceremony.example"
+compiler = "did:web:zkbuild.example"
+auditor = "did:web:auditor.example"

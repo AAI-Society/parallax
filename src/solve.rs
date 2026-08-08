@@ -40,12 +40,27 @@ ascent! {
     // is honest and unrevoked. This fires unconditionally for any `sub` that
     // speaks for a load-bearing `sup`, whether or not `sub` also has
     // mechanisms of its own.
+    //
+    // The tag is `delegation(sup=...)`, not a flat `"delegation"` literal:
+    // the Task 7 review found that a flat tag made every delegation
+    // assumption in a deployment byte-identical regardless of which `sup`
+    // it named. That produced a false positive (a single mechanism plus one
+    // delegation edge read as "two layers" because `shared_dependencies`
+    // saw two distinct tags — the mechanism's and the flat literal's — for
+    // the delegate) and a false negative (a principal delegating into two
+    // *different* mechanisms collapsed to one deduplicated assumption,
+    // since both delegation edges produced the same literal tag, hiding a
+    // genuine shared dependency). Tagging by `sup` keeps distinct
+    // delegation edges distinct; `shared::shared_dependencies` further
+    // excludes `delegation(...)` tags from mechanism membership entirely,
+    // resolving delegation reach against the *target's* own mechanism tags
+    // instead.
     residual(claim.clone(), TrustSet::singleton(Assumption {
         principal: sub.clone(),
         capability: "delegation_integrity".to_string(),
         latency: Latency::Never,
         impact: Impact::Soundness,
-        mechanism: "delegation".to_string(),
+        mechanism: format!("delegation(sup={sup})"),
     })) <--
         load_bearing(claim, sup),
         speaks_for(sub, sup);
@@ -221,7 +236,7 @@ sup = "root"
         );
         let d_assumption = t.0.iter().find(|a| a.principal == "sub").unwrap();
         assert_eq!(d_assumption.capability, "delegation_integrity");
-        assert_eq!(d_assumption.mechanism, "delegation");
+        assert_eq!(d_assumption.mechanism, "delegation(sup=root)");
     }
 
     #[test]
@@ -240,7 +255,55 @@ signer = "root"
         );
         let t = solve(&d).unwrap();
         assert_eq!(t.len(), 1);
-        assert!(t.0.iter().all(|a| a.mechanism != "delegation"));
+        assert!(t.0.iter().all(|a| !a.mechanism.starts_with("delegation(")));
+    }
+
+    #[test]
+    fn two_delegation_edges_from_the_same_sub_to_different_sups_stay_distinct() {
+        // Regression for the Task 7 review's Important #2: a flat
+        // "delegation" tag made both edges byte-identical `Assumption`s, so
+        // `BTreeSet` deduplicated them to one and a genuine two-target
+        // delegation vanished from the trust set.
+        let d = load(
+            r#"
+name = "fanout"
+claim = "c"
+[[principal]]
+id = "p"
+role = "R"
+[[principal]]
+id = "sup1"
+role = "R"
+[[principal]]
+id = "sup2"
+role = "R"
+[[mechanism]]
+kind = "signing"
+signer = "sup1"
+[[mechanism]]
+kind = "signing"
+signer = "sup2"
+[[delegation]]
+sub = "p"
+sup = "sup1"
+[[delegation]]
+sub = "p"
+sup = "sup2"
+"#,
+        );
+        let t = solve(&d).unwrap();
+        let p_assumptions: Vec<&str> =
+            t.0.iter()
+                .filter(|a| a.principal == "p")
+                .map(|a| a.mechanism.as_str())
+                .collect();
+        assert_eq!(
+            p_assumptions.len(),
+            2,
+            "two distinct delegation edges must survive as two assumptions, got {p_assumptions:?}"
+        );
+        assert!(p_assumptions.contains(&"delegation(sup=sup1)"));
+        assert!(p_assumptions.contains(&"delegation(sup=sup2)"));
     }
 
     #[test]

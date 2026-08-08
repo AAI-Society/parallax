@@ -83,15 +83,24 @@ fn run() -> Result<ExitCode> {
                 t.principals().len()
             );
             if shared {
-                let sd = parallax::shared::shared_dependencies(&t);
+                let sd = parallax::shared::shared_dependencies(&d, &t);
                 if sd.is_empty() {
                     println!("\nNo principal spans more than one mechanism.");
                 } else {
                     println!("\nSHARED DEPENDENCIES — layers that are not independent:");
                     for s in &sd {
-                        println!("  {} appears in {}", s.principal, s.mechanisms.join(", "));
-                        for c in &s.capabilities {
-                            println!("      {c}");
+                        println!("  {}", s.principal);
+                        for l in &s.layers {
+                            let via = if l.via_delegation {
+                                " (via delegation)"
+                            } else {
+                                ""
+                            };
+                            println!("    {}{via}", l.kind);
+                            println!("      {}", l.mechanism);
+                            for c in &l.capabilities {
+                                println!("        {c}");
+                            }
                         }
                     }
                 }
