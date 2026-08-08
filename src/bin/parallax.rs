@@ -63,8 +63,19 @@ fn run() -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Compare { a, b } => {
-            let ta = parallax::solve::solve(&Deployment::load(&a)?)?;
-            let tb = parallax::solve::solve(&Deployment::load(&b)?)?;
+            let da = Deployment::load(&a)?;
+            let db = Deployment::load(&b)?;
+            if da.claim != db.claim {
+                anyhow::bail!(
+                    "cannot compare trust sets for different claims \
+                     (`{}` vs `{}`); comparing verifiability across two \
+                     different propositions is not meaningful",
+                    da.claim,
+                    db.claim
+                );
+            }
+            let ta = parallax::solve::solve(&da)?;
+            let tb = parallax::solve::solve(&db)?;
             let rel = parallax::compare::compare(&ta, &tb);
             println!("{rel:?}");
             if rel == parallax::compare::Relation::Incomparable {

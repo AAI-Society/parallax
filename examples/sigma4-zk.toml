@@ -1,5 +1,5 @@
 name = "sigma4-zk"
-claim = "proof_valid"
+claim = "execution_valid"
 
 [[principal]]
 id = "did:web:ceremony.example"
@@ -29,7 +29,7 @@ auditor = "did:web:zkauditor.example"
 
 [[mechanism]]
 kind = "anchoring"
-log_operator = "did:web:zklog.example"
-interval = "10m"
+log_operator = "did:web:zklog.example" # placeholder: brief specifies only settlement/finality
+interval = "10m" # placeholder: brief specifies only settlement/finality
 settlement = "did:web:l1.example"
 finality = "12s"

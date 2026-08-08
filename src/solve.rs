@@ -1,6 +1,6 @@
 use crate::deployment::Deployment;
 use crate::latency::{Latency, LatencyError};
-use crate::mechanism::assumptions;
+use crate::mechanism::{assumptions, mechanism_tags};
 use crate::trust::{Assumption, Impact, TrustSet};
 use ascent::ascent;
 
@@ -54,8 +54,9 @@ ascent! {
 pub fn solve(d: &Deployment) -> Result<TrustSet, SolveError> {
     let mut prog = AscentProgram::default();
 
-    for (i, spec) in d.mechanism.iter().enumerate() {
-        for a in assumptions(spec, i)? {
+    let tags = mechanism_tags(&d.mechanism);
+    for (spec, t) in d.mechanism.iter().zip(tags.iter()) {
+        for a in assumptions(spec, t)? {
             let holder = a.principal.clone();
             prog.held_by
                 .push((d.claim.clone(), holder, TrustSet::singleton(a)));

@@ -1,4 +1,5 @@
 use crate::trust::{Assumption, TrustSet};
+use std::cmp::Ordering;
 
 /// How two residual trust sets relate under set inclusion.
 ///
@@ -12,14 +13,15 @@ pub enum Relation {
     Incomparable,
 }
 
+/// Delegates to `TrustSet::partial_cmp` — the hand-written subset order in
+/// `trust.rs` — rather than re-deriving subset tests here, so there is one
+/// definition of the order.
 pub fn compare(a: &TrustSet, b: &TrustSet) -> Relation {
-    let a_in_b = a.0.is_subset(&b.0);
-    let b_in_a = b.0.is_subset(&a.0);
-    match (a_in_b, b_in_a) {
-        (true, true) => Relation::Equal,
-        (true, false) => Relation::Subset,
-        (false, true) => Relation::Superset,
-        (false, false) => Relation::Incomparable,
+    match a.partial_cmp(b) {
+        Some(Ordering::Equal) => Relation::Equal,
+        Some(Ordering::Less) => Relation::Subset,
+        Some(Ordering::Greater) => Relation::Superset,
+        None => Relation::Incomparable,
     }
 }
 
@@ -96,5 +98,29 @@ mod tests {
         assert_eq!(only_b.len(), 1);
         assert_eq!(only_a[0].principal, "x");
         assert_eq!(only_b[0].principal, "y");
+    }
+
+    #[test]
+    fn two_empty_sets_are_equal() {
+        assert_eq!(
+            compare(&TrustSet::default(), &TrustSet::default()),
+            Relation::Equal
+        );
+    }
+
+    #[test]
+    fn nonempty_compared_to_empty_is_a_superset() {
+        assert_eq!(
+            compare(&set(&["x"]), &TrustSet::default()),
+            Relation::Superset
+        );
+    }
+
+    #[test]
+    fn diff_of_a_set_with_itself_is_two_empty_vectors() {
+        let s = set(&["x", "y"]);
+        let (only_a, only_b) = diff(&s, &s);
+        assert!(only_a.is_empty());
+        assert!(only_b.is_empty());
     }
 }

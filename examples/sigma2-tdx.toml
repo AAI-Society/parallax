@@ -1,5 +1,5 @@
 name = "sigma2-tdx"
-claim = "measurement_valid"
+claim = "execution_valid"
 
 [[principal]]
 id = "did:web:intel.com"
