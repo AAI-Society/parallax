@@ -22,6 +22,8 @@ pub enum DeploymentError {
     BadQuorum { k: usize, n: usize },
     #[error("`{id}` delegates to itself, which adds no trust")]
     SelfDelegation { id: String },
+    #[error("principal id `{id}` contains `{ch}`, which is reserved")]
+    ReservedCharacter { id: String, ch: char },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -155,6 +157,28 @@ impl Deployment {
     }
 
     pub fn validate(&self) -> Result<(), DeploymentError> {
+        // `mechanism.rs::canonical` builds an order-independent identity
+        // string for a mechanism by joining its principal ids with `,`
+        // inside a `kind(field=value,...)` grammar. That grammar is only
+        // unambiguous — e.g. `gossip(peers=["a,b"])` distinct from
+        // `gossip(peers=["a","b"])` — if no principal id can itself contain
+        // a character the grammar treats as a separator. Reject those
+        // characters here, on every declared id, rather than escaping them
+        // in `canonical`: DIDs and URNs never legitimately need them, and a
+        // load-time rejection fails loudly instead of silently colliding
+        // two different mechanisms into one tag.
+        const RESERVED: [char; 4] = [',', '(', ')', '='];
+        for p in &self.principal {
+            for ch in RESERVED {
+                if p.id.contains(ch) {
+                    return Err(DeploymentError::ReservedCharacter {
+                        id: p.id.clone(),
+                        ch,
+                    });
+                }
+            }
+        }
+
         let declared: BTreeSet<&str> = self.principal.iter().map(|p| p.id.as_str()).collect();
         for d in &self.delegation {
             for id in [&d.sub, &d.sup] {
@@ -330,5 +354,28 @@ k = 0
 "#;
         let d: Deployment = toml::from_str(src).unwrap();
         assert!(d.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_a_principal_id_containing_a_comma() {
+        // A comma inside a principal id would let it collide with the `,`
+        // that `canonical` (in mechanism.rs) uses to separate list entries
+        // in `gossip(peers=...)`/`witness_quorum(witnesses=...)` — e.g. the
+        // single id "a,b" and the two ids "a","b" would render identically.
+        let src = r#"
+name = "bad"
+claim = "c"
+
+[[principal]]
+id = "did:web:a,b"
+role = "R"
+"#;
+        let d: Deployment = toml::from_str(src).unwrap();
+        let err = d.validate().unwrap_err();
+        assert!(matches!(
+            err,
+            DeploymentError::ReservedCharacter { ref id, ch } if id == "did:web:a,b" && ch == ','
+        ));
+        assert!(format!("{err}").contains("did:web:a,b"));
     }
 }

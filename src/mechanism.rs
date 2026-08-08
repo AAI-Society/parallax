@@ -9,6 +9,20 @@ use std::collections::BTreeMap;
 /// identical strings regardless of field- or list-ordering in the source
 /// file, which is what lets `mechanism_tags` assign identity that doesn't
 /// depend on where a mechanism sits in the file.
+///
+/// This grammar — `kind(field=value,field=value)`, list fields joined by
+/// `,` — is unambiguous only because no principal id can itself contain
+/// `,`, `(`, `)`, or `=`: without that guarantee, `gossip(peers=["a,b"])`
+/// and `gossip(peers=["a","b"])` would render identically, letting two
+/// genuinely different mechanisms collide onto one tag (which reintroduces
+/// the reordering bug this whole module exists to prevent, just triggered
+/// by content instead of position). The guarantee is enforced once, in
+/// `Deployment::validate` (`DeploymentError::ReservedCharacter`), which
+/// rejects those characters in every declared principal id; since every id
+/// that reaches this function must first pass `validate`'s
+/// undeclared-principal check, that single check covers this function too.
+/// Do not relax the character check in `validate` without re-examining this
+/// invariant.
 fn canonical(spec: &MechanismSpec) -> String {
     match spec {
         MechanismSpec::TeeAttestation {
