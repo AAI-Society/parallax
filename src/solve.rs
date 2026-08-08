@@ -10,6 +10,18 @@ pub enum SolveError {
     Latency(#[from] LatencyError),
 }
 
+/// Prefix marking an `Assumption::mechanism` tag as delegation reach rather
+/// than mechanism membership. Defined once, here, next to the only place
+/// that constructs such a tag, and consumed by
+/// `shared::direct_membership`'s `starts_with` filter rather than each side
+/// keeping its own copy of the literal. `MechanismSpec`'s `kind` values are
+/// serde `snake_case` variant names (see `mechanism.rs::canonical`), so a
+/// future variant named `Delegation` would produce a tag colliding with this
+/// prefix; `shared::tests::no_mechanism_kind_collides_with_the_delegation_tag_prefix`
+/// exists to catch that the day it happens, rather than letting the
+/// analysis silently drop the tag.
+pub const DELEGATION_TAG_PREFIX: &str = "delegation(";
+
 ascent! {
     /// `claim`, the principal, and the singleton set holding its assumption.
     relation held_by(String, String, TrustSet);
@@ -60,7 +72,7 @@ ascent! {
         capability: "delegation_integrity".to_string(),
         latency: Latency::Never,
         impact: Impact::Soundness,
-        mechanism: format!("delegation(sup={sup})"),
+        mechanism: format!("{DELEGATION_TAG_PREFIX}sup={sup})"),
     })) <--
         load_bearing(claim, sup),
         speaks_for(sub, sup);

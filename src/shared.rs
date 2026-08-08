@@ -1,5 +1,6 @@
 use crate::deployment::Deployment;
 use crate::latency::Latency;
+use crate::solve::DELEGATION_TAG_PREFIX;
 use crate::trust::TrustSet;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -52,17 +53,18 @@ fn latency_label(l: &Latency) -> String {
 /// Every principal a mechanism names directly, indexed by mechanism tag,
 /// with the capabilities (and their latency) it contributes there.
 ///
-/// `delegation(sup=...)` tags are excluded: they record delegation reach,
-/// not mechanism membership. Folding them in here is exactly the Task 7
-/// review's Critical finding — a single mechanism plus one delegation edge
-/// produced two "mechanism" tags for the delegate (the mechanism's own tag,
-/// and the flat `delegation` literal), reading as two independent layers
-/// when there was only one. `shared_dependencies` below resolves delegation
-/// separately, against the *delegate target's* entry in this map.
+/// `delegation(sup=...)` tags — identified by `DELEGATION_TAG_PREFIX` — are
+/// excluded: they record delegation reach, not mechanism membership.
+/// Folding them in here is exactly the Task 7 review's Critical finding — a
+/// single mechanism plus one delegation edge produced two "mechanism" tags
+/// for the delegate (the mechanism's own tag, and the flat `delegation`
+/// literal), reading as two independent layers when there was only one.
+/// `shared_dependencies` below resolves delegation separately, against the
+/// *delegate target's* entry in this map.
 fn direct_membership(t: &TrustSet) -> BTreeMap<String, BTreeMap<String, BTreeSet<String>>> {
     let mut out: BTreeMap<String, BTreeMap<String, BTreeSet<String>>> = BTreeMap::new();
     for a in &t.0 {
-        if a.mechanism.starts_with("delegation(") {
+        if a.mechanism.starts_with(DELEGATION_TAG_PREFIX) {
             continue;
         }
         out.entry(a.principal.clone())
@@ -72,6 +74,20 @@ fn direct_membership(t: &TrustSet) -> BTreeMap<String, BTreeMap<String, BTreeSet
             .insert(format!("{} ({})", a.capability, latency_label(&a.latency)));
     }
     out
+}
+
+/// Working accumulator for one mechanism tag while `shared_dependencies`
+/// walks a principal's direct membership and delegation reach. Kept
+/// separate from the public `Layer` (whose `capabilities` is a `Vec`,
+/// ordered for display) so that capabilities contributed by *different*
+/// delegates reaching the *same* tag can be merged through a `BTreeSet`
+/// before being flattened into the final `Vec` — see the Moderate finding
+/// in the Task 7 review: reporting only the first-visited delegate's
+/// capabilities understated a principal's blast radius within that layer.
+struct LayerAccumulator {
+    kind: String,
+    capabilities: BTreeSet<String>,
+    via_delegation: bool,
 }
 
 /// Principals that more than one mechanism layer rests on.
@@ -97,6 +113,16 @@ fn direct_membership(t: &TrustSet) -> BTreeMap<String, BTreeMap<String, BTreeSet
 /// principal within the *same* mechanism it is already part of, is
 /// correctly silent — `M(P) ∪ D(P)` is one tag either way.
 ///
+/// A layer can be reached more than one way — directly and by delegation,
+/// or by delegating to two different principals who both land in the same
+/// mechanism — and every one of those routes' capabilities is folded into
+/// that layer's `capabilities`, not just the first one visited. Layers are
+/// accumulated in a `BTreeMap<tag, LayerAccumulator>` for exactly this: a
+/// second contribution to an already-seen tag merges into the existing
+/// entry instead of being skipped. Direct membership is processed before
+/// delegation reach, and a layer already marked direct is never downgraded
+/// to `via_delegation`.
+///
 /// The delegation graph can contain cycles (self-delegation is rejected at
 /// load time, but longer cycles are legal and `solve.rs` itself has to
 /// terminate on them — see `solve::tests::cyclic_delegation_terminates`).
@@ -120,19 +146,19 @@ pub fn shared_dependencies(d: &Deployment, t: &TrustSet) -> Vec<SharedDependency
 
     let mut out = Vec::new();
     for p in principals {
-        let mut layers = Vec::new();
-        let mut tags_seen: BTreeSet<&str> = BTreeSet::new();
+        let mut layers: BTreeMap<String, LayerAccumulator> = BTreeMap::new();
 
         // M(P): direct membership.
         if let Some(mechs) = direct.get(p) {
             for (tag, caps) in mechs {
-                tags_seen.insert(tag.as_str());
-                layers.push(Layer {
-                    mechanism: tag.clone(),
-                    kind: kind_of(tag),
-                    capabilities: caps.iter().cloned().collect(),
-                    via_delegation: false,
-                });
+                let entry = layers
+                    .entry(tag.clone())
+                    .or_insert_with(|| LayerAccumulator {
+                        kind: kind_of(tag),
+                        capabilities: BTreeSet::new(),
+                        via_delegation: false,
+                    });
+                entry.capabilities.extend(caps.iter().cloned());
             }
         }
 
@@ -148,15 +174,20 @@ pub fn shared_dependencies(d: &Deployment, t: &TrustSet) -> Vec<SharedDependency
             }
             if let Some(mechs) = direct.get(q) {
                 for (tag, caps) in mechs {
-                    if !tags_seen.insert(tag.as_str()) {
-                        continue; // already counted, directly or via another delegate
-                    }
-                    layers.push(Layer {
-                        mechanism: tag.clone(),
-                        kind: kind_of(tag),
-                        capabilities: caps.iter().cloned().collect(),
-                        via_delegation: true,
-                    });
+                    // `or_insert_with` only runs its closure when the tag
+                    // is new, so a tag already present from M(P) — or from
+                    // an earlier delegate in this same walk — keeps its
+                    // existing `via_delegation` and simply gains this
+                    // delegate's capabilities alongside whatever is already
+                    // there.
+                    let entry = layers
+                        .entry(tag.clone())
+                        .or_insert_with(|| LayerAccumulator {
+                            kind: kind_of(tag),
+                            capabilities: BTreeSet::new(),
+                            via_delegation: true,
+                        });
+                    entry.capabilities.extend(caps.iter().cloned());
                 }
             }
             if let Some(next) = edges.get(q) {
@@ -164,8 +195,16 @@ pub fn shared_dependencies(d: &Deployment, t: &TrustSet) -> Vec<SharedDependency
             }
         }
 
-        if tags_seen.len() > 1 {
-            layers.sort_by(|a, b| a.mechanism.cmp(&b.mechanism));
+        if layers.len() > 1 {
+            let layers: Vec<Layer> = layers
+                .into_iter()
+                .map(|(tag, acc)| Layer {
+                    mechanism: tag,
+                    kind: acc.kind,
+                    capabilities: acc.capabilities.into_iter().collect(),
+                    via_delegation: acc.via_delegation,
+                })
+                .collect();
             out.push(SharedDependency {
                 principal: p.to_string(),
                 layers,
@@ -378,6 +417,115 @@ mod tests {
             shared_dependencies(&d, &s).is_empty(),
             "a cycle around one mechanism is still one layer, and must terminate"
         );
+    }
+
+    /// MODERATE regression: a layer reached via multiple different
+    /// delegates must merge all their capabilities, not just the
+    /// first-visited delegate's. `p` delegates into three principals:
+    /// `signer` (a `signing` layer) and both `did:web:intel.com` and
+    /// `did:web:buildco.example`, who are *both* directly named within the
+    /// *same* `tee_attestation` layer. Before the fix,
+    /// `!tags_seen.insert(...)` skipped `Layer` construction entirely on
+    /// the second delegate to reach an already-seen tag, so only whichever
+    /// principal the worklist visited first contributed its capability —
+    /// understating `p`'s blast radius inside that layer, which is exactly
+    /// what the Important #2 finding was about.
+    #[test]
+    fn a_layer_reached_via_two_delegates_merges_both_capabilities() {
+        let s = set(&[
+            ("signer", "key_custody", "signing#0"),
+            (
+                "did:web:intel.com",
+                "silicon_and_microcode_integrity",
+                "tee_attestation#0",
+            ),
+            (
+                "did:web:buildco.example",
+                "golden_value_correctness",
+                "tee_attestation#0",
+            ),
+        ]);
+        let d = deployment(&[
+            ("p", "signer"),
+            ("p", "did:web:intel.com"),
+            ("p", "did:web:buildco.example"),
+        ]);
+        let found = shared_dependencies(&d, &s);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].principal, "p");
+        assert_eq!(found[0].layers.len(), 2, "signing and tee_attestation");
+
+        let tee = found[0]
+            .layers
+            .iter()
+            .find(|l| l.mechanism == "tee_attestation#0")
+            .expect("tee_attestation layer must be present");
+        assert_eq!(
+            tee.capabilities.len(),
+            2,
+            "both delegates' capabilities must survive, got {:?}",
+            tee.capabilities
+        );
+        assert!(tee
+            .capabilities
+            .iter()
+            .any(|c| c.contains("silicon_and_microcode_integrity")));
+        assert!(tee
+            .capabilities
+            .iter()
+            .any(|c| c.contains("golden_value_correctness")));
+    }
+
+    /// MINOR regression: `direct_membership` distinguishes delegation tags
+    /// from mechanism tags by a `starts_with(DELEGATION_TAG_PREFIX)` check.
+    /// If a future `MechanismSpec` variant's `kind` were `delegation`, its
+    /// canonical tag would collide with that prefix and silently vanish
+    /// from `direct_membership` — the opposite of the reserved-character
+    /// discipline `Deployment::validate` already enforces for principal
+    /// ids. This asserts every mechanism variant that exists today is safe,
+    /// so the day a colliding variant is added, this fails loudly instead.
+    #[test]
+    fn no_mechanism_kind_collides_with_the_delegation_tag_prefix() {
+        let specs = vec![
+            MechanismSpec::TeeAttestation {
+                endorser: "e".into(),
+                quoting_enclave: "q".into(),
+                collateral_authority: "c".into(),
+                collateral_refresh: "12h".into(),
+                reference_values: "r".into(),
+                host: "h".into(),
+            },
+            MechanismSpec::Signing { signer: "s".into() },
+            MechanismSpec::HashChain {
+                log_operator: "l".into(),
+            },
+            MechanismSpec::Anchoring {
+                log_operator: "l".into(),
+                interval: "1h".into(),
+                settlement: None,
+                finality: None,
+            },
+            MechanismSpec::Gossip {
+                peers: vec!["a".into()],
+                propagation: "1h".into(),
+            },
+            MechanismSpec::WitnessQuorum {
+                witnesses: vec!["a".into()],
+                k: 1,
+            },
+            MechanismSpec::ZkProof {
+                ceremony: "c".into(),
+                compiler: "c".into(),
+                auditor: "a".into(),
+            },
+        ];
+        for tag in mechanism_tags(&specs) {
+            assert!(
+                !tag.starts_with(DELEGATION_TAG_PREFIX),
+                "mechanism tag `{tag}` collides with the delegation-tag prefix; \
+                 shared_dependencies would silently drop it from direct membership"
+            );
+        }
     }
 
     /// Preserve item, exercised through the real mechanism pipeline rather
