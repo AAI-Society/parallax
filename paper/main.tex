@@ -109,7 +109,7 @@
     at ([xshift=1in, yshift=-2.55cm]current page.north west)
     {\sffamily\bfseries\fontsize{21.5}{26}\selectfont\color{aaipaper}%
      A Trust Calculus for Attestation Tiers: Computing Residual Trust and
-     Re-Deriving Verifiability};
+     Testing Whether Deployments Can Be Ranked};
   \node[anchor=north west, inner sep=0pt, text width=\textwidth]
     at ([xshift=1in, yshift=-5.55cm]current page.north west)
     {\sffamily\small\color{aaipaper}%
@@ -147,9 +147,10 @@ anybody. The Proof-of-Control standard~\cite{pocspec} says of its Tier~3 that
 tools.''
 That sentence is false, and this paper shows it is false rather than
 suspecting it. Deploying on Intel TDX and enumerating what a verifier must
-accept to believe one measurement yields five distinct parties, and three of
+accept to believe one measurement yields five distinct parties, and four of
 the five have no detection mechanism at all: if they misbehave, nothing in
-the system will ever say so. We give a small calculus that computes this set
+the system will ever say so. The fifth is bounded only by how often
+revocation data is refreshed. We give a small calculus that computes this set
 instead of arguing about it. A judgment $\Gamma \vdash P : T, \Delta$ reads
 ``proposition $P$ holds provided the parties in $T$ are honest, and a
 violation would be detected within $\Delta$''; mechanisms compose by joining
@@ -171,11 +172,14 @@ wrote down, and cannot discover one that was left out.}
 
 \vspace{0.6em}
 \noindent{\small\textbf{Artifact.} \parallax{}~\cite{parallaxtool} is
-Apache-2.0. Every number in Sections~\ref{sec:eval} and~\ref{sec:tiers} is
-regenerated from the
+Apache-2.0. Every \emph{table and figure} in
+Sections~\ref{sec:eval} and~\ref{sec:tiers} is regenerated from the
 tool by \texttt{scripts/\allowbreak regen-results.sh} and read into this document from
 the generated files; continuous integration fails if a committed result
-disagrees with the code that produced it. Figures elsewhere in the paper ---
+disagrees with the code that produced it. Sentences near those tables
+sometimes restate a figure from one, and those sentences are typed rather
+than generated; the ones that could drift are pinned by tests named in
+\texttt{paper/\allowbreak README.md}. Figures elsewhere in the paper ---
 deployment parameters, code size, the size of the termination example ---
 are stated in the prose and are not tool output.}
 
@@ -209,11 +213,14 @@ published by somebody who knows what code it belongs to.
 
 That is five parties. You did not remove trust; you moved it. And the thing
 that should stop the conversation is not the count but the fourth column of
-Table~\ref{tab:tdx}: for three of those five, there is no detection mechanism
+Table~\ref{tab:tdx}: for four of those five, there is no detection mechanism
 at all. If Intel's silicon is subverted, or the quoting enclave's key leaks,
-or the reference values are wrong, the attestation still verifies
+or the host injects a firmware measurement of its own choosing, or the
+reference values are wrong, the attestation still verifies
 cryptographically. Nothing anywhere in the system contradicts it. The failure
-is silent and it is permanent.
+is silent and it is permanent. The only one of the five you would ever hear
+about is Intel's certification service, and only because its collateral goes
+stale on a schedule.
 
 \begin{table}[h]
 \centering\small
@@ -322,7 +329,8 @@ in depth. Of the encoded deployments, the two pairs that can be compared at
 all --- comparison requires both sides to attest the same proposition ---
 come out \emph{incomparable}.
 \item \textbf{Whether the ladder can be repaired} (Section~\ref{sec:tiers}).
-Four candidate orderings, run against the encoded deployments. All four fail,
+Four candidate orderings, run against the four single-mechanism
+deployments. All four fail,
 each in its own way: counting assumptions ranks the systems backwards, set
 inclusion ranks almost nothing, composed detection latency is $\Never$ for
 every deployment and so ranks everything the same, and collusion cost is not
@@ -684,8 +692,8 @@ weaker and more useful one: any part of a declaration that reaches a tag
 must reach it through the normalising function that defines what that part
 \emph{means}, or the tag encodes spelling instead of content.
 
-Two more things the tool refuses to answer, rather than answering
-wrongly. A deployment declaring no mechanisms at all solves to the empty
+Two more constructions are refused rather than answered. A deployment
+declaring no mechanisms at all solves to the empty
 trust set, which takes $\Delta = \mathrm{Bounded}(0)$ and sits below every
 other trust set under inclusion --- so a two-line file would be reported as
 the most verifiable system in any comparison it entered. And two
@@ -777,12 +785,21 @@ Section~\ref{sec:open} lists the complexity bound as unverified.
 \section{Does It Actually Work?}
 \label{sec:eval}
 
-Every figure in this section is tool output. \texttt{scripts/\allowbreak
-regen-results.sh} runs \parallax{} over the encoded deployments, writes each
-table into \texttt{results/}, and this section reads them in from there.
-Continuous integration reruns the script and fails the build if a committed
-result disagrees with the code that produced it, so a number here cannot
-outlive that code. None of it was typed.
+Every table and figure in this section is tool output. \texttt{scripts/%
+\allowbreak regen-results.sh} runs \parallax{} over the encoded deployments,
+writes each one into \texttt{results/}, and this section reads them in from
+there. Continuous integration reruns the script and fails the build if a
+committed result disagrees with the code that produced it, so a number
+\emph{in a table} here cannot outlive that code.
+
+The prose around the tables is a different matter, and worth being exact
+about rather than waving at. Where a sentence below restates a figure from a
+table --- how many rows are undetectable, how many pairs are N/A --- that
+sentence was typed, and a typed restatement can drift away from the table it
+sits next to. Each one that could is pinned by a test in the artifact;
+\texttt{paper/README.md} names them. That is a weaker guarantee than the
+tables have, and we would rather say so than imply the whole section is
+generated.
 
 Five deployments are encoded and shipped with the artifact:
 $\Sigma_1$, a software-only host with signed measurement logs; $\Sigma_2$,
@@ -808,11 +825,14 @@ same five parties, the same five capabilities, the same one bounded row.
 \begin{table}[h]
 \centering\small
 \caption{The residual trust set \parallax{} computes for $\Sigma_2$, from
-\texttt{parallax solve --format latex}. The impact column and the detection
-column both come from the \texttt{tee\ub attestation} rule, not from the
-deployment file. Four of the five rows are $\Never$; only the collateral
-authority carries a bound, and that bound is the collateral refresh interval
-the file declares.}
+\texttt{parallax solve --format latex}. The rule and the file each supply
+part of this, and it is worth keeping them apart. The
+\texttt{tee\ub attestation} rule supplies every capability, every impact, and
+\emph{which} row is bounded --- four of the five are $\Never$ because the
+rule says the endorser, the quoting enclave, the host and the
+reference-value provider have no detection mechanism. The deployment file
+supplies the five identifiers and one number: the collateral refresh
+interval, which is the bound in the one row that has one.}
 \label{tab:sigma2}
 \input{../results/sigma2-trust-set.tex}
 \end{table}
@@ -976,10 +996,14 @@ as open.
 
 A tier ladder is an ordinal claim. Tier~3 sits above Tier~2, which means
 there has to be some way of taking two deployments and saying which is more
-verifiable. Four ways have been proposed. \texttt{parallax tiers} runs each
-of them over $\Sigma_1$--$\Sigma_4$ --- the same four the comparison matrix
-ranks --- and reports what each does and whether the result is an order you
-could put numbers on. Table~\ref{tab:orderings} is that output.
+verifiable. We can think of four candidates, and they are ours: the list
+comes from the design study this paper implements, not from a survey of the
+literature, and we do not claim it is exhaustive. If there is a fifth that
+works, this section does not rule it out.
+\texttt{parallax tiers} runs each of the four over $\Sigma_1$--$\Sigma_4$ ---
+the same four the comparison matrix covers --- and reports what each does and
+whether the result is an order you could put numbers on.
+Table~\ref{tab:orderings} is that output.
 
 None of the four survives. The reason the experiment was worth running is
 that they do not fail the same way.
@@ -998,8 +1022,9 @@ matrix leaves it out for the same reason.}
 
 \paragraph{Cardinality ranks the systems backwards.} Count the assumptions
 and put the smallest number first. On these four that puts $\Sigma_1$ at the
-top: a single machine signing its own measurement log, with no hardware
-root, no witnesses and no transparency log. It puts $\Sigma_3$ at the bottom:
+top: a software-only host that signs its own measurement log and hash-chains
+it, with no hardware root, no witnesses, and nothing anybody outside the
+host can check. It puts $\Sigma_3$ at the bottom:
 a 5-of-7 witness quorum over a log that is anchored and gossiped. Nobody
 using the word ``verifiable'' means that. The quorum is doing more work to
 be checkable and the count charges it for every witness it added.
@@ -1013,7 +1038,7 @@ $\Sigma_2$ and $\Sigma_4$ carry the same number of assumptions and tie, so
 it is not a total order even where it does rank.
 
 \paragraph{Set inclusion ranks almost nothing.} This is the order the tool
-already implements, and it is the only one of the four that is not wrong ---
+already implements, and nothing about it is wrong ---
 inclusion is a real order and it says something true whenever it applies. It
 just hardly ever applies. Most of the unordered pairs among these four are
 refused outright, because the two sides attest different propositions and
@@ -1078,6 +1103,25 @@ somebody else wrote could produce a genuine subset pair. Composed $\Delta$ is
 constant here because no design we encoded eliminates its last silent
 assumption; a design that did would separate immediately. Neither of those
 experiments has been run.
+
+One of the two we called structural needs a caveat of its own, because it is
+the first thing a referee should push on. Cardinality puts $\Sigma_3$ last
+only because \texttt{witness\ub quorum} attributes
+\texttt{non\ub collusion\ub $k$\ub of\ub $n$} to each of the $n$ witnesses
+rather than once to the mechanism. Under a one-assumption-per-mechanism
+convention, $\Sigma_3$'s seven witness assumptions collapse to one and it
+stops sitting at the bottom. $\Sigma_1$ on top survives either
+way --- it has the fewest mechanisms as well as the fewest assumptions ---
+but ``backwards'' does not. So the claim that being checkable costs
+principals is, in part, a claim about our encoding convention.
+Section~\ref{sec:formal} argues for that convention on its own terms: the
+assumption a threshold rule makes really is about each of the $n$, not about
+some anonymous $k$ of them, and naming $k$ parties would mean naming parties
+the deployment cannot identify in advance. We still think it is the honest
+encoding. But it is an encoding decision, and a reader who rejects it should
+read ``cardinality ranks the systems backwards'' as ``cardinality ranks the
+systems backwards under the encoding of Section~\ref{sec:formal}'' --- which
+is weaker, and which is what we are entitled to say.
 
 % ================================================================
 \section{What We Still Don't Know}
@@ -1166,7 +1210,8 @@ derived.
 
 \subsection{The evidence base is five deployments, all ours}
 
-Every result in Section~\ref{sec:eval} comes from five deployments we wrote,
+Every result in Sections~\ref{sec:eval} and~\ref{sec:tiers} comes from five
+deployments we wrote,
 plus a sixth file that exists only as a negative control for one of them. The
 tool reproduces a trust set we had already derived by hand --- which is
 evidence it implements what we intended, and weaker evidence that what we
@@ -1195,7 +1240,7 @@ assumptions is not rewarded.
 The claim that hardware attestation leaves nobody to trust is not a small
 overstatement; it is wrong in a way that changes what a conformance claim
 means. Believing one Intel TDX measurement requires accepting five distinct
-parties, and for three of them there is no mechanism anywhere in the system
+parties, and for four of them there is no mechanism anywhere in the system
 that would ever report a violation. That is worth writing down, and the way
 to make sure it gets written down is to compute it rather than argue about it.
 

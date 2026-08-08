@@ -39,7 +39,7 @@ Do not hand-edit.
   ordering deployments by verifiability — cardinality, set inclusion,
   composed detection latency, collusion cost — applied to Σ₁–Σ₄, with
   whether it yields a usable total order. It runs over the same four
-  deployments the comparison matrix ranks; Σ₅ is a hybrid built to carry a
+  deployments the comparison matrix covers; Σ₅ is a hybrid built to carry a
   shared dependency rather than a fifth design competing for a rung, and
   appears in `deployment-summary.tex` only.
 - `policy-checks.txt`, `policy-checks.tex` — each manifest against

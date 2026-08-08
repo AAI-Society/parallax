@@ -1093,3 +1093,63 @@ fn latex_format_with_shared_is_rejected_rather_than_silently_dropped() {
         "the error must name both flags, got: {stderr}"
     );
 }
+
+/// Tripwire for a typed sentence in the paper's Table 4 caption: "Eight of
+/// the twelve ordered pairs are N/A, so the table rests on two unordered
+/// comparisons — Σ1/Σ3 and Σ2/Σ4." The table body is generated; that
+/// sentence is not, and it is the sentence that tells a reader how thin the
+/// evidence under the headline result actually is. If the example set's
+/// claims change, this fails here rather than in a PDF nobody diffs.
+#[test]
+fn the_comparison_matrix_rests_on_exactly_two_unordered_comparisons() {
+    let names = [
+        "sigma1-software",
+        "sigma2-tdx",
+        "sigma3-quorum",
+        "sigma4-zk",
+    ];
+    let loaded: Vec<Deployment> = names
+        .iter()
+        .map(|n| Deployment::load(Path::new(&format!("examples/{n}.toml"))).unwrap())
+        .collect();
+
+    let (mut ordered, mut na, mut comparable_unordered) = (0, 0, 0);
+    for (i, a) in loaded.iter().enumerate() {
+        for (j, b) in loaded.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            ordered += 1;
+            if a.claim != b.claim {
+                na += 1;
+            } else if i < j {
+                comparable_unordered += 1;
+            }
+        }
+    }
+    assert_eq!(ordered, 12, "four deployments, twelve ordered pairs");
+    assert_eq!(na, 8, "eight are N/A for attesting different claims");
+    assert_eq!(
+        comparable_unordered, 2,
+        "leaving two unordered comparisons the matrix actually rests on"
+    );
+
+    // And both of those two are Incomparable — the headline. Asserted here
+    // as well as in `tdx_and_zk_trust_sets_are_incomparable` because the
+    // caption's claim is about the pair *count*, and a matrix that ranked
+    // one of the two would falsify the caption without falsifying that test.
+    for (i, a) in loaded.iter().enumerate() {
+        for b in &loaded[i + 1..] {
+            if a.claim != b.claim {
+                continue;
+            }
+            assert_eq!(
+                compare(&solve(a).unwrap(), &solve(b).unwrap()),
+                Relation::Incomparable,
+                "{} vs {} must be incomparable",
+                a.name,
+                b.name
+            );
+        }
+    }
+}

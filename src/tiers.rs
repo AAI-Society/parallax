@@ -663,6 +663,39 @@ mod tests {
         );
     }
 
+    /// Tripwire for a typed sentence in the paper's Section 5.4, whose
+    /// table caption says "Principals is lower than $|T|$ only for
+    /// $\Sigma_5$, where one party is trusted for two different
+    /// capabilities". That is the shared dependency showing up as a number,
+    /// and it is the caption's whole point --- but it is prose sitting
+    /// beside a generated table, so nothing but this stops it drifting.
+    #[test]
+    fn only_the_hybrid_names_fewer_principals_than_it_has_assumptions() {
+        let all: Vec<Encoded> = [
+            "examples/sigma1-software.toml",
+            "examples/sigma2-tdx.toml",
+            "examples/sigma3-quorum.toml",
+            "examples/sigma4-zk.toml",
+            "examples/sigma5-hybrid.toml",
+        ]
+        .into_iter()
+        .map(encoded)
+        .collect();
+        let r = report(all).unwrap();
+        for e in &r.deployments {
+            let doubles_up = e.principals < e.assumptions;
+            assert_eq!(
+                doubles_up,
+                e.name == "sigma5-hybrid",
+                "{} has {} assumptions over {} principals; the paper's caption \
+                 says only sigma5-hybrid trusts one party twice",
+                e.name,
+                e.assumptions,
+                e.principals
+            );
+        }
+    }
+
     /// The ranking must be a fact about the deployments, not about the order
     /// somebody listed the files in. `compare` had exactly this bug once
     /// (see the paper's order-independence section), so pin it here too.

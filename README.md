@@ -70,10 +70,16 @@ a LaTeX toolchain:
 ## The paper
 
 `paper/` holds the LaTeX source for **P01 — A Trust Calculus for Attestation
-Tiers**, which this tool exists to support. It is a working draft: the
-argument sections are written, the results sections are placeholdered, and
-every number it cites is `\input` from `results/` rather than typed. Build it
-with `cd paper && tectonic -Z shell-escape main.tex`; see
+Tiers**, which this tool exists to support. Every section is written and no
+placeholders remain; every table and figure in its results sections is
+`\input` from `results/` rather than typed, and the captions that restate a
+figure in prose have tripwire tests listed in
+[`paper/README.md`](paper/README.md). It is still a working draft in one
+respect that matters: the
+evidence base is five deployments we wrote ourselves and no real-world system,
+and the independent-encoding experiment the paper proposes as its answer to the
+completeness problem has not been run. Both are stated plainly in the text.
+Build it with `cd paper && tectonic -Z shell-escape main.tex`; see
 [`paper/README.md`](paper/README.md).
 
 `paper/main.pdf` is committed for convenience, matching `ov-poc-standard`'s
