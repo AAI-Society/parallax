@@ -1,0 +1,241 @@
+% What building parallax established, and what P01 must change
+% Build: tectonic docs/parallax-outcomes.tex
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in, top=1.15in]{geometry}
+\usepackage{tikz}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{amsmath, amssymb}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{caption}
+\usepackage{titlesec}
+
+% Advanced AI Society brand palette
+\definecolor{aailime}{HTML}{CFFF04}
+\definecolor{aailimetint}{HTML}{F2FFB8}
+\definecolor{aaiink}{HTML}{0A0A0A}
+\definecolor{aaired}{HTML}{FFE3E4}
+\definecolor{aaineutral}{HTML}{E7E3DD}
+\definecolor{aaipaper}{HTML}{F0EDEA}
+\definecolor{aaimuted}{HTML}{8F8A82}
+\definecolor{aaidarklime}{HTML}{7A9900}
+
+% The Society's bracket mark, drawn natively
+\newcommand{\aaimark}[1]{%
+\begin{tikzpicture}[x=#1, y=#1, line cap=butt]
+  \fill[aailime] (0,0) rectangle (0.16,1);
+  \fill[aailime] (0.16,0) rectangle (0.42,0.24);
+  \fill[aailime] (0.16,0.76) rectangle (0.42,1);
+  \fill[aailime] (1.04,0) rectangle (1.20,1);
+  \fill[aailime] (0.78,0) rectangle (1.04,0.24);
+  \fill[aailime] (0.78,0.76) rectangle (1.04,1);
+\end{tikzpicture}}
+
+\titleformat{\section}{\sffamily\bfseries\large\color{aaiink}}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\sffamily\bfseries\normalsize\color{aaiink}}{\thesubsection}{0.6em}{}
+\setlist[itemize]{leftmargin=1.4em, itemsep=0.35em}
+\setlist[enumerate]{leftmargin=1.6em, itemsep=0.5em}
+
+\newcommand{\keypoint}[1]{\textbf{#1}}
+
+\begin{document}
+
+% ---------------------------------------------------------------- header band
+\thispagestyle{empty}
+\begin{tikzpicture}[remember picture, overlay]
+  \fill[aaiink] (current page.north west) rectangle
+    ([yshift=-4.6cm]current page.north east);
+  \fill[aailime] ([yshift=-4.6cm]current page.north west) rectangle
+    ([yshift=-4.75cm]current page.north east);
+  \node[anchor=north west, inner sep=0pt]
+    at ([xshift=1in, yshift=-0.85cm]current page.north west) {\aaimark{0.52cm}};
+  \node[anchor=north west, inner sep=0pt, text width=14.2cm]
+    at ([xshift=1in+1cm, yshift=-0.88cm]current page.north west)
+    {\sffamily\bfseries\footnotesize\color{aailime}%
+     ADVANCED AI SOCIETY\; \textcolor{aaimuted}{$\cdot$}\; PROOF-OF-CONTROL
+     INITIATIVE\\[3pt]
+     {\normalfont\sffamily\footnotesize\color{aaimuted}
+      Implementation outcomes $\cdot$ August 2026}};
+  \node[anchor=north west, inner sep=0pt, text width=15cm]
+    at ([xshift=1in, yshift=-2.25cm]current page.north west)
+    {\sffamily\bfseries\fontsize{18}{22}\selectfont\color{aaipaper}%
+     What building \texttt{parallax} established,\\and what P01 must change};
+  \node[anchor=north west, inner sep=0pt, text width=15cm]
+    at ([xshift=1in, yshift=-3.95cm]current page.north west)
+    {\sffamily\small\color{aaipaper}%
+     \textcolor{aailime}{\rule[0.5ex]{1.6em}{2pt}}\hspace{0.6em}%
+     144 tests $\cdot$ 28 commits $\cdot$ final whole-branch review clean};
+\end{tikzpicture}
+
+\vspace*{2.1cm}
+
+\noindent
+{\small\color{aaimuted}\sffamily
+Tool: \href{https://github.com/Task-force-for-AI-agents-in-Healthcare/parallax}{Task-force-for-AI-agents-in-Healthcare/parallax}}
+
+\vspace{0.9em}
+
+\noindent
+This records what the implementation settled, what it forced us to correct, and
+what P01 needs to say differently as a result. It exists because the working
+notes lived in git-ignored scratch, and these conclusions should not.
+
+\vspace{0.6em}
+
+\section*{Amendments P01 needs}
+
+\begin{enumerate}
+
+\item \keypoint{The termination argument is simpler than the paper claims, and
+now has evidence.} P01's mechanization section proposes SLG resolution with
+tabling, in the style of XSB, to stop circular attestation from diverging. That
+is not what the tool does and not what is needed. Modelling the residual trust
+set as a bounded lattice --- join is set union over a finite principal set, so
+the powerset has finite height --- makes the least fixpoint terminate by
+construction, regardless of cycles in the delegation graph. Termination falls
+out of the datatype rather than the resolution strategy.
+
+This has been exercised well past the point of doubt: a 300-node delegation
+cycle spanning two mechanism layers terminates in about 0.01\,s, and a 40-node
+complete delegation graph with all 1,600 edges including self-loops terminates
+in about 1\,ms. \keypoint{Rewrite the mechanization section around the
+bounded-lattice argument} and drop the tabling proposal; it is a weaker claim
+requiring more machinery.
+
+Note also that only \emph{one} of the two lattices carries termination. The
+latency lattice has infinite height ($\mathrm{Bounded}(0) < \mathrm{Bounded}(1)
+< \dots$); the fixpoint never iterates in it. Saying ``two lattices of finite
+height'' is false, and a formal-methods referee catches it immediately.
+
+\item \keypoint{\S4's independent-encoding experiment needs an
+order-independence claim, and the reason is not academic.} P01 offers
+independent double-encoding as its answer to the completeness problem: two
+authors encode the same deployment and any divergence is a finding about the
+calculus. That experiment is worthless unless the comparison is invariant to how
+the deployment was written down, and during development it twice was not.
+
+\begin{itemize}
+  \item Mechanism identity was initially \emph{positional}
+    (\texttt{tee\_attestation\#0}), so a deployment compared as
+    \textsc{Incomparable} to a re-ordering of itself. All twelve non-identical
+    example pairs returned \textsc{Incomparable}, meaning the acceptance test
+    carrying the paper's headline claim would have passed against an
+    implementation that returned \textsc{Incomparable} unconditionally.
+  \item After that was fixed, identity was still \emph{lexical} in duration
+    fields, so \texttt{collateral\_refresh = "12h"} and \texttt{"720m"} ---
+    identical in every computed value --- again produced total divergence.
+\end{itemize}
+
+Both are fixed and pinned by tests. The paper should state plainly that the
+comparison is order-independent and duration-normalised \keypoint{by
+construction}, because two independent encoders writing \texttt{12h} and
+\texttt{720m} is not a hypothetical.
+
+\item \keypoint{Do not overstate the incomparability result.} The tool ranks
+only pairs that establish the same claim; comparing trust sets for different
+propositions is refused. Of the twelve ordered pairs across the four non-hybrid
+examples, eight are N/A on that ground and four are \textsc{Incomparable} ---
+that is two unordered pairs, $\Sigma_1/\Sigma_3$ and $\Sigma_2/\Sigma_4$. The
+claim is real but narrower than ``trust sets come out incomparable'' implies.
+
+\item \keypoint{The evidence base is five self-authored deployments and no
+real-world system.} The tool reproduces the hand-derived five-party TDX set and
+finds the shared build-pipeline dependency in the hybrid, with a negative
+control that correctly reports nothing. That is the whole of it. Say so.
+
+\end{enumerate}
+
+\section*{What the implementation confirmed}
+
+\begin{itemize}
+  \item \keypoint{The five-party TDX set is derivable from the deployment
+    description}, not hardcoded --- verified by collapsing a principal in the
+    input and watching the count track it. Exactly one of the five, the
+    collateral authority, has a bounded detection latency; the other four are
+    silent and permanent. That asymmetry is the paper's central empirical claim
+    and it holds.
+  \item \keypoint{$\Sigma_2$ and $\Sigma_4$ are genuinely incomparable} --- five
+    disjoint assumptions on each side, same claim, no artifact of the encoding.
+  \item \keypoint{The hybrid's two layers do share a build pipeline}, and the
+    independent-pipelines variant reports nothing. The finding is discovery, not
+    theatre.
+  \item \keypoint{Anchoring is a trade, not a pure gain.} Anchoring to a
+    settlement layer converts log-operator trust into a bounded detection window
+    and silently ingests a consensus-execution-fidelity assumption. Both appear
+    in the manifest.
+\end{itemize}
+
+\section*{The defect pattern worth carrying to \texttt{transit} and \texttt{occultation}}
+
+Every Important-or-worse finding across twelve tasks and the final review was a
+defect in the \keypoint{plan}, not in an implementation. Five were Critical, and
+all five shared a shape: \keypoint{correct code implementing a subtly wrong
+specification, producing a confident wrong answer rather than an error.}
+
+\vspace{0.4em}
+\begin{center}
+\small
+\begin{tabular}{@{}p{6.2cm}p{8.4cm}@{}}
+\toprule
+\textbf{Defect} & \textbf{Wrong answer it produced} \\
+\midrule
+Positional mechanism tag &
+  a file \textsc{Incomparable} to a reordering of itself \\
+Lexical duration identity &
+  \texttt{12h} vs \texttt{720m} reported as total divergence \\
+Flat \texttt{"delegation"} tag &
+  a single-layer deployment reporting shared dependencies \\
+\texttt{via\_delegation} per principal &
+  a dead-end delegate named as a reason a principal matters \\
+\texttt{Policy} without \texttt{deny\_unknown\_fields} &
+  a one-letter typo silently disabling the gate; \texttt{check} exits 0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\vspace{0.4em}
+
+Four of the five trace to one root cause: \keypoint{a field participating in a
+value's identity was specified casually.} Anything that feeds
+\texttt{Eq}/\texttt{Ord}/\texttt{Hash} is load-bearing for every comparison
+downstream, and specifying it loosely produces answers that look right.
+
+The two checks that would have caught all five, and which belong in any plan of
+this kind:
+
+\begin{enumerate}
+  \item \keypoint{For every derived identity, test that semantically identical
+    inputs compare equal} --- reordered, respelled, re-serialised.
+  \item \keypoint{For every configuration surface, reject unknown keys.} A
+    silently ignored typo in a security policy is a gate that fails open.
+\end{enumerate}
+
+The reviewers earned their cost by going to primary sources rather than trusting
+the plan's paraphrase --- reading \texttt{ascent\_base}'s \texttt{Lattice} trait
+instead of the brief's summary of it, rebuilding pre-fix binaries to confirm a
+repro, and mutation-testing claims that tests were supposed to pin. That last
+technique found the delegation-direction gap that five passing tests missed.
+
+\section*{Carried, not fixed}
+
+None affects a claim the paper makes.
+
+\begin{itemize}
+  \item Table 2 in the paper is pinned to the code by a tripwire test covering
+    mechanism, capability, latency and impact --- but nothing pins the caption's
+    prose to the table. Three separate factual errors have been found in that
+    caption; generating the table from source is the real fix.
+  \item The CI \texttt{paper} job has never run; \texttt{setup-tectonic} on
+    Ubuntu is unverified.
+  \item \texttt{shared\_dependencies(d, t)} requires \texttt{t == solve(d)} by
+    convention, not by type. A \texttt{Solved} newtype would remove this and
+    \texttt{explain}'s vestigial parameter together.
+  \item \texttt{policy::evaluate} does not itself verify \texttt{\$schema}; the
+    CLI does.
+\end{itemize}
+
+\end{document}
