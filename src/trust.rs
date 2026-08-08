@@ -33,8 +33,32 @@ pub struct Assumption {
 ///
 /// `Hash` is required by `ascent` for lattice-valued relations. Omitting it
 /// yields a `RelIndexWrite` trait error rather than a clear message.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Default, Hash, Serialize, Deserialize)]
 pub struct TrustSet(pub BTreeSet<Assumption>);
+
+/// Subset order. Returns `None` for sets that are genuinely incomparable,
+/// which is the property the whole paper turns on: two deployments can rest
+/// on trust sets that no ordering can rank.
+///
+/// Hand-written rather than derived: `BTreeSet`'s derived order is
+/// lexicographic and total, which disagrees with the lattice's subset
+/// order (e.g. under the derive `{2}` is not `<=` `{1,2}`), letting `join`
+/// return a value that isn't `>=` its own operands — a violation of
+/// `Lattice`'s contract. Do not "simplify" this back to a derive.
+impl PartialOrd for TrustSet {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        use std::cmp::Ordering;
+        if self.0 == other.0 {
+            Some(Ordering::Equal)
+        } else if self.0.is_subset(&other.0) {
+            Some(Ordering::Less)
+        } else if self.0.is_superset(&other.0) {
+            Some(Ordering::Greater)
+        } else {
+            None
+        }
+    }
+}
 
 impl TrustSet {
     pub fn singleton(a: Assumption) -> Self {
@@ -179,5 +203,60 @@ mod tests {
         let changed = s.meet_mut(TrustSet::singleton(pcs.clone()));
         assert!(changed);
         assert_eq!(s, TrustSet::singleton(pcs));
+    }
+
+    #[test]
+    fn equal_sets_compare_equal() {
+        let s = TrustSet::singleton(a("intel", Latency::Never));
+        assert_eq!(s.partial_cmp(&s.clone()), Some(std::cmp::Ordering::Equal));
+    }
+
+    #[test]
+    fn strict_subset_compares_less() {
+        let intel = a("intel", Latency::Never);
+        let pcs = a("pcs", Latency::Bounded(43_200));
+        let small = TrustSet::singleton(intel.clone());
+        let big = TrustSet(BTreeSet::from([intel, pcs]));
+        assert_eq!(small.partial_cmp(&big), Some(std::cmp::Ordering::Less));
+    }
+
+    #[test]
+    fn strict_superset_compares_greater() {
+        let intel = a("intel", Latency::Never);
+        let pcs = a("pcs", Latency::Bounded(43_200));
+        let small = TrustSet::singleton(intel.clone());
+        let big = TrustSet(BTreeSet::from([intel, pcs]));
+        assert_eq!(big.partial_cmp(&small), Some(std::cmp::Ordering::Greater));
+    }
+
+    #[test]
+    fn incomparable_sets_compare_none() {
+        let x = TrustSet::singleton(a("intel", Latency::Never));
+        let y = TrustSet::singleton(a("pcs", Latency::Bounded(43_200)));
+        assert_eq!(
+            x.partial_cmp(&y),
+            None,
+            "each holds an element the other lacks"
+        );
+    }
+
+    #[test]
+    fn mechanism_participates_in_assumption_identity() {
+        let via_hardware = Assumption {
+            mechanism: "hardware-attestation".into(),
+            ..a("intel", Latency::Never)
+        };
+        let via_software = Assumption {
+            mechanism: "software-attestation".into(),
+            ..a("intel", Latency::Never)
+        };
+        assert_ne!(
+            via_hardware, via_software,
+            "same principal/capability/latency/impact but different mechanism must be distinct"
+        );
+
+        let mut s = TrustSet::singleton(via_hardware);
+        s.join_mut(TrustSet::singleton(via_software));
+        assert_eq!(s.len(), 2, "two independent layers, not one layer twice");
     }
 }
