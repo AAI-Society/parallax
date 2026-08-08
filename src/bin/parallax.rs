@@ -34,6 +34,29 @@ enum Cmd {
         #[arg(long)]
         policy: PathBuf,
     },
+    /// Show why a principal is load-bearing in a deployment
+    ///
+    /// This reports the principal's own assumptions and, for each, who it
+    /// *directly* delegates to. `solve`'s load-bearing relation is
+    /// transitive, so a principal reached through a multi-hop delegation
+    /// chain (P -> Q -> R) is load-bearing without this one-hop view ever
+    /// showing the chain. See `parallax::explain` for details.
+    Explain {
+        file: PathBuf,
+        #[arg(short, long)]
+        principal: String,
+    },
+}
+
+/// `tag.split('(').next()` is the same short-label derivation as
+/// `shared.rs`'s and `manifest.rs`'s `kind_of`: mechanism tags are the
+/// canonical `kind(field=value,...)#n` form and can run past 100 characters,
+/// so printing that verbatim as the headline is unreadable. This prints the
+/// short kind label first and the full tag indented underneath, matching how
+/// `solve --shared` already presents mechanism tags — a deliberate deviation
+/// from the brief's literal one-line `"introduced by {mechanism}"` format.
+fn kind_of(tag: &str) -> &str {
+    tag.split('(').next().unwrap_or(tag)
 }
 
 fn main() -> ExitCode {
@@ -182,6 +205,37 @@ fn run() -> Result<ExitCode> {
                 }
                 eprintln!("\n{} violation(s)", violations.len());
                 Ok(ExitCode::from(1))
+            }
+        }
+        Cmd::Explain { file, principal } => {
+            let d = Deployment::load(&file)?;
+            let t = parallax::solve::solve(&d)?;
+            match parallax::explain::explain(&d, &t, &principal) {
+                None => {
+                    println!("{principal} is not load-bearing in this deployment.");
+                    Ok(ExitCode::SUCCESS)
+                }
+                Some(e) => {
+                    println!("{} is load-bearing because:", e.principal);
+                    for entry in &e.entries {
+                        println!("  {}", entry.capability);
+                        println!(
+                            "    introduced by {} ({})",
+                            kind_of(&entry.mechanism),
+                            entry.mechanism
+                        );
+                        if !entry.via_delegation.is_empty() {
+                            println!("    speaks for: {}", entry.via_delegation.join(", "));
+                        }
+                    }
+                    println!(
+                        "\nNote: this shows direct delegation only. `load_bearing` is \
+                         transitive, so a principal reached through a longer chain \
+                         (P -> Q -> R) will not show that chain here — see \
+                         `parallax::explain` and `parallax::shared::shared_dependencies`."
+                    );
+                    Ok(ExitCode::SUCCESS)
+                }
             }
         }
     }
