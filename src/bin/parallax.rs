@@ -35,6 +35,23 @@ fn main() -> ExitCode {
     }
 }
 
+/// `compare` and `diff` both reduce two deployments' trust sets to a single
+/// judgement about relative verifiability; that judgement is only
+/// meaningful when both deployments attest the same claim, so both share
+/// this guard rather than duplicating the check.
+fn require_same_claim(a: &Deployment, b: &Deployment) -> Result<()> {
+    if a.claim != b.claim {
+        anyhow::bail!(
+            "cannot compare trust sets for different claims \
+             (`{}` vs `{}`); comparing verifiability across two \
+             different propositions is not meaningful",
+            a.claim,
+            b.claim
+        );
+    }
+    Ok(())
+}
+
 fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
     match cli.cmd {
@@ -65,15 +82,7 @@ fn run() -> Result<ExitCode> {
         Cmd::Compare { a, b } => {
             let da = Deployment::load(&a)?;
             let db = Deployment::load(&b)?;
-            if da.claim != db.claim {
-                anyhow::bail!(
-                    "cannot compare trust sets for different claims \
-                     (`{}` vs `{}`); comparing verifiability across two \
-                     different propositions is not meaningful",
-                    da.claim,
-                    db.claim
-                );
-            }
+            require_same_claim(&da, &db)?;
             let ta = parallax::solve::solve(&da)?;
             let tb = parallax::solve::solve(&db)?;
             let rel = parallax::compare::compare(&ta, &tb);
@@ -87,8 +96,11 @@ fn run() -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Diff { a, b } => {
-            let ta = parallax::solve::solve(&Deployment::load(&a)?)?;
-            let tb = parallax::solve::solve(&Deployment::load(&b)?)?;
+            let da = Deployment::load(&a)?;
+            let db = Deployment::load(&b)?;
+            require_same_claim(&da, &db)?;
+            let ta = parallax::solve::solve(&da)?;
+            let tb = parallax::solve::solve(&db)?;
             let (only_a, only_b) = parallax::compare::diff(&ta, &tb);
             for x in &only_a {
                 println!("-{:<32} {}", x.principal, x.capability);

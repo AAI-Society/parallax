@@ -223,6 +223,28 @@ fn diff_exit_code_is_zero_when_trust_sets_are_identical() {
     assert_eq!(out.status.code(), Some(0));
 }
 
+/// `parallax diff` must refuse two different claims exactly like `compare`
+/// does: it is the command wired into CI, so a silent bogus divergence
+/// report here is worse than a silent bogus `Incomparable`.
+#[test]
+fn diff_refuses_deployments_with_different_claims() {
+    // sigma1 attests "measurement_valid"; sigma4 attests "execution_valid".
+    let out = bin()
+        .args([
+            "diff",
+            "examples/sigma1-software.toml",
+            "examples/sigma4-zk.toml",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("claim"),
+        "expected an explanatory error mentioning `claim`, got: {stderr}"
+    );
+}
+
 /// `parallax compare` must refuse to compare trust sets for two different
 /// claims: doing so silently would make "neither is more verifiable" a
 /// near-trivial (and misleading) statement.
