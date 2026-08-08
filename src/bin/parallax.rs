@@ -19,6 +19,10 @@ enum Cmd {
         /// Report principals that more than one mechanism depends on
         #[arg(long)]
         shared: bool,
+        /// Output format: `table` (default) or `json` (the Residual Trust
+        /// Manifest)
+        #[arg(long, default_value = "table")]
+        format: String,
     },
     /// Report how two deployments' trust sets relate under inclusion
     Compare { a: PathBuf, b: PathBuf },
@@ -60,49 +64,64 @@ fn require_same_claim(a: &Deployment, b: &Deployment) -> Result<()> {
 fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Solve { file, shared } => {
+        Cmd::Solve {
+            file,
+            shared,
+            format,
+        } => {
             let d = Deployment::load(&file)?;
             let t = parallax::solve::solve(&d)?;
-            println!(
-                "{:<34} {:<38} {:<12} IMPACT",
-                "PRINCIPAL", "CAPABILITY", "DETECT"
-            );
-            for a in &t.0 {
-                let lat = match &a.latency {
-                    parallax::Latency::Never => "never".to_string(),
-                    parallax::Latency::Bounded(s) => format!("{s}s"),
-                };
-                println!(
-                    "{:<34} {:<38} {:<12} {:?}",
-                    a.principal, a.capability, lat, a.impact
-                );
-            }
-            println!(
-                "\n{} assumptions, {} principals",
-                t.len(),
-                t.principals().len()
-            );
-            if shared {
-                let sd = parallax::shared::shared_dependencies(&d, &t);
-                if sd.is_empty() {
-                    println!("\nNo principal spans more than one mechanism.");
-                } else {
-                    println!("\nSHARED DEPENDENCIES — layers that are not independent:");
-                    for s in &sd {
-                        println!("  {}", s.principal);
-                        for l in &s.layers {
-                            let via = if l.via_delegation {
-                                " (via delegation)"
-                            } else {
-                                ""
-                            };
-                            println!("    {}{via}", l.kind);
-                            println!("      {}", l.mechanism);
-                            for c in &l.capabilities {
-                                println!("        {c}");
+            match format.as_str() {
+                "json" => {
+                    let m = parallax::manifest::manifest(&d, &t);
+                    println!("{}", serde_json::to_string_pretty(&m)?);
+                }
+                "table" => {
+                    println!(
+                        "{:<34} {:<38} {:<12} IMPACT",
+                        "PRINCIPAL", "CAPABILITY", "DETECT"
+                    );
+                    for a in &t.0 {
+                        let lat = match &a.latency {
+                            parallax::Latency::Never => "never".to_string(),
+                            parallax::Latency::Bounded(s) => format!("{s}s"),
+                        };
+                        println!(
+                            "{:<34} {:<38} {:<12} {:?}",
+                            a.principal, a.capability, lat, a.impact
+                        );
+                    }
+                    println!(
+                        "\n{} assumptions, {} principals",
+                        t.len(),
+                        t.principals().len()
+                    );
+                    if shared {
+                        let sd = parallax::shared::shared_dependencies(&d, &t);
+                        if sd.is_empty() {
+                            println!("\nNo principal spans more than one mechanism.");
+                        } else {
+                            println!("\nSHARED DEPENDENCIES — layers that are not independent:");
+                            for s in &sd {
+                                println!("  {}", s.principal);
+                                for l in &s.layers {
+                                    let via = if l.via_delegation {
+                                        " (via delegation)"
+                                    } else {
+                                        ""
+                                    };
+                                    println!("    {}{via}", l.kind);
+                                    println!("      {}", l.mechanism);
+                                    for c in &l.capabilities {
+                                        println!("        {c}");
+                                    }
+                                }
                             }
                         }
                     }
+                }
+                other => {
+                    anyhow::bail!("unknown --format `{other}`; expected `table` or `json`");
                 }
             }
             Ok(ExitCode::SUCCESS)
