@@ -1,5 +1,6 @@
 pub mod deployment;
 pub mod latency;
+pub mod mechanism;
 pub mod trust;
 
 pub use deployment::Deployment;
