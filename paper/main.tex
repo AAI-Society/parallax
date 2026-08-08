@@ -1,7 +1,7 @@
 % P01 — A Trust Calculus for Attestation Tiers — arXiv preprint
 % Build: tectonic -Z shell-escape main.tex  (XeTeX engine; fetches packages)
-% STATUS: working draft. Results sections are placeholdered and read
-% generated LaTeX from ../results/. Do not type numbers into this file.
+% STATUS: working draft. The results sections read generated LaTeX from
+% ../results/. Do not type numbers into this file.
 %
 % Preamble, colour palette, \aaimark and the cover-page TikZ block are copied
 % from ../../ov-poc-standard/paper/main.tex so the two papers look like one
@@ -161,13 +161,18 @@ handle with tabled resolution --- follows from the finite height of that one
 lattice and needs no tabling. Of the deployments we encoded, the two pairs
 that attest the same proposition and can therefore be compared at all come
 out \emph{incomparable} under set inclusion rather than merely different,
-which would mean no ordinal tier ladder can rank them. We are explicit about the
+which would mean no ordinal tier ladder can rank them. We then run each of the
+four proposed ways of ordering deployments by verifiability against those same
+encodings. All four fail, and each fails differently: ordering by the size of
+the trust set ranks a bare software host above a witness quorum, which inverts
+the word. We are explicit about the
 limit that matters most: the solver computes over the dependencies somebody
 wrote down, and cannot discover one that was left out.}
 
 \vspace{0.6em}
 \noindent{\small\textbf{Artifact.} \parallax{}~\cite{parallaxtool} is
-Apache-2.0. Every number in Section~\ref{sec:eval} is regenerated from the
+Apache-2.0. Every number in Sections~\ref{sec:eval} and~\ref{sec:tiers} is
+regenerated from the
 tool by \texttt{scripts/\allowbreak regen-results.sh} and read into this document from
 the generated files; continuous integration fails if a committed result
 disagrees with the code that produced it. Figures elsewhere in the paper ---
@@ -316,6 +321,12 @@ dependency underneath a hybrid TEE-plus-ZK design that is marketed as defence
 in depth. Of the encoded deployments, the two pairs that can be compared at
 all --- comparison requires both sides to attest the same proposition ---
 come out \emph{incomparable}.
+\item \textbf{Whether the ladder can be repaired} (Section~\ref{sec:tiers}).
+Four candidate orderings, run against the encoded deployments. All four fail,
+each in its own way: counting assumptions ranks the systems backwards, set
+inclusion ranks almost nothing, composed detection latency is $\Never$ for
+every deployment and so ranks everything the same, and collusion cost is not
+derivable from a deployment description at all.
 \item \textbf{What is wrong with all of this} (Section~\ref{sec:open}). Led by
 the completeness problem, which we think is the strongest objection to the
 whole approach and which we have not solved.
@@ -468,7 +479,7 @@ absorbs:
 \end{equation}
 Meet takes the better case, with $\Never$ as the identity.
 
-Note that $\mathcal{L}$ has \emph{infinite} height: $\mathrm{Bounded}(0) <
+$\mathcal{L}$ has \emph{infinite} height: $\mathrm{Bounded}(0) <
 \mathrm{Bounded}(1) < \cdots$ is an infinite ascending chain below $\Never$.
 This matters for Section~\ref{sec:termination} and it is not a problem,
 because the fixpoint does not iterate here. $\Delta$ is a fold over the
@@ -673,8 +684,8 @@ weaker and more useful one: any part of a declaration that reaches a tag
 must reach it through the normalising function that defines what that part
 \emph{means}, or the tag encodes spelling instead of content.
 
-Two further constructions in this area are refused rather than
-interpreted. A deployment declaring no mechanisms at all solves to the empty
+Two more things the tool refuses to answer, rather than answering
+wrongly. A deployment declaring no mechanisms at all solves to the empty
 trust set, which takes $\Delta = \mathrm{Bounded}(0)$ and sits below every
 other trust set under inclusion --- so a two-line file would be reported as
 the most verifiable system in any comparison it entered. And two
@@ -766,12 +777,12 @@ Section~\ref{sec:open} lists the complexity bound as unverified.
 \section{Does It Actually Work?}
 \label{sec:eval}
 
-\placeholder{This section is partly written. The comparison matrix
-(Table~\ref{tab:matrix}) is generated from \texttt{../results/}. The
-per-deployment trust sets, the shared-dependency listing and the
-detection-latency figures are not yet wired in, and are marked individually
-below. Do not type numbers into this section by hand --- add them to
-\texttt{scripts/\allowbreak regen-results.sh} instead.}
+Every figure in this section is tool output. \texttt{scripts/\allowbreak
+regen-results.sh} runs \parallax{} over the encoded deployments, writes each
+table into \texttt{results/}, and this section reads them in from there.
+Continuous integration reruns the script and fails the build if a committed
+result disagrees with the code that produced it, so a number here cannot
+outlive that code. None of it was typed.
 
 Five deployments are encoded and shipped with the artifact:
 $\Sigma_1$, a software-only host with signed measurement logs; $\Sigma_2$,
@@ -786,12 +797,27 @@ examples are the entire evidence base for every number in this section.
 
 \subsection{Reproducing the hand-derived TDX set}
 \label{sec:tdxrepro}
-\placeholder{Trust set for $\Sigma_2$ to be generated from
-\texttt{../results/sigma2-tdx.manifest.json}.}
 
 The first success criterion, from the original design, is that the tool
 produces the five parties of Table~\ref{tab:tdx} from the $\Sigma_2$
-description alone. It does, and it is worth being exact about what that does
+description alone. It does. Table~\ref{tab:sigma2} is what \parallax{}
+prints, read into this document from the file the tool wrote. Set it beside
+Table~\ref{tab:tdx}, which was derived by hand before the tool existed: the
+same five parties, the same five capabilities, the same one bounded row.
+
+\begin{table}[h]
+\centering\small
+\caption{The residual trust set \parallax{} computes for $\Sigma_2$, from
+\texttt{parallax solve --format latex}. The impact column and the detection
+column both come from the \texttt{tee\ub attestation} rule, not from the
+deployment file. Four of the five rows are $\Never$; only the collateral
+authority carries a bound, and that bound is the collateral refresh interval
+the file declares.}
+\label{tab:sigma2}
+\input{../results/sigma2-trust-set.tex}
+\end{table}
+
+It is worth being exact about what that does
 and does not demonstrate, because the criterion as originally worded --- that
 the five emerge ``without those parties being named in the encoding'' --- is
 not what happens.
@@ -847,8 +873,6 @@ publish a trust set rather than a tier.
 
 \subsection{The shared dependency}
 \label{sec:shared}
-\placeholder{The shared-dependency listing to be generated from
-\texttt{../results/hybrid-shared-dependencies.txt}.}
 
 The second success criterion is a non-obvious finding. $\Sigma_5$ layers a
 hardware TEE under a zero-knowledge proof and is the shape of design that gets
@@ -858,6 +882,25 @@ compared against \emph{and} compiles the circuit whose constraints the proof
 relies on. One build-pipeline compromise corrupts both simultaneously. The
 two layers are not independent.
 
+Figure~\ref{fig:shared} is the run, verbatim. The block at the bottom is the
+finding: one principal, reached under two different mechanism tags, with the
+capability each layer needs from it. The long parenthesised strings are the
+canonical mechanism tags of Section~\ref{sec:orderindep} --- they are what
+makes the two layers distinguishable, and they are why the same party
+appearing twice does not deduplicate into one assumption.
+
+\begin{figure}[h]
+\lstinputlisting[basicstyle=\ttfamily\scriptsize, frame=single,
+                 framerule=0.3pt, xleftmargin=0.6em, breaklines=true,
+                 columns=fullflexible]%
+                {../results/hybrid-shared-dependencies.txt}
+\caption{\parallax{} \texttt{solve sigma5-hybrid.toml --shared}, as the tool
+prints it. The build pipeline is named once by the TEE stanza, as the
+reference-value provider, and once by the ZK stanza, as the circuit compiler.
+Nothing in the deployment file remarks on that.}
+\label{fig:shared}
+\end{figure}
+
 We should be careful about how much credit this deserves. We constructed
 $\Sigma_5$, so the tool found something we put there. The claim is that the
 analysis finds it from the description --- the shared principal is not
@@ -866,32 +909,175 @@ separate pipelines reports nothing, so the check is not simply always firing.
 Whether it finds such things in deployments nobody constructed is untested.
 
 \subsection{Detection latency and policy}
-\placeholder{Composed $\Delta$ per deployment, to be generated from
-\texttt{../results/\allowbreak *.json}; policy-check outcomes against
-\texttt{examples/policy-strict.toml}, not yet emitted by
-\texttt{scripts/\allowbreak regen-results.sh}.}
+\label{sec:latencyeval}
 
-The composed $\Delta$ for each deployment, and the outcome of checking each
-manifest against a strict local policy, belong here.
+Table~\ref{tab:summary} is all five deployments at a glance: how many
+assumptions each rests on, how many distinct parties those assumptions name,
+how many of them nothing would ever report a violation of, and the composed
+$\Delta$.
+
+\begin{table}[h]
+\centering\small
+\caption{Every encoded deployment, from \texttt{parallax tiers --format
+tex-summary}. \emph{Undetectable} counts assumptions with $\Delta = \Never$.
+Principals is lower than $|T|$ only for $\Sigma_5$, where one party is
+trusted for two different capabilities --- which is the shared dependency of
+Section~\ref{sec:shared} showing up as a number.}
+\label{tab:summary}
+\input{../results/deployment-summary.tex}
+\end{table}
+
+The last column is the same for every row, and that is the finding rather
+than a defect in the table. $\Delta$ composes as a join over the whole trust
+set (Section~\ref{sec:formal}), so one member with no detection mechanism
+takes the entire system to $\Never$, and the \emph{Undetectable} column is
+nonzero in every row. That includes $\Sigma_3$, the witness quorum with an
+anchored log and gossip --- the design in this set that exists specifically
+to make misbehaviour visible. Its anchoring interval and its gossip
+propagation delay are real bounds on real parties, and they are invisible in
+the composed figure because the seven witnesses sitting underneath them are
+not detectable at all. Whether the max is the right composition is
+Section~\ref{sec:open}'s question; what the column shows is that under the
+composition we implemented, no deployment we encoded reaches a finite bound.
+
+That is also what makes a strict policy useless as a filter here.
+Table~\ref{tab:policy} checks each manifest against
+\texttt{examples/policy-strict.toml}, a relying party that will not accept
+any undetectable assumption and wants everything else detectable inside a
+day. Every deployment fails, and the violation count is just the
+\emph{Undetectable} column of Table~\ref{tab:summary} again --- the 24-hour
+bound never binds, because the only assumptions with finite bounds at all
+are well inside it.
+
+\begin{table}[h]
+\centering\small
+\caption{Each manifest against \texttt{examples/policy-strict.toml}
+(\texttt{forbid\ub undetectable = true}, \texttt{max\ub detection\ub latency
+= "24h"}), from \texttt{parallax check}. \parallax{} exits 1 on violations,
+so this is a gate a relying party could run in CI. On this evidence it is a
+gate that rejects everything.}
+\label{tab:policy}
+\input{../results/policy-checks.tex}
+\end{table}
+
+A policy that rejects every candidate is not yet a useful policy, and we do
+not read this as showing that strict policies are wrong. It shows that the
+strict clause everybody reaches for first --- ``no silent failure modes''
+--- is not satisfiable by any of the designs we know how to encode, which is
+the same fact as Table~\ref{tab:tdx}'s fourth column stated as a
+machine-checkable rule. What a relying party would actually write is a
+policy that names which undetectable assumptions it will carry and why. The
+tool has no way to express that today, and Section~\ref{sec:open} lists it
+as open.
 
 % ================================================================
-\section{Re-Deriving the Tiers}
+\section{Can the Ladder Be Repaired?}
 \label{sec:tiers}
 
-\placeholder{This entire section depends on the candidate-ordering experiment
-across $\Sigma_1$--$\Sigma_5$, which has not been run.}
+A tier ladder is an ordinal claim. Tier~3 sits above Tier~2, which means
+there has to be some way of taking two deployments and saying which is more
+verifiable. Four ways have been proposed. \texttt{parallax tiers} runs each
+of them over $\Sigma_1$--$\Sigma_4$ --- the same four the comparison matrix
+ranks --- and reports what each does and whether the result is an order you
+could put numbers on. Table~\ref{tab:orderings} is that output.
 
-The remaining experiment is to test each candidate total ordering ---
-cardinality, collusion cost, set inclusion, detection-latency bound --- against
-the encoded deployments and report which survive. The prediction is that none
-does, for independent reasons: cardinality treats one opaque silicon vendor as
-equivalent to ten transparent witnesses; collusion cost is adversary-relative,
-so a domestic enterprise and a cross-border protocol rank the same two designs
-oppositely; and set inclusion, per Table~\ref{tab:matrix}, does not hold. If
-that is the outcome, the contribution is the manifest schema plus a
-policy-evaluation procedure rather than a repaired ladder. We have not run it
-yet, and we would rather leave this section visibly empty than fill it with
-the answer we expect.
+None of the four survives. The reason the experiment was worth running is
+that they do not fail the same way.
+
+\begin{table}[h]
+\centering\small
+\caption{The four candidate orderings applied to $\Sigma_1$--$\Sigma_4$,
+from \texttt{parallax tiers --format tex-orderings}. The middle column reads
+left to right as most verifiable to least, under the candidate's own key.
+$\Sigma_5$ is excluded because it is a hybrid built to carry a shared
+dependency rather than a fifth design competing for a rung; the comparison
+matrix leaves it out for the same reason.}
+\label{tab:orderings}
+\input{../results/tier-orderings.tex}
+\end{table}
+
+\paragraph{Cardinality ranks the systems backwards.} Count the assumptions
+and put the smallest number first. On these four that puts $\Sigma_1$ at the
+top: a single machine signing its own measurement log, with no hardware
+root, no witnesses and no transparency log. It puts $\Sigma_3$ at the bottom:
+a 5-of-7 witness quorum over a log that is anchored and gossiped. Nobody
+using the word ``verifiable'' means that. The quorum is doing more work to
+be checkable and the count charges it for every witness it added.
+
+The problem is not that the metric is crude. It is that it rewards the wrong
+thing. $|T|$ measures how much of a trust structure somebody wrote down, and
+under this ordering the way to climb is to write down less --- which is the
+completeness problem of Section~\ref{sec:open} turned into an incentive.
+Cardinality also fails on its own terms before you get to any of that:
+$\Sigma_2$ and $\Sigma_4$ carry the same number of assumptions and tie, so
+it is not a total order even where it does rank.
+
+\paragraph{Set inclusion ranks almost nothing.} This is the order the tool
+already implements, and it is the only one of the four that is not wrong ---
+inclusion is a real order and it says something true whenever it applies. It
+just hardly ever applies. Most of the unordered pairs among these four are
+refused outright, because the two sides attest different propositions and
+asking which of two different claims is more verifiable is not a question.
+Every pair that survives that filter comes out incomparable: each trust set
+holds an assumption the other does not. Nothing at all gets ranked. That is
+Table~\ref{tab:matrix} restated as an ordering question, and the answer is
+that on this evidence the partial order is entirely partial.
+
+\paragraph{Composed detection latency ranks everything the same.} Order by
+how fast the system would notice. This one is not wrong either; it is empty.
+The composed $\Delta$ is $\Never$ for all four, including the anchored,
+gossiped quorum, for the reason Section~\ref{sec:latencyeval} gives: $\Delta$
+is a join over the whole trust set, and the \emph{undetectable} column of
+Table~\ref{tab:summary} is nonzero in every row. One silent assumption takes
+the whole system to $\Never$, and none of these designs gets to zero silent
+assumptions. A key that is constant across everything you want to rank
+separates nothing.
+
+\paragraph{Collusion cost is not in the input.} Order by what it would cost
+an adversary to corrupt enough parties at once. This is the one people reach
+for when the others fail, and it is the one \parallax{} refuses to score. A
+deployment description names principals. It does not say who owns them, what
+jurisdictions they sit in, whose budget could reach them, or whether two
+identifiers with different names belong to two companies or one --- which is
+the principal-independence problem of Section~\ref{sec:open}, and we do not
+know how to compute it either. Those are facts about the world and about a
+particular adversary, and the same two designs will rank in opposite orders
+for a domestic enterprise and for a cross-border protocol. The tool reports
+collusion cost as not computable and says why, rather than printing a number
+it would have made up. A made-up number inside a trust manifest is the exact
+failure this paper exists to object to.
+
+\paragraph{What follows from that.} Four candidates, four independent
+failures: one ranks the systems backwards, one ranks almost nothing, one
+ranks everything the same, and one is not derivable from the input at all.
+We have no repaired ladder to offer in place of the broken one, and having
+run this we do not expect one to exist.
+
+What we have instead is what the original design already proposed, and this
+is the result that supports it: conformance should publish a trust manifest
+--- the parties, the capabilities, the detection bounds, the impacts --- and
+let a relying party evaluate it against a local policy, rather than claim a
+tier. A tier is a single number that asserts an ordering.
+A manifest asserts no ordering, which on this evidence is the honest thing
+for it to assert. Section~\ref{sec:latencyeval} shows the policy check
+running and shows it rejecting all five deployments, so this is a direction
+rather than a finished answer; Section~\ref{sec:open} lists what it leaves
+open, including how an unfamiliar manifest gets evaluated at all.
+
+\paragraph{What this rests on.} Four deployments, all of which we wrote.
+The experiment is a computation over four trust sets the tool derived from
+four files we authored, and it cannot show that no ordering exists. It shows
+that these four candidates fail on these four deployments. Two of the four
+failures look structural rather than accidental --- cardinality will rank
+backwards on any deployment where being checkable costs principals, and
+collusion cost is absent from the input no matter what the input is --- and
+we would expect those two to reproduce anywhere. The other two are contingent
+on the evidence. Set inclusion is empty here because these four trust sets
+happen to be pairwise disjoint or claim-mismatched; a fifth deployment
+somebody else wrote could produce a genuine subset pair. Composed $\Delta$ is
+constant here because no design we encoded eliminates its last silent
+assumption; a design that did would separate immediately. Neither of those
+experiments has been run.
 
 % ================================================================
 \section{What We Still Don't Know}
@@ -1020,7 +1206,10 @@ delegation --- follows from finite lattice height and needs none of the
 machinery originally proposed for it. Its output on the deployments we encoded
 suggests that residual trust sets are incomparable rather than ordered, which
 would mean the ladder is the wrong abstraction and conformance should publish
-a set.
+a set. We then tried the four orderings that might have rescued the ladder,
+and none of them works: one ranks the systems backwards, one ranks almost
+nothing, one ranks everything the same, and one asks for a fact no deployment
+description contains.
 
 And the tool cannot see what nobody encoded. We would rather that be the
 sentence people remember than the incomparability result, because a residual
