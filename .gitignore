@@ -1,5 +1,10 @@
 /target
+
+# The compiled paper is committed for convenience, matching ov-poc-standard's
+# convention — the repo should be readable without a LaTeX toolchain.
+# Rebuild with: cd paper && tectonic -Z shell-escape main.tex
 paper/*.pdf
+!paper/main.pdf
 paper/*.aux
 paper/*.log
 paper/*.out

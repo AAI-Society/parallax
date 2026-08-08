@@ -55,6 +55,16 @@ for the shared-dependency view.
 build if regenerating produces a diff, so a figure in the paper cannot
 drift from the code that produced it. See `results/README.md`.
 
+## Read this first
+
+Two compiled documents, both committed so the repository is readable without
+a LaTeX toolchain:
+
+| Document | What it is |
+| --- | --- |
+| [`paper/main.pdf`](paper/main.pdf) | **P01 — A Trust Calculus for Attestation Tiers.** The paper this tool exists to support. |
+| [`docs/parallax-outcomes.pdf`](docs/parallax-outcomes.pdf) | **What building this established, and what P01 must change.** The three amendments the paper needs, and the defect pattern behind every Critical found during development. |
+
 ## The paper
 
 `paper/` holds the LaTeX source for **P01 — A Trust Calculus for Attestation
@@ -63,6 +73,12 @@ argument sections are written, the results sections are placeholdered, and
 every number it cites is `\input` from `results/` rather than typed. Build it
 with `cd paper && tectonic -Z shell-escape main.tex`; see
 [`paper/README.md`](paper/README.md).
+
+`paper/main.pdf` is committed for convenience, matching `ov-poc-standard`'s
+convention. **It is a build artifact and nothing enforces that it is current** —
+PDF output is not byte-reproducible, so the `results/` staleness gate cannot
+cover it. Rebuild it in the same commit as any change to `main.tex` or
+`results/`.
 
 ## Licence
 
