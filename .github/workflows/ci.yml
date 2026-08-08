@@ -12,9 +12,16 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
       - name: results are current
+        # `git add -A` before diffing, and diff the *index*, because a plain
+        # `git diff results/` is blind to untracked files: adding a sixth
+        # example whose manifest was never committed left CI green while
+        # `results/` was missing a file the paper would go on to cite.
+        # Staging first makes an untracked addition, a deletion, and a
+        # modification all show up the same way.
         run: |
           ./scripts/regen-results.sh
-          git diff --exit-code results/ || {
+          git add -A results/
+          git diff --cached --exit-code results/ || {
             echo "results/ is stale — run ./scripts/regen-results.sh and commit"
             exit 1
           }
@@ -30,3 +37,33 @@ jobs:
       - uses: actions/checkout@v4
       - uses: WtfJoke/setup-tectonic@v3
       - run: cd paper && tectonic -Z shell-escape main.tex
+      - name: no placeholders survive with drafts off
+        # `paper/README.md` names `grep -c '\placeholder' main.tex` as a
+        # pre-submission step. A checklist item is not a gate, so this makes
+        # it mechanical.
+        #
+        # It is deliberately *not* an unconditional "zero placeholders":
+        # the paper is a working draft and its results sections are
+        # openly placeholdered, so failing on any hit would red-line every
+        # build until submission and train everyone to ignore the job. The
+        # state that is actually dangerous is `\draftfalse` with
+        # placeholders still present: with drafts off a surviving
+        # placeholder does not warn, it silently vanishes and leaves the
+        # surrounding prose reading as a finished claim. That is what this
+        # fails on. The count is always printed, so the number is visible
+        # in the log on every run.
+        run: |
+          cd paper
+          count=$(grep -c '\\placeholder{' main.tex || true)
+          echo "surviving \\placeholder uses: $count"
+          if grep -qE '^[^%]*\\draftfalse' main.tex; then
+            if [ "$count" -ne 0 ]; then
+              echo "::error::\\draftfalse is set but $count \\placeholder use(s) remain."
+              echo "With drafts off they vanish from the PDF instead of warning,"
+              echo "leaving the surrounding prose reading as a finished claim."
+              exit 1
+            fi
+            echo "drafts are off and no placeholders remain"
+          else
+            echo "still a draft (\\drafttrue): placeholders render visibly, not failing"
+          fi

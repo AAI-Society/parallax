@@ -28,8 +28,26 @@ done
 # associative arrays need bash 4+, and macOS ships bash 3.2 by default, so a
 # hardcoded table would pass in CI (Ubuntu) and fail silently-then-loudly on
 # a contributor's Mac.
+#
+# The pipeline is guarded because `grep | cut` exits 0 on no match: `grep`'s
+# exit 1 is swallowed by the pipe, `cut` reads nothing and succeeds, and
+# `claim_of` returns the empty string. An example whose `claim` line was
+# renamed or removed would then compare equal to any *other* such example
+# (`"" = ""`), and the matrix would quietly report a real comparison for a
+# pair the script never actually looked up. `set -euo pipefail` does not
+# catch this on its own, because with an empty result there is nothing to
+# fail on — hence the explicit emptiness check at the call sites below.
 claim_of() {
   grep -m1 '^claim' "examples/$1.toml" | cut -d'"' -f2
+}
+
+# Fails loudly with the file named, rather than letting an empty claim
+# propagate into the matrix as a comparison that was never made.
+require_claim() {
+  if [ -z "$2" ]; then
+    echo "regen-results.sh: examples/$1.toml has no parseable \`claim\` line" >&2
+    exit 1
+  fi
 }
 
 # The paper `\input`s a generated `tabular` rather than a hand-copied table,
@@ -70,6 +88,8 @@ for a in sigma1-software sigma2-tdx sigma3-quorum sigma4-zk; do
     [ "$a" = "$b" ] && continue
     claim_a="$(claim_of "$a")"
     claim_b="$(claim_of "$b")"
+    require_claim "$a" "$claim_a"
+    require_claim "$b" "$claim_b"
     if [ "$claim_a" != "$claim_b" ]; then
       result="N/A (different claims: $claim_a vs $claim_b)"
       cell="N/A --- different claims (\\texttt{$(tex_escape "$claim_a")} vs \\texttt{$(tex_escape "$claim_b")})"
