@@ -367,3 +367,71 @@ fn solve_without_shared_flag_omits_the_shared_dependency_block() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(!stdout.contains("SHARED DEPENDENCIES"), "got: {stdout}");
 }
+
+/// Writes `contents` to a process-unique file under the system temp
+/// directory and returns its path. `parallax check` takes file paths, not
+/// stdin, so the CLI-level tests below need real files on disk; a plain
+/// `std::env::temp_dir()` join keyed on the test name and pid is enough to
+/// avoid collisions without pulling in a `tempfile` dependency.
+fn write_temp(name: &str, contents: &str) -> std::path::PathBuf {
+    let mut path = std::env::temp_dir();
+    path.push(format!("parallax-test-{}-{name}", std::process::id()));
+    std::fs::write(&path, contents).unwrap();
+    path
+}
+
+fn tdx_manifest_json() -> String {
+    let out = bin()
+        .args(["solve", "examples/sigma2-tdx.toml", "--format", "json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// `parallax check` is meant to sit in a CI pipeline as a gate, so its exit
+/// code is the entire point of Task 9. This is the "reject" direction: the
+/// TDX manifest has four undetectable (`Never`-latency) principals, and
+/// `examples/policy-strict.toml` sets `forbid_undetectable = true`, so the
+/// command must exit 1 and name the violations on stderr.
+#[test]
+fn check_exits_1_when_the_manifest_violates_the_policy() {
+    let manifest_path = write_temp("check-violates.json", &tdx_manifest_json());
+    let out = bin()
+        .args([
+            "check",
+            manifest_path.to_str().unwrap(),
+            "--policy",
+            "examples/policy-strict.toml",
+        ])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&manifest_path);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("VIOLATION"), "got: {stderr}");
+    assert!(stderr.contains("4 violation(s)"), "got: {stderr}");
+}
+
+/// The "accept" direction, without which a `check` that always exits 1
+/// would still pass the test above. A fully permissive policy (every field
+/// at its default) admits the same TDX manifest cleanly.
+#[test]
+fn check_exits_0_when_the_manifest_satisfies_the_policy() {
+    let manifest_path = write_temp("check-satisfies.json", &tdx_manifest_json());
+    let policy_path = write_temp("check-satisfies-policy.toml", "");
+    let out = bin()
+        .args([
+            "check",
+            manifest_path.to_str().unwrap(),
+            "--policy",
+            policy_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&manifest_path);
+    let _ = std::fs::remove_file(&policy_path);
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("OK"), "got: {stdout}");
+}

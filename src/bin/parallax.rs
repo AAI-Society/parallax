@@ -28,6 +28,12 @@ enum Cmd {
     Compare { a: PathBuf, b: PathBuf },
     /// Show assumptions present in one deployment but not the other
     Diff { a: PathBuf, b: PathBuf },
+    /// Evaluate a manifest against a local trust policy (C10.3)
+    Check {
+        manifest: PathBuf,
+        #[arg(long)]
+        policy: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {
@@ -161,6 +167,22 @@ fn run() -> Result<ExitCode> {
                 1
             };
             Ok(ExitCode::from(code))
+        }
+        Cmd::Check { manifest, policy } => {
+            let m: parallax::manifest::Manifest =
+                serde_json::from_str(&std::fs::read_to_string(&manifest)?)?;
+            let p: parallax::policy::Policy = toml::from_str(&std::fs::read_to_string(&policy)?)?;
+            let violations = parallax::policy::evaluate(&p, &m)?;
+            if violations.is_empty() {
+                println!("OK — manifest satisfies the policy");
+                Ok(ExitCode::SUCCESS)
+            } else {
+                for v in &violations {
+                    eprintln!("VIOLATION: {v}");
+                }
+                eprintln!("\n{} violation(s)", violations.len());
+                Ok(ExitCode::from(1))
+            }
         }
     }
 }

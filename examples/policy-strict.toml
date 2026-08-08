@@ -1,0 +1,4 @@
+# A relying party that will not accept silent failure modes.
+forbid_undetectable = true
+max_detection_latency = "24h"
+forbidden_principals = []

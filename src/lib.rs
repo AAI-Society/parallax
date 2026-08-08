@@ -3,6 +3,7 @@ pub mod deployment;
 pub mod latency;
 pub mod manifest;
 pub mod mechanism;
+pub mod policy;
 pub mod shared;
 pub mod solve;
 pub mod trust;
