@@ -1,0 +1,20 @@
+PRINCIPAL                          CAPABILITY                             DETECT       IMPACT
+did:web:auditor.example            constraint_completeness                never        Soundness
+did:web:buildco.example            golden_value_correctness               never        Soundness
+did:web:buildco.example            sound_arithmetization                  never        Soundness
+did:web:ceremony.example           toxic_waste_destruction                never        Soundness
+did:web:cloud.example.com          measurement_injection_resistance       never        Soundness
+did:web:intel.com                  silicon_and_microcode_integrity        never        Soundness
+did:web:pcs.intel.com              accurate_collateral_issuance           43200s       Revocation
+urn:qe:tdx                         quote_signing_honesty                  never        Soundness
+
+8 assumptions, 7 principals
+
+SHARED DEPENDENCIES — layers that are not independent:
+  did:web:buildco.example
+    tee_attestation
+      tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=12h,reference_values=did:web:buildco.example,host=did:web:cloud.example.com)#0
+        golden_value_correctness (never)
+    zk_proof
+      zk_proof(ceremony=did:web:ceremony.example,compiler=did:web:buildco.example,auditor=did:web:auditor.example)#0
+        sound_arithmetization (never)

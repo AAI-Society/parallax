@@ -24,3 +24,9 @@ clap = { version = "4", features = ["derive"] }
 thiserror = "2"
 anyhow = "1"
 humantime = "2"
+
+# Used only to restore the default SIGPIPE disposition in `src/bin/parallax.rs`
+# before any output is written (see `reset_sigpipe`). Unix-only: Windows has
+# no SIGPIPE, and `println!` there doesn't panic on a closed pipe the same way.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

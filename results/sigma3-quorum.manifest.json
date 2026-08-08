@@ -1,0 +1,132 @@
+{
+  "$schema": "https://verifiability-standard.org/schemas/v2/trust-manifest.json",
+  "system_id": "sigma3-quorum",
+  "claim": "measurement_valid",
+  "residual_trust_set": [
+    {
+      "principal_id": "did:web:logop3.example",
+      "capability_assumed": "append_only_non_equivocation",
+      "detection_latency": {
+        "value": 900,
+        "unit": "seconds"
+      },
+      "failure_impact": "split_view",
+      "introduced_by": "anchoring(log_operator=did:web:logop3.example,interval=15m,settlement=-,finality=-)#0",
+      "introduced_by_kind": "anchoring"
+    },
+    {
+      "principal_id": "did:web:peer1.example",
+      "capability_assumed": "view_synchronization",
+      "detection_latency": {
+        "value": 15,
+        "unit": "seconds"
+      },
+      "failure_impact": "split_view",
+      "introduced_by": "gossip(peers=did:web:peer1.example,did:web:peer2.example,did:web:peer3.example,propagation=15s)#0",
+      "introduced_by_kind": "gossip"
+    },
+    {
+      "principal_id": "did:web:peer2.example",
+      "capability_assumed": "view_synchronization",
+      "detection_latency": {
+        "value": 15,
+        "unit": "seconds"
+      },
+      "failure_impact": "split_view",
+      "introduced_by": "gossip(peers=did:web:peer1.example,did:web:peer2.example,did:web:peer3.example,propagation=15s)#0",
+      "introduced_by_kind": "gossip"
+    },
+    {
+      "principal_id": "did:web:peer3.example",
+      "capability_assumed": "view_synchronization",
+      "detection_latency": {
+        "value": 15,
+        "unit": "seconds"
+      },
+      "failure_impact": "split_view",
+      "introduced_by": "gossip(peers=did:web:peer1.example,did:web:peer2.example,did:web:peer3.example,propagation=15s)#0",
+      "introduced_by_kind": "gossip"
+    },
+    {
+      "principal_id": "did:web:witness1.example",
+      "capability_assumed": "non_collusion_5_of_7",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "witness_quorum(witnesses=did:web:witness1.example,did:web:witness2.example,did:web:witness3.example,did:web:witness4.example,did:web:witness5.example,did:web:witness6.example,did:web:witness7.example,k=5)#0",
+      "introduced_by_kind": "witness_quorum"
+    },
+    {
+      "principal_id": "did:web:witness2.example",
+      "capability_assumed": "non_collusion_5_of_7",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "witness_quorum(witnesses=did:web:witness1.example,did:web:witness2.example,did:web:witness3.example,did:web:witness4.example,did:web:witness5.example,did:web:witness6.example,did:web:witness7.example,k=5)#0",
+      "introduced_by_kind": "witness_quorum"
+    },
+    {
+      "principal_id": "did:web:witness3.example",
+      "capability_assumed": "non_collusion_5_of_7",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "witness_quorum(witnesses=did:web:witness1.example,did:web:witness2.example,did:web:witness3.example,did:web:witness4.example,did:web:witness5.example,did:web:witness6.example,did:web:witness7.example,k=5)#0",
+      "introduced_by_kind": "witness_quorum"
+    },
+    {
+      "principal_id": "did:web:witness4.example",
+      "capability_assumed": "non_collusion_5_of_7",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "witness_quorum(witnesses=did:web:witness1.example,did:web:witness2.example,did:web:witness3.example,did:web:witness4.example,did:web:witness5.example,did:web:witness6.example,did:web:witness7.example,k=5)#0",
+      "introduced_by_kind": "witness_quorum"
+    },
+    {
+      "principal_id": "did:web:witness5.example",
+      "capability_assumed": "non_collusion_5_of_7",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "witness_quorum(witnesses=did:web:witness1.example,did:web:witness2.example,did:web:witness3.example,did:web:witness4.example,did:web:witness5.example,did:web:witness6.example,did:web:witness7.example,k=5)#0",
+      "introduced_by_kind": "witness_quorum"
+    },
+    {
+      "principal_id": "did:web:witness6.example",
+      "capability_assumed": "non_collusion_5_of_7",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "witness_quorum(witnesses=did:web:witness1.example,did:web:witness2.example,did:web:witness3.example,did:web:witness4.example,did:web:witness5.example,did:web:witness6.example,did:web:witness7.example,k=5)#0",
+      "introduced_by_kind": "witness_quorum"
+    },
+    {
+      "principal_id": "did:web:witness7.example",
+      "capability_assumed": "non_collusion_5_of_7",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "witness_quorum(witnesses=did:web:witness1.example,did:web:witness2.example,did:web:witness3.example,did:web:witness4.example,did:web:witness5.example,did:web:witness6.example,did:web:witness7.example,k=5)#0",
+      "introduced_by_kind": "witness_quorum"
+    }
+  ],
+  "system_detection_latency": {
+    "value": null,
+    "type": "infinite_undetectable"
+  }
+}

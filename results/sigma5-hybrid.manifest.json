@@ -1,0 +1,99 @@
+{
+  "$schema": "https://verifiability-standard.org/schemas/v2/trust-manifest.json",
+  "system_id": "sigma5-hybrid",
+  "claim": "execution_valid",
+  "residual_trust_set": [
+    {
+      "principal_id": "did:web:auditor.example",
+      "capability_assumed": "constraint_completeness",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "zk_proof(ceremony=did:web:ceremony.example,compiler=did:web:buildco.example,auditor=did:web:auditor.example)#0",
+      "introduced_by_kind": "zk_proof"
+    },
+    {
+      "principal_id": "did:web:buildco.example",
+      "capability_assumed": "golden_value_correctness",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=12h,reference_values=did:web:buildco.example,host=did:web:cloud.example.com)#0",
+      "introduced_by_kind": "tee_attestation"
+    },
+    {
+      "principal_id": "did:web:buildco.example",
+      "capability_assumed": "sound_arithmetization",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "zk_proof(ceremony=did:web:ceremony.example,compiler=did:web:buildco.example,auditor=did:web:auditor.example)#0",
+      "introduced_by_kind": "zk_proof"
+    },
+    {
+      "principal_id": "did:web:ceremony.example",
+      "capability_assumed": "toxic_waste_destruction",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "zk_proof(ceremony=did:web:ceremony.example,compiler=did:web:buildco.example,auditor=did:web:auditor.example)#0",
+      "introduced_by_kind": "zk_proof"
+    },
+    {
+      "principal_id": "did:web:cloud.example.com",
+      "capability_assumed": "measurement_injection_resistance",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=12h,reference_values=did:web:buildco.example,host=did:web:cloud.example.com)#0",
+      "introduced_by_kind": "tee_attestation"
+    },
+    {
+      "principal_id": "did:web:intel.com",
+      "capability_assumed": "silicon_and_microcode_integrity",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=12h,reference_values=did:web:buildco.example,host=did:web:cloud.example.com)#0",
+      "introduced_by_kind": "tee_attestation"
+    },
+    {
+      "principal_id": "did:web:pcs.intel.com",
+      "capability_assumed": "accurate_collateral_issuance",
+      "detection_latency": {
+        "value": 43200,
+        "unit": "seconds"
+      },
+      "failure_impact": "revocation",
+      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=12h,reference_values=did:web:buildco.example,host=did:web:cloud.example.com)#0",
+      "introduced_by_kind": "tee_attestation"
+    },
+    {
+      "principal_id": "urn:qe:tdx",
+      "capability_assumed": "quote_signing_honesty",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "tee_attestation(endorser=did:web:intel.com,quoting_enclave=urn:qe:tdx,collateral_authority=did:web:pcs.intel.com,collateral_refresh=12h,reference_values=did:web:buildco.example,host=did:web:cloud.example.com)#0",
+      "introduced_by_kind": "tee_attestation"
+    }
+  ],
+  "system_detection_latency": {
+    "value": null,
+    "type": "infinite_undetectable"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://verifiability-standard.org/schemas/v2/trust-manifest.json",
+  "system_id": "sigma1-software",
+  "claim": "measurement_valid",
+  "residual_trust_set": [
+    {
+      "principal_id": "did:web:admin.example",
+      "capability_assumed": "key_custody",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "signing(signer=did:web:admin.example)#0",
+      "introduced_by_kind": "signing"
+    },
+    {
+      "principal_id": "did:web:hostos.example",
+      "capability_assumed": "key_custody",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "signing(signer=did:web:hostos.example)#0",
+      "introduced_by_kind": "signing"
+    },
+    {
+      "principal_id": "did:web:logop.example",
+      "capability_assumed": "append_only_monotonicity",
+      "detection_latency": {
+        "value": null,
+        "type": "infinite_undetectable"
+      },
+      "failure_impact": "soundness",
+      "introduced_by": "hash_chain(log_operator=did:web:logop.example)#0",
+      "introduced_by_kind": "hash_chain"
+    }
+  ],
+  "system_detection_latency": {
+    "value": null,
+    "type": "infinite_undetectable"
+  }
+}

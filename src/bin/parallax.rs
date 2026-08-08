@@ -60,7 +60,34 @@ fn kind_of(tag: &str) -> &str {
     tag.split('(').next().unwrap_or(tag)
 }
 
+/// Rust's runtime ignores `SIGPIPE` by default (see
+/// `rust-lang/rust#62569`), which turns a reader closing its end of a pipe
+/// into a `println!`/`eprintln!` panic — "failed printing to stdout: Broken
+/// pipe" — instead of the Unix-standard silent termination. Every
+/// subcommand here prints output a user will naturally pipe into `head`,
+/// `less`, or `grep -m1`, and `less` sends exactly this signal the moment
+/// the user quits before reaching EOF. Restoring the default disposition
+/// before any output happens means such a write ends the process the way
+/// every other Unix tool ends when its output pipe closes early: silently,
+/// via the signal, not with a panic. A 500-iteration volume loop piped into
+/// `head -c 1` (see `tests/robustness.rs`) reproduces the panic on an
+/// unfixed binary 100% of the time and is clean after this call.
+#[cfg(unix)]
+fn reset_sigpipe() {
+    // SAFETY: `signal` is called once, at the very start of `main`, before
+    // any other thread exists and before any I/O happens. `SIGPIPE` and
+    // `SIG_DFL` are both valid, well-known constants; this cannot race or
+    // hand back an invalid handler.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn reset_sigpipe() {}
+
 fn main() -> ExitCode {
+    reset_sigpipe();
     match run() {
         Ok(code) => code,
         Err(e) => {
@@ -99,6 +126,25 @@ fn run() -> Result<ExitCode> {
             shared,
             format,
         } => {
+            // `--format json --shared` has no honest answer today: the
+            // Residual Trust Manifest's `$schema` is a pinned external URL
+            // (`manifest::SCHEMA`) that other tools (`parallax check`, the
+            // paper's own examples) parse against, and `SharedDependency`
+            // isn't part of that schema. Silently dropping `--shared` would
+            // make a user who asked for both believe the shared-dependency
+            // finding just wasn't there; silently bolting an extra field
+            // onto the JSON would make the manifest lie about which schema
+            // version it conforms to. Rejecting the combination is the only
+            // option that doesn't mislead either way.
+            if shared && format == "json" {
+                anyhow::bail!(
+                    "`--format json` does not carry `--shared`: the Residual Trust \
+                     Manifest schema ({schema}) has no field for shared-dependency \
+                     findings. Use `--format table --shared` to see them, or drop \
+                     `--shared` for the JSON manifest alone.",
+                    schema = parallax::manifest::SCHEMA
+                );
+            }
             let d = Deployment::load(&file)?;
             let t = parallax::solve::solve(&d)?;
             match format.as_str() {

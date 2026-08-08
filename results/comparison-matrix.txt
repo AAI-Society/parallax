@@ -1,0 +1,17 @@
+# Pairwise comparison of residual trust sets
+
+'N/A' rows are pairs that attest different claims; `parallax compare`
+refuses to rank verifiability across two different propositions.
+
+sigma1-software    sigma2-tdx         N/A (different claims: measurement_valid vs execution_valid)
+sigma1-software    sigma3-quorum      Incomparable
+sigma1-software    sigma4-zk          N/A (different claims: measurement_valid vs execution_valid)
+sigma2-tdx         sigma1-software    N/A (different claims: execution_valid vs measurement_valid)
+sigma2-tdx         sigma3-quorum      N/A (different claims: execution_valid vs measurement_valid)
+sigma2-tdx         sigma4-zk          Incomparable
+sigma3-quorum      sigma1-software    Incomparable
+sigma3-quorum      sigma2-tdx         N/A (different claims: measurement_valid vs execution_valid)
+sigma3-quorum      sigma4-zk          N/A (different claims: measurement_valid vs execution_valid)
+sigma4-zk          sigma1-software    N/A (different claims: execution_valid vs measurement_valid)
+sigma4-zk          sigma2-tdx         Incomparable
+sigma4-zk          sigma3-quorum      N/A (different claims: execution_valid vs measurement_valid)
