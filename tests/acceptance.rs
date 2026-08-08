@@ -435,3 +435,79 @@ fn check_exits_0_when_the_manifest_satisfies_the_policy() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("OK"), "got: {stdout}");
 }
+
+/// `check` reads two untrusted files. A malformed manifest must fail
+/// cleanly through the same `?`-to-`anyhow`-to-exit-2 path as the other
+/// subcommands' malformed input, not panic. This was previously verified
+/// only by hand (per the Task 9 review); pin it so a future refactor that
+/// swaps `serde_json::from_str` for something that panics on bad input is
+/// caught here.
+#[test]
+fn check_exits_2_on_a_malformed_manifest() {
+    let manifest_path = write_temp("check-malformed-manifest.json", "{ not json");
+    let out = bin()
+        .args([
+            "check",
+            manifest_path.to_str().unwrap(),
+            "--policy",
+            "examples/policy-strict.toml",
+        ])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&manifest_path);
+    assert_eq!(out.status.code(), Some(2));
+}
+
+/// The policy file is just as untrusted as the manifest; malformed TOML
+/// must exit 2, not panic.
+#[test]
+fn check_exits_2_on_a_malformed_policy() {
+    let manifest_path = write_temp("check-malformed-policy-manifest.json", &tdx_manifest_json());
+    let policy_path = write_temp("check-malformed-policy.toml", "this is not [ toml");
+    let out = bin()
+        .args([
+            "check",
+            manifest_path.to_str().unwrap(),
+            "--policy",
+            policy_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&manifest_path);
+    let _ = std::fs::remove_file(&policy_path);
+    assert_eq!(out.status.code(), Some(2));
+}
+
+/// Regression test for the Task 9 review's Important finding:
+/// `max_detection_latency = "never"` used to parse to `Latency::Never`,
+/// which `evaluate` mapped to `bound = None` — silently identical to the
+/// field being unset. Against a manifest with undetectable principals this
+/// made the strictest-looking spelling produce the loosest possible policy
+/// (`OK`, exit 0). It must instead be refused at the CLI boundary as a bad
+/// policy, exit 2, with an explanatory message — not treated as a
+/// zero-violation pass.
+#[test]
+fn check_refuses_a_never_bound_instead_of_silently_disabling_it() {
+    let manifest_path = write_temp("check-never-bound-manifest.json", &tdx_manifest_json());
+    let policy_path = write_temp(
+        "check-never-bound-policy.toml",
+        "max_detection_latency = \"never\"\n",
+    );
+    let out = bin()
+        .args([
+            "check",
+            manifest_path.to_str().unwrap(),
+            "--policy",
+            policy_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&manifest_path);
+    let _ = std::fs::remove_file(&policy_path);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("sets no bound at all"),
+        "expected the NeverIsNotABound explanation, got: {stderr}"
+    );
+}

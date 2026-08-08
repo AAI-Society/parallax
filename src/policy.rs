@@ -12,7 +12,16 @@ pub struct Policy {
     pub allowed_principals: Option<Vec<String>>,
     #[serde(default)]
     pub forbidden_principals: Vec<String>,
-    /// A humantime duration; `Never` always exceeds it.
+    /// A humantime duration; an undetectable (`Never`) entry always exceeds
+    /// it. The literal string `"never"` is refused rather than parsed: as a
+    /// bound it would read like "require detection within never" but
+    /// `Latency::Never` is the lattice's top element, so as a bound it
+    /// silently means *no bound at all* — the opposite of what a policy
+    /// author reaching for that word almost certainly wants. "No bound" is
+    /// already expressed by omitting this field entirely; write
+    /// `forbid_undetectable = true` to reject undetectable assumptions
+    /// outright. Do not "fix" this by accepting `"never"` again — see
+    /// `PolicyError::NeverIsNotABound`.
     #[serde(default)]
     pub max_detection_latency: Option<String>,
     #[serde(default)]
@@ -63,11 +72,30 @@ impl std::fmt::Display for Violation {
     }
 }
 
-pub fn evaluate(p: &Policy, m: &Manifest) -> Result<Vec<Violation>, LatencyError> {
+/// Errors `evaluate` can return without panicking on malformed policy input.
+#[derive(Debug, thiserror::Error)]
+pub enum PolicyError {
+    /// `max_detection_latency = "never"` would, if parsed as a bound,
+    /// silently produce `bound = None` — indistinguishable from the field
+    /// being unset — because `Never` is the lattice's top element and
+    /// nothing exceeds it. That inverts what any policy author means by
+    /// writing the word: refuse it instead of accepting the loosest
+    /// possible policy under the strictest-looking spelling.
+    #[error(
+        "`max_detection_latency = \"never\"` sets no bound at all; omit the \
+         field for no bound, or set `forbid_undetectable = true` to reject \
+         undetectable assumptions"
+    )]
+    NeverIsNotABound,
+    #[error(transparent)]
+    Latency(#[from] LatencyError),
+}
+
+pub fn evaluate(p: &Policy, m: &Manifest) -> Result<Vec<Violation>, PolicyError> {
     let bound = match &p.max_detection_latency {
         Some(s) => match Latency::parse(s)? {
             Latency::Bounded(v) => Some(v),
-            Latency::Never => None,
+            Latency::Never => return Err(PolicyError::NeverIsNotABound),
         },
         None => None,
     };
@@ -208,5 +236,49 @@ host = "cloud"
             ..permissive()
         };
         assert!(evaluate(&p, &tdx_manifest()).is_err());
+    }
+
+    /// A `"never"` bound must be rejected, not silently interpreted as "no
+    /// bound" — see `PolicyError::NeverIsNotABound`'s doc comment for why.
+    /// Pins the exact error variant so a future change that starts treating
+    /// `"never"` as `Latency::Never -> bound = None` again is caught here
+    /// rather than discovered by a relying party who thought they had
+    /// locked out silent failures.
+    #[test]
+    fn a_never_bound_is_rejected_rather_than_silently_disabled() {
+        let p = Policy {
+            max_detection_latency: Some("never".into()),
+            ..permissive()
+        };
+        let err = evaluate(&p, &tdx_manifest()).unwrap_err();
+        assert!(matches!(err, PolicyError::NeverIsNotABound), "got {err:?}");
+    }
+
+    /// The comparison is `v > b`, so the bound is inclusive: an entry that
+    /// detects in exactly the bound passes. `pcs` is at exactly 12h in the
+    /// fixture, so a 12h bound must not flag it — only the four `Never`
+    /// entries, which are unconditionally over any finite bound. Without
+    /// this test, flipping the comparison to `v >= b` (making the bound
+    /// exclusive) would fail nothing, since the other bound test (24h)
+    /// leaves 12 hours of slack.
+    #[test]
+    fn a_bound_equal_to_the_actual_latency_passes() {
+        let p = Policy {
+            max_detection_latency: Some("12h".into()),
+            ..permissive()
+        };
+        let v = evaluate(&p, &tdx_manifest()).unwrap();
+        assert_eq!(
+            v.len(),
+            4,
+            "pcs sits at exactly the 12h bound and must pass; only the four \
+             Never entries are flagged"
+        );
+        assert!(
+            !v.iter().any(
+                |x| matches!(x, Violation::LatencyExceeded { principal, .. } if principal == "pcs")
+            ),
+            "pcs at exactly the bound must not be reported as exceeding it, got {v:?}"
+        );
     }
 }
