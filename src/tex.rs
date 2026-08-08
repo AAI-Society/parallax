@@ -1,35 +1,72 @@
 //! LaTeX fragments the paper `\input`s.
 //!
-//! The paper contains no typed numbers: every figure it prints is generated
-//! here (or by `scripts/regen-results.sh`) and read in from `results/`, so a
-//! number in the PDF cannot outlive the code that produced it. Everything in
-//! this module emits a *bare* `tabular` — the caption and the surrounding
-//! float live in `paper/main.tex`, because those are prose.
+//! Every table the paper prints in its results sections is generated here (or
+//! by `scripts/regen-results.sh`) and read in from `results/`, so a figure in
+//! the PDF cannot outlive the code that produced it. Everything in this
+//! module emits a *bare* `tabular` — the caption and the surrounding float
+//! live in `paper/main.tex`, because those are prose.
 
 use crate::latency::Latency;
 use crate::trust::TrustSet;
 
-/// Escapes the one LaTeX special character that can reach a generated cell,
-/// and marks it as a place the line may break.
+/// Renders a string safe to drop into a LaTeX cell, and marks the places the
+/// line may break.
 ///
-/// Deployment names are `[a-z0-9-]`, claim and capability names are
-/// snake_case identifiers, and principal ids are DIDs and URNs, so `_` is
-/// the whole set. `Deployment::validate` rejects the characters that would
-/// break the canonical mechanism grammar, but it does not police LaTeX
-/// syntax: if the example set ever grows a name containing `&`, `%`, `#`,
-/// `$`, `{`, `}`, `~` or `^`, extend this function rather than discovering
-/// it as a build failure in `paper/`. The same caveat, and the same reason,
-/// as `tex_escape` in `scripts/regen-results.sh`.
+/// Every character TeX treats specially is escaped, not just `_`. This is not
+/// defensive tidiness — an earlier version escaped `_` alone and argued that
+/// anything else would surface as a build failure in `paper/`. That argument
+/// was false, and falsely reassuring. A principal id of `urn:qe:tdx~v2`
+/// rendered as `urn:qe:tdx v2` in the PDF: `~` is an unbreakable space, so
+/// the build was clean, no warning was issued, and a published trust manifest
+/// silently named a party that does not exist. `%` is worse than
+/// hypothetical: `did:web` percent-encodes ports, so
+/// `did:web:localhost%3A8080` is spec-conformant input, and `%` starts a
+/// comment — everything after it on the line, including the `&` column
+/// separators and the `\\` row terminator, would vanish.
 ///
-/// The trailing `\allowbreak` is not decoration. Capability names here run
-/// past thirty characters (`measurement_injection_resistance`), TeX will not
-/// hyphenate inside `\texttt`, and a table column narrow enough to hold the
-/// rest of the row is narrower than that — so without a stated break
-/// opportunity the cell overflows into the margin. This is the same fix as
-/// the paper's own `\ub` macro, applied to the cells the paper does not
-/// write by hand.
+/// Escaping rather than rejecting is the right trade *here* because these
+/// strings are principal ids and capability names out of somebody else's
+/// deployment file, and the characters are legitimate in them. Refusing
+/// conformant input to keep a table generator simple would be the wrong way
+/// round. `scripts/regen-results.sh` makes the opposite choice for the values
+/// *it* interpolates, and says why.
+///
+/// The `\allowbreak` after an escaped `_` is not decoration. Capability names
+/// run past thirty characters (`measurement_injection_resistance`), TeX will
+/// not hyphenate inside `\texttt`, and a table column narrow enough to hold
+/// the rest of the row is narrower than that — so without a stated break
+/// opportunity the cell overflows into the margin. This is the paper's own
+/// `\ub` macro, applied to the cells the paper does not write by hand. Only
+/// `_` gets one: it is the only special character that appears mid-identifier
+/// often enough to matter, and a break opportunity after, say, an escaped `$`
+/// would break lines in places a reader would not expect.
+///
+/// One pass over the characters, not a chain of `replace` calls: a chain
+/// would rewrite the backslashes an earlier step had just introduced.
 pub fn escape(s: &str) -> String {
-    s.replace('_', "\\_\\allowbreak ")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            // `\allowbreak` is a control word, so the trailing space is
+            // gobbled by TeX and does not reach the page.
+            '_' => out.push_str("\\_\\allowbreak "),
+            '&' => out.push_str("\\&"),
+            '%' => out.push_str("\\%"),
+            '$' => out.push_str("\\$"),
+            '#' => out.push_str("\\#"),
+            '{' => out.push_str("\\{"),
+            '}' => out.push_str("\\}"),
+            // These three have no `\`-prefixed form that renders the literal
+            // character: `\~` and `\^` are accents that would compose with
+            // whatever follows, and `\\` is a row terminator. The `{}` stops
+            // the control word from swallowing a following space.
+            '~' => out.push_str("\\textasciitilde{}"),
+            '^' => out.push_str("\\textasciicircum{}"),
+            '\\' => out.push_str("\\textbackslash{}"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// A detection latency as the paper writes it. `Never` is `\infty` in the
@@ -83,7 +120,7 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn underscores_are_escaped_and_nothing_else_is_touched() {
+    fn underscores_are_escaped_and_carry_a_break_opportunity() {
         assert_eq!(
             escape("golden_value_correctness"),
             "golden\\_\\allowbreak value\\_\\allowbreak correctness",
@@ -91,6 +128,115 @@ mod tests {
         );
         assert_eq!(escape("did:web:intel.com"), "did:web:intel.com");
         assert_eq!(escape("sigma1-software"), "sigma1-software");
+    }
+
+    /// Escaping `_` alone was not enough, and the reason it looked like
+    /// enough is the point. A principal id of `urn:qe:tdx~v2` built cleanly
+    /// and printed `urn:qe:tdx v2` — `~` is an unbreakable space in TeX — so
+    /// a published table named a party that does not exist, with no warning
+    /// anywhere. `%` would have been worse: it opens a comment, so the rest
+    /// of the row, separators and all, would have disappeared.
+    #[test]
+    fn every_tex_special_character_survives_escaping_as_itself() {
+        // A `did:web` with a percent-encoded port is spec-conformant input,
+        // not a contrived one.
+        assert_eq!(
+            escape("did:web:localhost%3A8080"),
+            "did:web:localhost\\%3A8080"
+        );
+        // The one that used to be silently swallowed.
+        assert_eq!(escape("urn:qe:tdx~v2"), "urn:qe:tdx\\textasciitilde{}v2");
+
+        for (raw, expected) in [
+            ("a&b", "a\\&b"),
+            ("a%b", "a\\%b"),
+            ("a$b", "a\\$b"),
+            ("a#b", "a\\#b"),
+            ("a{b", "a\\{b"),
+            ("a}b", "a\\}b"),
+            ("a~b", "a\\textasciitilde{}b"),
+            ("a^b", "a\\textasciicircum{}b"),
+            ("a\\b", "a\\textbackslash{}b"),
+        ] {
+            assert_eq!(escape(raw), expected, "escaping `{raw}`");
+        }
+
+        // All of them at once, to catch a single-pass implementation that
+        // rewrites the backslashes an earlier substitution introduced.
+        assert_eq!(
+            escape("~^\\%$#&{}_"),
+            "\\textasciitilde{}\\textasciicircum{}\\textbackslash{}\
+             \\%\\$\\#\\&\\{\\}\\_\\allowbreak ",
+            "a chain of `replace` calls would corrupt this"
+        );
+    }
+
+    /// The property the exact strings above are there to guarantee: after
+    /// escaping, no TeX special character is left standing on its own. A
+    /// character that reaches the page unescaped either changes what the
+    /// table says (`~`) or destroys the row (`%`).
+    #[test]
+    fn no_special_character_reaches_a_cell_unescaped() {
+        let nasty = "did:web:evil%3A80~a^b\\c{d}e$f#g&h_i";
+        let escaped = escape(nasty);
+        let mut chars = escaped.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                // Consume the control sequence this backslash introduces:
+                // either a single escaped punctuation character or a run of
+                // letters naming a command.
+                match chars.peek() {
+                    Some(x) if x.is_alphabetic() => {
+                        while chars.peek().is_some_and(|x| x.is_alphabetic()) {
+                            chars.next();
+                        }
+                    }
+                    Some(_) => {
+                        chars.next();
+                    }
+                    None => panic!("trailing backslash in {escaped}"),
+                }
+                continue;
+            }
+            assert!(
+                !matches!(c, '&' | '%' | '$' | '#' | '_' | '^' | '~'),
+                "`{c}` reached the cell unescaped in {escaped}"
+            );
+        }
+    }
+
+    /// The end-to-end shape of the same defect: a nasty principal id inside
+    /// a real generated table.
+    #[test]
+    fn a_principal_id_full_of_specials_renders_faithfully_in_a_table() {
+        use crate::latency::Latency;
+        use crate::trust::{Assumption, Impact, TrustSet};
+
+        let t = TrustSet::singleton(Assumption {
+            principal: "did:web:localhost%3A8080~beta".into(),
+            capability: "golden_value_correctness".into(),
+            latency: Latency::Never,
+            impact: Impact::Soundness,
+            mechanism: "m".into(),
+        });
+        let tex = trust_set_tabular(&t);
+
+        assert!(
+            tex.contains("\\texttt{did:web:localhost\\%3A8080\\textasciitilde{}beta}"),
+            "the id must arrive intact:\n{tex}"
+        );
+        // The row must still be a row: one `&`-separated line ending in
+        // `\\`. An unescaped `%` would have commented the rest of it away.
+        let row = tex
+            .lines()
+            .find(|l| l.contains("localhost"))
+            .expect("the row must exist");
+        assert_eq!(
+            row.matches(" & ").count(),
+            3,
+            "four columns, three separators, none swallowed: {row}"
+        );
+        assert!(row.ends_with("\\\\"), "row terminator survived: {row}");
     }
 
     #[test]

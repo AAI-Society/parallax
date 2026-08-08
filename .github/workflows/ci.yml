@@ -28,9 +28,13 @@ jobs:
 
   # Separate from `rust` on purpose: the paper build needs no toolchain and
   # the Rust job needs no LaTeX, so running them independently keeps either
-  # failure legible and lets them run in parallel. The paper `\input`s
-  # results/comparison-matrix.tex from the committed tree; the `rust` job is
-  # what proves that file is current.
+  # failure legible and lets them run in parallel. The paper reads six
+  # generated files out of the committed tree — the trust-set, comparison,
+  # summary, policy and ordering tables, plus the shared-dependency listing;
+  # `paper/README.md` maps each to the table it becomes. This job only checks
+  # that they typeset. It is the `rust` job that proves they are current, so
+  # a green `paper` job on its own says nothing about whether the numbers
+  # match the code.
   paper:
     runs-on: ubuntu-latest
     steps:

@@ -51,15 +51,36 @@ require_claim() {
 }
 
 # The paper `\input`s a generated `tabular` rather than a hand-copied table,
-# so a number in the PDF cannot drift from the code that produced it. Only
-# `_` needs escaping here: deployment names are `[a-z0-9-]` and claim names
-# are snake_case identifiers, so no other LaTeX special character can reach
-# a cell. `validate` rejects the reserved characters that would break the
-# canonical mechanism grammar, but it does not police LaTeX syntax — if the
-# example set ever grows a name containing `&`, `%`, `#`, `$`, `{`, `}`,
-# `~` or `^`, extend this function rather than discovering it as a build
-# failure in `paper/`.
+# so a number in the PDF cannot drift from the code that produced it.
+#
+# This escapes `_` and *refuses* every other LaTeX special character, which
+# is the opposite of what `parallax::tex::escape` does — deliberately, and
+# the difference is worth stating. That function escapes everything, because
+# it renders principal ids and capability names out of somebody else's
+# deployment file, where `%` (a `did:web` with a percent-encoded port) and
+# `~` are legitimate and refusing them would refuse conformant input. The
+# values interpolated *here* are ours: deployment names come from the file
+# list a few lines below, and claim names come from our own examples. A
+# special character in one of those is a mistake, not input, so the useful
+# response is to stop rather than to render it.
+#
+# The reason this is not merely fussy: the earlier version escaped `_` and
+# argued that anything else would show up as a build failure in `paper/`.
+# It would not. `~` is an unbreakable space, so it builds clean and silently
+# renames whatever it appears in; `%` opens a comment, so it eats the rest
+# of the row including the `&` separators and the `\\` terminator, and the
+# table quietly loses a column or a line.
 tex_escape() {
+  case "$1" in
+    *[\\{}\$\&\#^%~]*)
+      echo "regen-results.sh: \`$1\` contains a LaTeX special character." >&2
+      echo "  Values interpolated by this script are supposed to be plain" >&2
+      echo "  identifiers. Escaping it here would hide a mistake; \`~\` and" >&2
+      echo "  \`%\` in particular corrupt a table without failing the build." >&2
+      echo "  If such a value is now legitimate, route it through" >&2
+      echo "  \`parallax::tex::escape\` rather than widening this case." >&2
+      exit 1 ;;
+  esac
   printf '%s' "$1" | sed 's/_/\\_/g'
 }
 
@@ -120,7 +141,7 @@ done
 "$BIN" solve examples/sigma2-tdx.toml --format latex > results/sigma2-trust-set.tex
 
 # The candidate-ordering experiment. Run over the four single-mechanism
-# deployments -- the same four the comparison matrix above ranks. Sigma_5 is
+# deployments -- the same four the comparison matrix above covers. Sigma_5 is
 # excluded here on purpose: it is a hybrid built to carry a shared dependency,
 # not a fifth design competing for a rung, and the matrix does not rank it
 # either. It does appear in the per-deployment summary below, which is a
