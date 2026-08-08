@@ -237,6 +237,7 @@ mod tests {
     use super::*;
     use crate::deployment::MechanismSpec;
     use crate::latency::Latency;
+    use std::collections::BTreeSet;
 
     fn tee() -> MechanismSpec {
         MechanismSpec::TeeAttestation {
@@ -330,6 +331,116 @@ mod tests {
             finality: None,
         };
         assert!(assumptions(&m, "m#0").is_err());
+    }
+
+    /// Compile-time guard: adding a `MechanismSpec` variant must break this
+    /// match. Whoever adds one is then forced to update
+    /// `every_rule_appears_in_the_papers_table` below, which in turn names
+    /// `paper/main.tex` Table 2. Without this, a new mechanism would be
+    /// silently absent from the paper's statement of the composition rules.
+    #[allow(dead_code)]
+    fn variant_guard(spec: &MechanismSpec) {
+        match spec {
+            MechanismSpec::TeeAttestation { .. }
+            | MechanismSpec::Signing { .. }
+            | MechanismSpec::HashChain { .. }
+            | MechanismSpec::Anchoring { .. }
+            | MechanismSpec::Gossip { .. }
+            | MechanismSpec::WitnessQuorum { .. }
+            | MechanismSpec::ZkProof { .. } => {}
+        }
+    }
+
+    /// Table 2 of `paper/main.tex` prints the composition rules as fourteen
+    /// (mechanism, capability) rows. That table is hand-maintained, so
+    /// nothing but this test stops it drifting from the code it claims to
+    /// transcribe. This is a tripwire, not a generator: it will not fix the
+    /// paper, but it will fail the build rather than let the paper quietly
+    /// start lying about the artifact.
+    ///
+    /// If this test fails, update Table 2 and its caption (which counts the
+    /// rows, and names the single row where `never` is an overridable
+    /// default rather than a property of the mechanism) in the same commit.
+    #[test]
+    fn every_rule_appears_in_the_papers_table() {
+        // One instance of every variant. `anchoring` declares a settlement
+        // layer so its optional second assumption fires; `gossip` and
+        // `witness_quorum` get one member each, since their row count is a
+        // property of the rule and not of how many peers were declared.
+        let specs = vec![
+            MechanismSpec::Signing { signer: "s".into() },
+            MechanismSpec::HashChain {
+                log_operator: "log".into(),
+            },
+            MechanismSpec::Anchoring {
+                log_operator: "log".into(),
+                interval: "15m".into(),
+                settlement: Some("l1".into()),
+                finality: Some("12s".into()),
+            },
+            MechanismSpec::Gossip {
+                peers: vec!["p".into()],
+                propagation: "15s".into(),
+            },
+            MechanismSpec::WitnessQuorum {
+                witnesses: (1..=7).map(|i| format!("w{i}")).collect(),
+                k: 5,
+            },
+            tee(),
+            MechanismSpec::ZkProof {
+                ceremony: "c".into(),
+                compiler: "b".into(),
+                auditor: "a".into(),
+            },
+        ];
+
+        let tags = mechanism_tags(&specs);
+        let mut rows: Vec<(String, String)> = Vec::new();
+        for (spec, tag) in specs.iter().zip(tags.iter()) {
+            // The canonical tag is `kind(fields...)#n`; the kind is the
+            // prefix up to the first `(`, which `validate` guarantees no
+            // principal id can introduce earlier.
+            let kind = tag.split('(').next().unwrap().to_string();
+            for a in assumptions(spec, tag).unwrap() {
+                rows.push((kind.clone(), a.capability));
+            }
+        }
+
+        // Transcribed from Table 2. The quorum capability is parameterised by
+        // k and n; the paper prints it schematically as
+        // `non_collusion_k_of_n` and this is the k=5, n=7 instance.
+        let expected: Vec<(&str, &str)> = vec![
+            ("signing", "key_custody"),
+            ("hash_chain", "append_only_monotonicity"),
+            ("anchoring", "append_only_non_equivocation"),
+            ("anchoring", "consensus_execution_fidelity"),
+            ("gossip", "view_synchronization"),
+            ("witness_quorum", "non_collusion_5_of_7"),
+            ("tee_attestation", "silicon_and_microcode_integrity"),
+            ("tee_attestation", "quote_signing_honesty"),
+            ("tee_attestation", "accurate_collateral_issuance"),
+            ("tee_attestation", "golden_value_correctness"),
+            ("tee_attestation", "measurement_injection_resistance"),
+            ("zk_proof", "toxic_waste_destruction"),
+            ("zk_proof", "sound_arithmetization"),
+            ("zk_proof", "constraint_completeness"),
+        ];
+
+        // Compare as sets: the paper groups rows by mechanism, which is not
+        // the order `assumptions` returns them in, and row order in a table
+        // is presentation rather than contract.
+        let got: BTreeSet<(String, String)> = rows.into_iter().collect();
+        let want: BTreeSet<(String, String)> = expected
+            .into_iter()
+            .map(|(m, c)| (m.to_string(), c.to_string()))
+            .collect();
+
+        assert_eq!(
+            got, want,
+            "the composition rules no longer match paper/main.tex Table 2 \
+             — update the table and its row count in the caption"
+        );
+        assert_eq!(want.len(), 14, "Table 2's caption counts fourteen rows");
     }
 
     #[test]

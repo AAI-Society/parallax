@@ -54,6 +54,26 @@
 % to be stated.
 \newcommand{\ub}{\_\allowbreak}
 
+% Placeholders, visible in the PDF while \ifdraft is true.
+%
+% A LaTeX comment marking unfinished content is invisible to everyone reading
+% the compiled paper, which is everyone who reviews it. These render as a
+% marked block instead, so a placeholder cannot be circulated unnoticed.
+% Setting \draftfalse before submission turns them off and, more usefully,
+% makes any surviving placeholder disappear from the text rather than
+% silently becoming a claim -- so grep for \placeholder before submitting.
+\newif\ifdraft
+\drafttrue
+\newcommand{\placeholder}[1]{%
+  \ifdraft
+    \par\vspace{0.4em}\noindent
+    \fcolorbox{aaidarklime}{aailimetint}{%
+      \parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}{%
+        \small\sffamily\raggedright
+        \textbf{Placeholder.} #1}}%
+    \par\vspace{0.4em}
+  \fi}
+
 % The Society's bracket mark, drawn natively (lime on the dark band)
 \newcommand{\aaimark}[1]{%
 \begin{tikzpicture}[x=#1, y=#1, line cap=butt]
@@ -133,23 +153,26 @@ the system will ever say so. We give a small calculus that computes this set
 instead of arguing about it. A judgment $\Gamma \vdash P : T, \Delta$ reads
 ``proposition $P$ holds provided the parties in $T$ are honest, and a
 violation would be detected within $\Delta$''; mechanisms compose by joining
-$T$ under union and $\Delta$ under max, over two lattices of finite height.
-We implement it in \parallax{}, a Rust tool that reads a deployment
-description and prints the residual trust set, and we show that termination
-on cyclic delegation --- the case the original design proposed to handle with
-tabled resolution --- follows from finite lattice height alone and needs no
-tabling. On the deployments we have encoded, the trust sets are
-\emph{incomparable} under set inclusion rather than merely different, which
-would mean no ordinal tier ladder can rank them. We are explicit about the
+$T$ under union and $\Delta$ under max, the former over a trust-set lattice
+of finite height. We implement it in \parallax{}, a Rust tool that reads a
+deployment description and prints the residual trust set, and we show that
+termination on cyclic delegation --- the case the original design proposed to
+handle with tabled resolution --- follows from the finite height of that one
+lattice and needs no tabling. Of the deployments we encoded, the two pairs
+that attest the same proposition and can therefore be compared at all come
+out \emph{incomparable} under set inclusion rather than merely different,
+which would mean no ordinal tier ladder can rank them. We are explicit about the
 limit that matters most: the solver computes over the dependencies somebody
 wrote down, and cannot discover one that was left out.}
 
 \vspace{0.6em}
 \noindent{\small\textbf{Artifact.} \parallax{}~\cite{parallaxtool} is
-Apache-2.0. Every number
-this paper cites is regenerated from the tool by
-\texttt{scripts/regen-results.sh}, and the build fails if a committed figure
-disagrees with the code that produced it.}
+Apache-2.0. Every number in Section~\ref{sec:eval} is regenerated from the
+tool by \texttt{scripts/\allowbreak regen-results.sh} and read into this document from
+the generated files; continuous integration fails if a committed result
+disagrees with the code that produced it. Figures elsewhere in the paper ---
+deployment parameters, code size, the size of the termination example ---
+are stated in the prose and are not tool output.}
 
 \clearpage
 
@@ -275,7 +298,8 @@ five encoded deployments.
 are honest, with any violation detectable within $\Delta$. Composition is
 join in two lattices --- union on trust sets, max on detection latencies.
 \item \textbf{The tool} (Section~\ref{sec:formal}, Section~\ref{sec:eval}).
-\parallax{}, roughly 2\,000 lines of Rust, reads a deployment as TOML and
+\parallax{}, about 1\,600 lines of Rust excluding tests and about as much
+again in tests, reads a deployment as TOML and
 emits the residual trust set, a machine-readable manifest, a comparison
 between two deployments, a shared-dependency analysis, and a policy check.
 \item \textbf{Termination, the easy way} (Section~\ref{sec:termination}). The
@@ -284,12 +308,14 @@ would terminate. It is not needed. The fixpoint lives in the powerset of a
 finite assumption set, which has finite height, so bottom-up evaluation halts
 regardless of cycles. We say why the harder machinery solves a problem we do
 not have.
-\item \textbf{What we found} (Section~\ref{sec:eval}). The tool reproduces the
-five-party set in Table~\ref{tab:tdx} from a deployment description that does
-not name those five parties as a group, and it finds a shared build-pipeline
+\item \textbf{What we found} (Section~\ref{sec:eval}). The tool reproduces
+Table~\ref{tab:tdx} --- each party's capability, detection bound and impact,
+and the fact that exactly these five are load-bearing --- from a deployment
+description that says none of it, and it finds a shared build-pipeline
 dependency underneath a hybrid TEE-plus-ZK design that is marketed as defence
-in depth. On the deployments we encoded, trust sets come out
-\emph{incomparable}.
+in depth. Of the encoded deployments, the two pairs that can be compared at
+all --- comparison requires both sides to attest the same proposition ---
+come out \emph{incomparable}.
 \item \textbf{What is wrong with all of this} (Section~\ref{sec:open}). Led by
 the completeness problem, which we think is the strongest objection to the
 whole approach and which we have not solved.
@@ -440,8 +466,19 @@ absorbs:
 \mathrm{Bounded}(\max(t_1, t_2)) & \text{otherwise.}
 \end{cases}
 \end{equation}
-Meet takes the better case, with $\Never$ as the identity. The reading of
-join is that a system is only as detectable as its least detectable part.
+Meet takes the better case, with $\Never$ as the identity.
+
+Note that $\mathcal{L}$ has \emph{infinite} height: $\mathrm{Bounded}(0) <
+\mathrm{Bounded}(1) < \cdots$ is an infinite ascending chain below $\Never$.
+This matters for Section~\ref{sec:termination} and it is not a problem,
+because the fixpoint does not iterate here. $\Delta$ is a fold over the
+finished trust set, computed once after the fixpoint has converged; the only
+lattice the solver iterates in is the trust-set lattice, whose height is
+finite. Confusing the two would make the termination argument false, so it is
+worth stating which one carries it.
+
+The reading of join is that a system is only as detectable as its least
+detectable part.
 Whether that is the right reading is an open question and
 Section~\ref{sec:open} returns to it. The empty trust set has
 $\Delta = \mathrm{Bounded}(0)$: nothing to detect.
@@ -471,9 +508,11 @@ parsed as durations; \texttt{never} is accepted and means $\Never$.
 \begin{table}[h]
 \centering\footnotesize
 \caption{The composition rules, as implemented in \texttt{src/mechanism.rs}.
-$\Never$ in the latency column means the declaration cannot express a bound
-for that assumption --- it is a property of the mechanism, not a default that
-a deployment can override.}
+For thirteen of these fourteen rows, $\Never$ means the declaration cannot
+express a bound at all: it is a property of the mechanism, not a default a
+deployment can override. The exception is \texttt{anchoring}'s settlement
+assumption, where $\Never$ \emph{is} an overridable default, applied when a
+settlement layer is declared without a finality bound.}
 \label{tab:rules}
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}p{2.4cm}>{\raggedright\arraybackslash}p{5.0cm}>{\raggedright\arraybackslash}p{3.0cm}p{2.3cm}@{}}
@@ -529,8 +568,9 @@ Three of these deserve a sentence each.
 \emph{\texttt{tee\_attestation} is Table~\ref{tab:tdx}.} The five rows of the
 rule are the five rows of the TDX table, and only the collateral authority
 carries a bound. This is the sense in which the tool reproduces the
-hand-derived result: the deployment file declares six principal identifiers
-and a mechanism kind, and the five-party set falls out of the rule.
+hand-derived result: the deployment file declares five principal identifiers,
+a refresh interval and a mechanism kind, and the five-party set --- with each
+party's capability, detection bound and impact --- falls out of the rule.
 
 \emph{\texttt{anchoring} is a trade, not a gain.} It converts the log
 operator's assumption from unbounded to bounded --- the intended win, and the
@@ -643,22 +683,30 @@ finitely many steps, regardless of cycles in the delegation graph.
 Fix a deployment with a finite set of declared principals $\mathcal{P}$, a
 finite list of mechanisms $M$, and a finite set of delegation edges $E$. Let
 $A$ be the set of assumptions that can ever be derived. $A$ is finite: each
-mechanism $m \in M$ contributes $|\mathcal{A}(m)|$ assumptions, which is a
-constant for every rule except \texttt{gossip} and \texttt{witness\_quorum},
-where it is the number of declared peers or witnesses; and each delegation
-edge contributes exactly one \texttt{delegation\_integrity} assumption tagged
-with its target. So $|A| \le \sum_{m \in M} |\mathcal{A}(m)| + |E|$.
+mechanism $m \in M$ contributes $|\mathcal{A}(m)|$ assumptions, a constant for
+every rule except \texttt{gossip} and \texttt{witness\_quorum}, where it is
+the number of declared peers or witnesses, and \texttt{anchoring}, where it is
+one or two according to whether a settlement layer is declared; and each
+delegation edge contributes exactly one \texttt{delegation\_integrity}
+assumption tagged with its target. Each of those is finite, so
+$|A| \le \sum_{m \in M} |\mathcal{A}(m)| + |E|$ is finite.
 
 The residual set is the least fixpoint of a monotone operator on
 $(\mathcal{P}(A), \subseteq)$. Every rule is monotone --- no rule ever removes
 an assumption or a load-bearing fact --- and the lattice has height $|A|$,
 which is finite. A monotone operator on a complete lattice has a least
 fixpoint~\cite{tarski}, and on a lattice of finite height Kleene iteration
-reaches it after at most $|A|$ rounds. Cycles in the \textsf{speaks-for} relation cannot change
-this, because rule 2 derives facts in the finite domain $\mathcal{C} \times
-\mathcal{P}$ rather than generating new terms: a cycle simply means the same
-finite set of facts is re-derivable by more than one path, and re-deriving a
-fact already present adds nothing and terminates the round.
+reaches it after at most $|A|$ rounds. Cycles in the \textsf{speaks-for}
+relation cannot change this, because rule 2 derives facts in the finite domain
+$\mathcal{C} \times \mathcal{P}$ rather than generating new terms: a cycle
+simply means the same finite set of facts is re-derivable by more than one
+path, and re-deriving a fact already present adds nothing and terminates the
+round.
+
+The latency lattice takes no part in this. It has infinite height, and if the
+solver iterated in it the argument above would not go through; it does not.
+$\Delta$ is folded over the converged trust set afterwards, over finitely many
+members, so it terminates for the trivial reason.
 \end{proof}
 
 The reason tabling is unnecessary, stated plainly: SLD resolution diverges on
@@ -675,9 +723,10 @@ with union as its join.
 
 This is not only an argument. A test in the artifact builds a delegation cycle
 through 300 principals, spanning two mechanism layers, and solves it: every
-principal comes out load-bearing, as the cycle requires, and the whole test
-including parsing runs in well under a second on a laptop in an unoptimized
-build. We report that as evidence of termination, not as a performance
+principal comes out load-bearing, as the cycle requires, and the solve --- the
+clock starts after parsing and validation, so it is the fixpoint that is
+timed --- returns in well under a second on a laptop in an unoptimized build.
+We report that as evidence of termination, not as a performance
 result; we have not characterized how the runtime grows, and
 Section~\ref{sec:open} lists the complexity bound as unverified.
 
@@ -685,42 +734,75 @@ Section~\ref{sec:open} lists the complexity bound as unverified.
 \section{Does It Actually Work?}
 \label{sec:eval}
 
-% RESULTS PLACEHOLDER — populated from ../results/ by scripts/regen-results.sh.
-% Do not type numbers here by hand. The comparison matrix below is generated
-% LaTeX; the per-deployment trust sets and the shared-dependency listing are
-% still to be wired in from ../results/*.json and
-% ../results/hybrid-shared-dependencies.txt.
+\placeholder{This section is partly written. The comparison matrix
+(Table~\ref{tab:matrix}) is generated from \texttt{../results/}. The
+per-deployment trust sets, the shared-dependency listing and the
+detection-latency figures are not yet wired in, and are marked individually
+below. Do not type numbers into this section by hand --- add them to
+\texttt{scripts/\allowbreak regen-results.sh} instead.}
 
 Five deployments are encoded and shipped with the artifact:
 $\Sigma_1$, a software-only host with signed measurement logs; $\Sigma_2$,
 Intel TDX with ECDSA quotes and PCS collateral; $\Sigma_3$, a 5-of-7 witness
 quorum over a transparency log; $\Sigma_4$, a Groth16 rollup with an on-chain
-verifier; and $\Sigma_5$, a hybrid combining a TEE with a ZK proof. All five
-were written by us. Nothing here has been validated against somebody else's
-production deployment, and the five examples are the entire evidence base for
-every number in this section.
+verifier; and $\Sigma_5$, a hybrid combining a TEE with a ZK proof. A sixth
+file ships as well: a variant of $\Sigma_5$ whose two layers use genuinely
+separate build pipelines, which exists only as the negative control for
+Section~\ref{sec:shared}. All of them were written by us. Nothing here has
+been validated against somebody else's production deployment, and these
+examples are the entire evidence base for every number in this section.
 
 \subsection{Reproducing the hand-derived TDX set}
-% RESULTS PLACEHOLDER — trust set for Sigma_2 from ../results/sigma2-tdx.manifest.json.
+\label{sec:tdxrepro}
+\placeholder{Trust set for $\Sigma_2$ to be generated from
+\texttt{../results/sigma2-tdx.manifest.json}.}
 
-The first success criterion is that the tool produces the five parties of
-Table~\ref{tab:tdx} from the $\Sigma_2$ description, with the collateral
-authority as the only bounded-detection entry, without those five being named
-as a group in the encoding. It does. The detailed manifest belongs here and
-will be generated rather than typed.
+The first success criterion, from the original design, is that the tool
+produces the five parties of Table~\ref{tab:tdx} from the $\Sigma_2$
+description alone. It does, and it is worth being exact about what that does
+and does not demonstrate, because the criterion as originally worded --- that
+the five emerge ``without those parties being named in the encoding'' --- is
+not what happens.
+
+The five parties \emph{are} named individually in
+\texttt{examples/sigma2-tdx.toml}, as the endorser, quoting enclave,
+collateral authority, reference-value provider and host fields of a single
+\texttt{tee\ub attestation} stanza. What the deployment file does not contain
+is any statement that those five constitute a trust set, or what each of them
+must be trusted \emph{for}. That is what the rule supplies: each party's
+capability, its detection bound, its failure impact, and --- the part that is
+actually a claim about the deployment rather than about the rule --- that
+exactly these five and no others are load-bearing for the claim. A sixth
+principal declared in the file but not reachable from any mechanism or
+delegation does not appear in the output.
+
+So the honest statement of the result is narrower than the original
+criterion: the tool derives the \emph{content} of Table~\ref{tab:tdx} from a
+mechanism kind and a set of field values, not the \emph{identities} of the
+parties. The identities came from whoever wrote the file, which is exactly the
+completeness problem of Section~\ref{sec:open} showing up in the success
+criterion.
 
 \subsection{The comparison matrix}
 
-Table~\ref{tab:matrix} is generated directly by
-\texttt{scripts/regen-results.sh} from the tool's own output; the build fails
-if it disagrees with the code.
+Table~\ref{tab:matrix} is assembled by \texttt{scripts/\allowbreak regen-results.sh}. The
+four \textsc{Incomparable} cells are the tool's own output, from
+\texttt{parallax compare}. The eight N/A cells are not: the script reads the
+\texttt{claim} field out of each deployment file, sees that the two differ,
+and writes the N/A row without invoking the tool at all --- because
+\texttt{parallax compare} refuses the pair and exits non-zero. Either way the
+file is generated rather than typed, and continuous integration regenerates
+it and fails on a diff, so it cannot drift from the code.
 
 \begin{table}[h]
 \centering\small
-\caption{Every ordered pair among the four single-mechanism deployments under
-set inclusion. Pairs attesting different propositions are marked N/A rather
-than omitted: \parallax{} refuses to rank verifiability across two different
-claims, and a truncated matrix would be indistinguishable from a broken run.}
+\caption{Every ordered pair among the four non-hybrid deployments
+$\Sigma_1$--$\Sigma_4$ under set inclusion. Pairs attesting different
+propositions are marked N/A rather than omitted: \parallax{} refuses to rank
+verifiability across two different claims, and a truncated matrix would be
+indistinguishable from a broken run. Eight of the twelve ordered pairs are
+N/A, so the table rests on two unordered comparisons ---
+$\Sigma_1$/$\Sigma_3$ and $\Sigma_2$/$\Sigma_4$.}
 \label{tab:matrix}
 \input{../results/comparison-matrix.tex}
 \end{table}
@@ -732,7 +814,9 @@ designs, so no ordinal tier ladder can be sound, and conformance should
 publish a trust set rather than a tier.
 
 \subsection{The shared dependency}
-% RESULTS PLACEHOLDER — from ../results/hybrid-shared-dependencies.txt.
+\label{sec:shared}
+\placeholder{The shared-dependency listing to be generated from
+\texttt{../results/hybrid-shared-dependencies.txt}.}
 
 The second success criterion is a non-obvious finding. $\Sigma_5$ layers a
 hardware TEE under a zero-knowledge proof and is the shape of design that gets
@@ -750,8 +834,10 @@ separate pipelines reports nothing, so the check is not simply always firing.
 Whether it finds such things in deployments nobody constructed is untested.
 
 \subsection{Detection latency and policy}
-% RESULTS PLACEHOLDER — system latency per deployment from ../results/*.json;
-% policy-check outcomes from examples/policy-strict.toml.
+\placeholder{Composed $\Delta$ per deployment, to be generated from
+\texttt{../results/\allowbreak *.json}; policy-check outcomes against
+\texttt{examples/policy-strict.toml}, not yet emitted by
+\texttt{scripts/\allowbreak regen-results.sh}.}
 
 The composed $\Delta$ for each deployment, and the outcome of checking each
 manifest against a strict local policy, belong here.
@@ -760,8 +846,8 @@ manifest against a strict local policy, belong here.
 \section{Re-Deriving the Tiers}
 \label{sec:tiers}
 
-% RESULTS PLACEHOLDER — depends on the full ordering experiment across
-% Sigma_1..Sigma_5, which has not been run.
+\placeholder{This entire section depends on the candidate-ordering experiment
+across $\Sigma_1$--$\Sigma_5$, which has not been run.}
 
 The remaining experiment is to test each candidate total ordering ---
 cardinality, collusion cost, set inclusion, detection-latency bound --- against
@@ -809,10 +895,12 @@ saw, which is the case we are most afraid of.
 \item \textbf{Adversarial review of the description.} Treat the deployment
 file as the artifact under attack rather than the tool. We have not built a
 procedure for this.
-\item \textbf{Printing the caveat with every output.} Every manifest the tool
-emits should carry, in band, the statement that it enumerates modelled
-dependencies only. This is the weakest of the three and the only one that is
-free.
+\item \textbf{Printing the caveat with every output.} A manifest should carry,
+in band, the statement that it enumerates modelled dependencies only, so that
+the caveat travels with the artifact instead of living in a paper nobody
+reads alongside it. The manifests the tool emits today \emph{do not} carry
+such a field; this is the weakest of the three answers, the only one that is
+free, and we have not yet implemented it.
 \end{enumerate}
 
 \subsection{The rules are not proved sound}
@@ -860,7 +948,8 @@ derived.
 
 \subsection{The evidence base is five deployments, all ours}
 
-Every result in Section~\ref{sec:eval} comes from five examples we wrote. The
+Every result in Section~\ref{sec:eval} comes from five deployments we wrote,
+plus a sixth file that exists only as a negative control for one of them. The
 tool reproduces a trust set we had already derived by hand --- which is
 evidence it implements what we intended, and weaker evidence that what we
 intended is right --- and finds a shared dependency in a deployment we

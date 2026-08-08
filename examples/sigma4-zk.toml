@@ -27,9 +27,16 @@ ceremony = "did:web:ceremony.example"
 compiler = "did:web:buildco.example"
 auditor = "did:web:zkauditor.example"
 
+# The rollup posts its proofs to an L1. `anchoring` is the mechanism that
+# models this, and it requires a log operator and a publication interval as
+# well as the settlement layer: the sequencer that batches and posts is a
+# party in its own right, distinct from the chain it posts to, and eliding it
+# would understate the trust set by one principal. The values below are
+# representative of a rollup posting every ten minutes to a chain with
+# twelve-second finality; they are chosen, not measured.
 [[mechanism]]
 kind = "anchoring"
-log_operator = "did:web:zklog.example" # placeholder: brief specifies only settlement/finality
-interval = "10m" # placeholder: brief specifies only settlement/finality
+log_operator = "did:web:zklog.example"
+interval = "10m"
 settlement = "did:web:l1.example"
 finality = "12s"
