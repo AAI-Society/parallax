@@ -7,6 +7,8 @@ pub mod mechanism;
 pub mod policy;
 pub mod shared;
 pub mod solve;
+pub mod tex;
+pub mod tiers;
 pub mod trust;
 
 pub use deployment::Deployment;

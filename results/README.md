@@ -26,3 +26,22 @@ Do not hand-edit.
 - `hybrid-shared-dependencies.txt` — `parallax solve sigma5-hybrid --shared`,
   the shared-dependency finding that motivates the tool: two mechanism
   layers resting on the same principal is not defence in depth.
+- `sigma2-trust-set.tex` — the Σ₂ residual trust set as a bare `tabular`,
+  from `parallax solve --format latex`. The paper sets this beside its
+  hand-derived TDX table; the claim of that subsection is that the two
+  agree, and a transcribed table could agree with nothing but the typist.
+- `deployment-summary.tex` — assumption count, principal count,
+  undetectable-assumption count and composed Δ for each of the five
+  encoded deployments, from `parallax tiers --format tex-summary`. Facts
+  about each deployment, not a ranking of them.
+- `tier-orderings.txt`, `tier-orderings.tex` — the candidate-ordering
+  experiment, from `parallax tiers`. Each of the four proposed ways of
+  ordering deployments by verifiability — cardinality, set inclusion,
+  composed detection latency, collusion cost — applied to Σ₁–Σ₄, with
+  whether it yields a usable total order. It runs over the same four
+  deployments the comparison matrix ranks; Σ₅ is a hybrid built to carry a
+  shared dependency rather than a fifth design competing for a rung, and
+  appears in `deployment-summary.tex` only.
+- `policy-checks.txt`, `policy-checks.tex` — each manifest against
+  `examples/policy-strict.toml` (`parallax check`), and how many
+  assumptions that policy objects to.

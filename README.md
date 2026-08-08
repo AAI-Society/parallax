@@ -46,7 +46,9 @@ than silently dropping `--shared` (which would hide a finding the user
 asked for) or bolting an undocumented field onto the JSON (which would make
 the manifest lie about its own schema version), the combination is
 rejected with a message naming both flags. Use `--format table --shared`
-for the shared-dependency view.
+for the shared-dependency view. `--format latex` refuses it for the same
+reason in a different shape: that output is a bare LaTeX `tabular` of the
+trust set, `\input` into a float whose caption says so.
 
 ## Results and reproducibility
 

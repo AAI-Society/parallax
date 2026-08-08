@@ -1000,3 +1000,96 @@ fn a_deployment_with_no_mechanisms_is_refused_rather_than_ranked_first() {
         "an empty deployment must never be reported as the more verifiable one"
     );
 }
+
+/// Acceptance test for the candidate-ordering experiment (the paper's
+/// Section 6) at the CLI. The unit tests in `parallax::tiers` pin the
+/// findings themselves; this pins that the subcommand exists, reads the
+/// shipped examples, and reports the headline outcome — that none of the
+/// four candidate orderings survives.
+#[test]
+fn tiers_reports_that_no_candidate_ordering_survives() {
+    let out = bin()
+        .args([
+            "tiers",
+            "examples/sigma1-software.toml",
+            "examples/sigma2-tdx.toml",
+            "examples/sigma3-quorum.toml",
+            "examples/sigma4-zk.toml",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("4 candidate orderings over 4 deployments; 0 yield a usable total order."),
+        "got:\n{stdout}"
+    );
+    // The cardinality inversion, at the CLI: the software-only host ranks
+    // ahead of everything and the witness quorum behind everything.
+    assert!(
+        stdout
+            .contains("sigma1-software (3) < sigma2-tdx (5) = sigma4-zk (5) < sigma3-quorum (11)"),
+        "got:\n{stdout}"
+    );
+    // Collusion cost must be reported as not computable, never scored.
+    assert!(stdout.contains("Not computable:"), "got:\n{stdout}");
+}
+
+/// `tiers` needs something to order against. One file is a mistake worth
+/// naming rather than a report with an empty comparison section.
+#[test]
+fn tiers_refuses_a_single_deployment() {
+    let out = bin()
+        .args(["tiers", "examples/sigma2-tdx.toml"])
+        .output()
+        .unwrap();
+    assert_ne!(out.status.code(), Some(0), "one file must not succeed");
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("panicked"),
+        "and must not panic"
+    );
+}
+
+/// The paper `\input`s this table body rather than quoting it, so the
+/// command that writes it has to emit a `tabular` and nothing else.
+#[test]
+fn solve_emits_a_bare_tabular_for_the_paper_to_input() {
+    let out = bin()
+        .args(["solve", "examples/sigma2-tdx.toml", "--format", "latex"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("\\begin{tabular}") && stdout.contains("\\end{tabular}"));
+    assert!(
+        !stdout.contains("\\begin{table}") && !stdout.contains("\\caption"),
+        "the float and caption are the paper's, not the tool's, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("{golden_value_correctness}"),
+        "underscores must be escaped, got:\n{stdout}"
+    );
+}
+
+/// `--shared` has no rendering in the LaTeX table body, and silently
+/// dropping it would hide a finding the user asked for — the same reasoning
+/// that already governs `--format json --shared`.
+#[test]
+fn latex_format_with_shared_is_rejected_rather_than_silently_dropped() {
+    let out = bin()
+        .args([
+            "solve",
+            "examples/sigma5-hybrid.toml",
+            "--format",
+            "latex",
+            "--shared",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--shared") && stderr.contains("latex"),
+        "the error must name both flags, got: {stderr}"
+    );
+}

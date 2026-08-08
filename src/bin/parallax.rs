@@ -20,8 +20,8 @@ enum Cmd {
         /// Report principals that more than one mechanism depends on
         #[arg(long)]
         shared: bool,
-        /// Output format: `table` (default) or `json` (the Residual Trust
-        /// Manifest)
+        /// Output format: `table` (default), `json` (the Residual Trust
+        /// Manifest), or `latex` (a bare tabular for the paper to `\input`)
         #[arg(long, default_value = "table")]
         format: String,
     },
@@ -34,6 +34,24 @@ enum Cmd {
         manifest: PathBuf,
         #[arg(long)]
         policy: PathBuf,
+    },
+    /// Test each candidate way of ordering deployments by verifiability
+    ///
+    /// Reports, for each deployment given, its assumption count, principal
+    /// count, undetectable-assumption count and composed detection latency;
+    /// then, across the set, what each of the four candidate orderings ---
+    /// cardinality, set inclusion, composed detection latency, collusion
+    /// cost --- does with them and whether the result is a usable total
+    /// order. See `parallax::tiers`.
+    Tiers {
+        /// Two or more deployment files
+        #[arg(required = true, num_args = 2..)]
+        files: Vec<PathBuf>,
+        /// Output format: `text` (default), `tex-summary` (the
+        /// per-deployment tabular) or `tex-orderings` (the candidate-ordering
+        /// tabular)
+        #[arg(long, default_value = "text")]
+        format: String,
     },
     /// Show why a principal is load-bearing in a deployment
     ///
@@ -126,13 +144,23 @@ fn run() -> Result<ExitCode> {
             // onto the JSON would make the manifest lie about which schema
             // version it conforms to. Rejecting the combination is the only
             // option that doesn't mislead either way.
-            if shared && format == "json" {
+            //
+            // `--format latex` is the same problem in a second shape: the
+            // generated tabular is the trust set and nothing else, because
+            // it is `\input` into a float whose caption says so.
+            if shared && format != "table" {
+                let why = if format == "json" {
+                    format!(
+                        "the Residual Trust Manifest schema ({schema}) has no field \
+                         for shared-dependency findings",
+                        schema = parallax::manifest::SCHEMA
+                    )
+                } else {
+                    "only the `table` format renders them".to_string()
+                };
                 anyhow::bail!(
-                    "`--format json` does not carry `--shared`: the Residual Trust \
-                     Manifest schema ({schema}) has no field for shared-dependency \
-                     findings. Use `--format table --shared` to see them, or drop \
-                     `--shared` for the JSON manifest alone.",
-                    schema = parallax::manifest::SCHEMA
+                    "`--format {format}` does not carry `--shared`: {why}. Use \
+                     `--format table --shared` to see them, or drop `--shared`."
                 );
             }
             let d = Deployment::load(&file)?;
@@ -185,8 +213,34 @@ fn run() -> Result<ExitCode> {
                         }
                     }
                 }
+                "latex" => {
+                    print!("{}", parallax::tex::trust_set_tabular(&t));
+                }
                 other => {
-                    anyhow::bail!("unknown --format `{other}`; expected `table` or `json`");
+                    anyhow::bail!(
+                        "unknown --format `{other}`; expected `table`, `json` or `latex`"
+                    );
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Tiers { files, format } => {
+            let mut encoded = Vec::with_capacity(files.len());
+            for f in &files {
+                let d = Deployment::load(f)?;
+                let t = parallax::solve::solve(&d)?;
+                encoded.push(parallax::tiers::Encoded::new(&d, &t));
+            }
+            let report = parallax::tiers::report(encoded)?;
+            match format.as_str() {
+                "text" => print!("{}", report.render_text()),
+                "tex-summary" => print!("{}", report.render_tex_summary()),
+                "tex-orderings" => print!("{}", report.render_tex_orderings()),
+                other => {
+                    anyhow::bail!(
+                        "unknown --format `{other}`; expected `text`, `tex-summary` \
+                         or `tex-orderings`"
+                    );
                 }
             }
             Ok(ExitCode::SUCCESS)

@@ -1,0 +1,11 @@
+# Each manifest against examples/policy-strict.toml
+
+forbid_undetectable = true, max_detection_latency = 24h.
+Every deployment fails, and the count is the number of assumptions
+the strict policy objects to.
+
+sigma1-software                    violates the policy    3 violation(s)
+sigma2-tdx                         violates the policy    4 violation(s)
+sigma3-quorum                      violates the policy    7 violation(s)
+sigma4-zk                          violates the policy    3 violation(s)
+sigma5-hybrid                      violates the policy    7 violation(s)

@@ -1,0 +1,29 @@
+DEPLOYMENT                         CLAIM                ASSUMPTIONS PRINCIPALS UNDETECTABLE  COMPOSED DELTA
+sigma1-software                    measurement_valid              3          3            3  never
+sigma2-tdx                         execution_valid                5          5            4  never
+sigma3-quorum                      measurement_valid             11         11            7  never
+sigma4-zk                          execution_valid                5          5            3  never
+
+CANDIDATE ORDERINGS BY VERIFIABILITY
+
+1. cardinality
+   orders by: |T|, the number of assumptions in the residual trust set
+   ranking:   sigma1-software (3) < sigma2-tdx (5) = sigma4-zk (5) < sigma3-quorum (11)
+   verdict:   No total order: sigma2-tdx and sigma4-zk tie at 5.
+
+2. set inclusion
+   orders by: whether one residual trust set is a subset of the other
+   ranking:   none
+   verdict:   No total order: of 6 unordered pairs, 4 were refused for attesting different claims and 2 came out incomparable; 0 were strictly ranked and 0 were equal.
+
+3. composed detection latency
+   orders by: the system's composed detection bound, the join over T
+   ranking:   sigma1-software (never) = sigma2-tdx (never) = sigma3-quorum (never) = sigma4-zk (never)
+   verdict:   No order: every deployment scores never, so this key separates nothing.
+
+4. collusion cost
+   orders by: what it costs an adversary to corrupt enough parties at once
+   ranking:   none
+   verdict:   Not computable: a deployment description names principals but not what it costs an adversary to corrupt them jointly, which is a property of the adversary and the world rather than of the description.
+
+4 candidate orderings over 4 deployments; 0 yield a usable total order.
