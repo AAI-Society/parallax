@@ -1,3 +1,4 @@
+pub mod compare;
 pub mod deployment;
 pub mod latency;
 pub mod mechanism;

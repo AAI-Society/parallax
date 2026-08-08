@@ -15,6 +15,10 @@ struct Cli {
 enum Cmd {
     /// Compute the residual trust set of a deployment
     Solve { file: PathBuf },
+    /// Report how two deployments' trust sets relate under inclusion
+    Compare { a: PathBuf, b: PathBuf },
+    /// Show assumptions present in one deployment but not the other
+    Diff { a: PathBuf, b: PathBuf },
 }
 
 fn main() -> ExitCode {
@@ -57,6 +61,36 @@ fn run() -> Result<ExitCode> {
                 t.principals().len()
             );
             Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Compare { a, b } => {
+            let ta = parallax::solve::solve(&Deployment::load(&a)?)?;
+            let tb = parallax::solve::solve(&Deployment::load(&b)?)?;
+            let rel = parallax::compare::compare(&ta, &tb);
+            println!("{rel:?}");
+            if rel == parallax::compare::Relation::Incomparable {
+                println!(
+                    "\nNeither deployment is more verifiable than the other.\n\
+                     No ordinal tier can rank these two."
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Diff { a, b } => {
+            let ta = parallax::solve::solve(&Deployment::load(&a)?)?;
+            let tb = parallax::solve::solve(&Deployment::load(&b)?)?;
+            let (only_a, only_b) = parallax::compare::diff(&ta, &tb);
+            for x in &only_a {
+                println!("-{:<32} {}", x.principal, x.capability);
+            }
+            for x in &only_b {
+                println!("+{:<32} {}", x.principal, x.capability);
+            }
+            let code = if only_a.is_empty() && only_b.is_empty() {
+                0
+            } else {
+                1
+            };
+            Ok(ExitCode::from(code))
         }
     }
 }

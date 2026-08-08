@@ -1,0 +1,26 @@
+name = "sigma1-software"
+claim = "measurement_valid"
+
+[[principal]]
+id = "did:web:hostos.example"
+role = "HostOperatingSystem"
+
+[[principal]]
+id = "did:web:admin.example"
+role = "AdministratorKeyHolder"
+
+[[principal]]
+id = "did:web:logop.example"
+role = "LogOperator"
+
+[[mechanism]]
+kind = "signing"
+signer = "did:web:hostos.example"
+
+[[mechanism]]
+kind = "signing"
+signer = "did:web:admin.example"
+
+[[mechanism]]
+kind = "hash_chain"
+log_operator = "did:web:logop.example"

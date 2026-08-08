@@ -1,3 +1,4 @@
+use parallax::compare::{compare, Relation};
 use parallax::deployment::Deployment;
 use parallax::solve::solve;
 use parallax::Latency;
@@ -37,4 +38,29 @@ fn sigma2_reproduces_the_hand_derived_tdx_trust_set() {
         vec!["did:web:pcs.intel.com"],
         "only the collateral authority is detectable"
     );
+}
+
+/// Acceptance test 2: the headline result. A hardware TEE deployment and a
+/// zero-knowledge deployment rest on disjoint failure domains, so set
+/// inclusion gives no ordering and a linear tier ladder is unsound.
+#[test]
+fn tdx_and_zk_trust_sets_are_incomparable() {
+    let tdx = solve(&Deployment::load(Path::new("examples/sigma2-tdx.toml")).unwrap()).unwrap();
+    let zk = solve(&Deployment::load(Path::new("examples/sigma4-zk.toml")).unwrap()).unwrap();
+    assert_eq!(compare(&tdx, &zk), Relation::Incomparable);
+}
+
+/// Every shipped example must load, validate and solve.
+#[test]
+fn all_examples_solve() {
+    for name in [
+        "sigma1-software",
+        "sigma2-tdx",
+        "sigma3-quorum",
+        "sigma4-zk",
+    ] {
+        let p = format!("examples/{name}.toml");
+        let d = Deployment::load(Path::new(&p)).unwrap_or_else(|e| panic!("{p}: {e}"));
+        solve(&d).unwrap_or_else(|e| panic!("{p}: {e}"));
+    }
 }

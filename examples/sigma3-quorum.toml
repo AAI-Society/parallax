@@ -1,0 +1,73 @@
+name = "sigma3-quorum"
+claim = "measurement_valid"
+
+[[principal]]
+id = "did:web:witness1.example"
+role = "Witness"
+
+[[principal]]
+id = "did:web:witness2.example"
+role = "Witness"
+
+[[principal]]
+id = "did:web:witness3.example"
+role = "Witness"
+
+[[principal]]
+id = "did:web:witness4.example"
+role = "Witness"
+
+[[principal]]
+id = "did:web:witness5.example"
+role = "Witness"
+
+[[principal]]
+id = "did:web:witness6.example"
+role = "Witness"
+
+[[principal]]
+id = "did:web:witness7.example"
+role = "Witness"
+
+[[principal]]
+id = "did:web:logop3.example"
+role = "LogOperator"
+
+[[principal]]
+id = "did:web:peer1.example"
+role = "GossipPeer"
+
+[[principal]]
+id = "did:web:peer2.example"
+role = "GossipPeer"
+
+[[principal]]
+id = "did:web:peer3.example"
+role = "GossipPeer"
+
+[[mechanism]]
+kind = "witness_quorum"
+witnesses = [
+  "did:web:witness1.example",
+  "did:web:witness2.example",
+  "did:web:witness3.example",
+  "did:web:witness4.example",
+  "did:web:witness5.example",
+  "did:web:witness6.example",
+  "did:web:witness7.example",
+]
+k = 5
+
+[[mechanism]]
+kind = "anchoring"
+log_operator = "did:web:logop3.example"
+interval = "15m"
+
+[[mechanism]]
+kind = "gossip"
+peers = [
+  "did:web:peer1.example",
+  "did:web:peer2.example",
+  "did:web:peer3.example",
+]
+propagation = "15s"
