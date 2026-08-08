@@ -18,6 +18,11 @@ Do not hand-edit.
   propositions (exit code 2), so there is no meaningful relation to report
   for those pairs, and a truncated matrix would be indistinguishable from a
   broken run.
+- `comparison-matrix.tex` — the same matrix as a bare LaTeX `tabular`,
+  `\input` by `../paper/main.tex`. The paper reads generated LaTeX rather
+  than a hand-copied table so that a figure in the PDF cannot drift from the
+  code that produced it. The caption and the surrounding float live in the
+  paper; this file is only the table body.
 - `hybrid-shared-dependencies.txt` — `parallax solve sigma5-hybrid --shared`,
   the shared-dependency finding that motivates the tool: two mechanism
   layers resting on the same principal is not defence in depth.

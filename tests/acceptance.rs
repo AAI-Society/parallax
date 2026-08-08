@@ -285,6 +285,55 @@ fn compare_cli_reports_incomparable_for_tdx_and_zk() {
     assert!(stdout.contains("Incomparable"), "got: {stdout}");
 }
 
+/// Acceptance test 4: cyclic delegation at scale terminates. A 300-node
+/// delegation cycle spanning two mechanism layers is the case that would
+/// diverge under naive SLD resolution; here the fixpoint is over the powerset
+/// of a finite assumption set, so it is reached in finitely many steps
+/// regardless of the cycle.
+///
+/// The wall-clock bound is deliberately loose (10s against an observed
+/// runtime three orders of magnitude below it) because this test asserts
+/// *termination*, not a performance target, and a tight bound on shared CI
+/// hardware would flake. The paper cites the observed figure, not this bound.
+#[test]
+fn a_300_node_delegation_cycle_terminates() {
+    const N: usize = 300;
+    let mut src = String::from("name = \"cycle300\"\nclaim = \"c\"\n");
+    for i in 0..N {
+        src.push_str(&format!("\n[[principal]]\nid = \"p{i}\"\nrole = \"R\"\n"));
+    }
+    // Two layers, so the cycle spans more than one mechanism's assumptions.
+    src.push_str("\n[[mechanism]]\nkind = \"signing\"\nsigner = \"p0\"\n");
+    src.push_str(
+        "\n[[mechanism]]\nkind = \"zk_proof\"\nceremony = \"p1\"\n\
+         compiler = \"p2\"\nauditor = \"p3\"\n",
+    );
+    for i in 0..N {
+        // p_i speaks for p_{i+1 mod N}: one cycle through every principal.
+        src.push_str(&format!(
+            "\n[[delegation]]\nsub = \"p{i}\"\nsup = \"p{}\"\n",
+            (i + 1) % N
+        ));
+    }
+
+    let d: Deployment = toml::from_str(&src).unwrap();
+    d.validate().unwrap();
+
+    let start = std::time::Instant::now();
+    let t = solve(&d).unwrap();
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        t.principals().len(),
+        N,
+        "the cycle makes every principal load-bearing"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "a 300-node cycle should converge quickly, took {elapsed:?}"
+    );
+}
+
 /// Acceptance test 3: the non-obvious result. The hybrid deployment's TEE and
 /// ZK layers are sold as independent, but both depend on one build pipeline.
 /// The tool must find this from the description alone.
