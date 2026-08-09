@@ -1844,6 +1844,7 @@ dependencies = [
  "dcap-qvl",
  "humantime",
  "libc",
+ "parity-scale-codec",
  "pem",
  "serde",
  "serde_json",

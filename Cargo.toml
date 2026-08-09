@@ -56,6 +56,13 @@ pem = "3"
 # `src/verify/chain.rs`. Version and `default-features = false` match what
 # dcap-qvl already resolves, so this adds no package to the lockfile.
 x509-cert = { version = "0.3", default-features = false }
+# Two uses, both about not handing dcap-qvl something it will abort on, and one
+# about telling the caller how much of their buffer was actually attested. The
+# quote is SCALE-encoded, and `Quote::decode` on a `&mut &[u8]` is the only way
+# to learn how many bytes it consumed. Version, package rename and
+# `default-features = false` match what dcap-qvl already resolves, so this adds
+# no package to the lockfile.
+scale = { package = "parity-scale-codec", version = "3.7.5", default-features = false }
 
 # The DCAP quote verifier. `default-features = false` plus these four
 # reproduces the crate's default set *minus* `report`, which is what drags in
