@@ -26,6 +26,19 @@ name = "fetch-collateral"
 path = "src/bin/fetch-collateral.rs"
 required-features = ["fetch-collateral"]
 
+# The only test that talks to Intel. Declared explicitly so it can carry
+# `required-features`: without that, a default `cargo test` would try to build a
+# file that calls the feature-gated `CollateralSource::fetch` and fail to
+# compile. With it, the target is not built at all unless the feature is on, and
+# `#[ignore]` then keeps it from running even when it is. See
+# `tests/live_pcs.rs` for what a failure means.
+#
+#   cargo test --features fetch-collateral --test live_pcs -- --ignored
+[[test]]
+name = "live_pcs"
+path = "tests/live_pcs.rs"
+required-features = ["fetch-collateral"]
+
 [features]
 default = []
 # Pulls in dcap-qvl's `report` feature (its async PCCS client) and an async

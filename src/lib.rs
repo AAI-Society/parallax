@@ -1,3 +1,4 @@
+pub mod collateral;
 pub mod compare;
 pub mod deployment;
 pub mod derive;
@@ -13,6 +14,7 @@ pub mod tiers;
 pub mod trust;
 pub mod verify;
 
+pub use collateral::{CollateralError, CollateralSource};
 pub use deployment::Deployment;
 pub use derive::{derive, DeriveConfig, Refutation};
 pub use latency::Latency;
