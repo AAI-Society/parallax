@@ -64,6 +64,31 @@ pub enum ConfigError {
         #[source]
         source: std::io::Error,
     },
+    /// `[collateral].cache_ttl = "never"` inverts what it says, in both
+    /// directions at once, and the two inversions point opposite ways.
+    ///
+    /// This is the same hazard [`crate::policy::PolicyError::NeverIsNotABound`]
+    /// refuses on the policy side, arriving through the third door: `Never` is
+    /// the lattice's top element, so the most cautious-looking spelling is the
+    /// one that means *no bound*. Do not "fix" this by accepting `"never"`
+    /// again and adjusting only one of the two sides — the caching side already
+    /// reads it as "cache nothing" (see `collateral::Cache::get`) and the
+    /// reporting side already reads it as "never detectable" (see
+    /// `derive::derive`'s `serves_current_collateral` entry), so any single
+    /// interpretation makes one of them lie.
+    #[error(
+        "`collateral.cache_ttl = \"never\"` sets no bound at all, and this \
+         build refuses it rather than reporting the opposite of what it does. \
+         On the caching side `Cache::get` reads `never` as unbounded \
+         staleness, so it refuses every entry and the proxy re-fetches on \
+         every connection. On the reporting side `derive` copies the same \
+         value into `serves_current_collateral`, so the manifest says the \
+         collateral authority is never detectable — the loosest possible \
+         claim for the deployment with the tightest achievable freshness. \
+         Write a duration such as `12h`; there is no spelling here for \
+         `do not cache`."
+    )]
+    NeverIsNotABound,
 }
 
 /// The host and port to dial, and the name to present in SNI.
@@ -215,6 +240,10 @@ pub struct ProxyConfig {
     /// How stale a served collateral bundle may be. This is the bound on how
     /// long a revocation goes unnoticed, and it reaches the trust set as the
     /// `serves_current_collateral` assumption's detection latency.
+    ///
+    /// Always [`Latency::Bounded`]: [`ProxyConfig::load`] refuses
+    /// [`Latency::Never`] with [`ConfigError::NeverIsNotABound`], because the
+    /// cache and the manifest read that value in opposite directions.
     pub cache_ttl: Latency,
     /// Connections in flight at once. See [`DEFAULT_MAX_CONNECTIONS`].
     pub max_connections: usize,
@@ -263,6 +292,12 @@ impl ProxyConfig {
                 value: file.collateral.cache_ttl.clone(),
                 source,
             })?;
+        // `Latency::parse` accepts `"never"`, and both consumers of this value
+        // read it — in opposite directions. Refused here, at the one place the
+        // string becomes a configuration, so neither consumer has to guess.
+        if cache_ttl == Latency::Never {
+            return Err(ConfigError::NeverIsNotABound);
+        }
 
         let mut reference_values = Vec::with_capacity(file.reference_values.mrtd.len());
         for (index, hex) in file.reference_values.mrtd.iter().enumerate() {
@@ -500,6 +535,102 @@ requrie = true
         .expect("write");
         let e = ProxyConfig::load(&cfg).expect_err("`twelve hours` is not a duration");
         assert!(e.to_string().contains("collateral.cache_ttl"), "{e}");
+    }
+
+    /// A scratch proxy configuration whose `cache_ttl` is whatever is given.
+    fn config_with_cache_ttl(dir: &Path, name: &str, ttl: &str) -> PathBuf {
+        let policy = dir.join("policy.toml");
+        std::fs::write(&policy, "forbid_undetectable = false\n").expect("write");
+        let path = dir.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "upstream = \"https://a:1\"\nlisten = \"127.0.0.1:0\"\npolicy = \"{}\"\n\
+                 [collateral]\nsource = \"https://pccs\"\ncache_ttl = \"{ttl}\"\n",
+                policy.display()
+            ),
+        )
+        .expect("write");
+        path
+    }
+
+    /// CRITICAL regression. `cache_ttl = "never"` parsed fine and produced a
+    /// deployment that reported the inverse of what it did.
+    ///
+    /// `Cache::get` reads `Latency::Never` as *unbounded staleness* and so
+    /// refuses every entry: the cache is disabled, `prime` stores nothing, and
+    /// the proxy fetches collateral afresh on every connection. Actual
+    /// staleness is therefore about zero seconds — the tightest freshness this
+    /// proxy can achieve. But the same value is handed to
+    /// `DeriveConfig::cache_ttl`, where `derive` reports it as the detection
+    /// latency of `serves_current_collateral`, and `pcs_detection_bound` joins
+    /// it into `accurate_collateral_issuance` — `join` being absorbing on
+    /// `Never`. Both bounded entries in the TDX trust set flipped to
+    /// `infinite_undetectable`, `system_detection_latency` followed, and
+    /// `--check` still exited 0, so the proxy would serve.
+    ///
+    /// This is the third instance of the inversion `PolicyError::
+    /// NeverIsNotABound` exists for. Do not make this parse again.
+    #[test]
+    fn a_never_cache_ttl_is_refused_rather_than_reported_as_undetectable() {
+        let dir = tempdir();
+        let e = ProxyConfig::load(&config_with_cache_ttl(&dir, "never.toml", "never"))
+            .expect_err("`never` is not a freshness bound");
+        assert!(
+            matches!(e, ConfigError::NeverIsNotABound),
+            "got the wrong variant: {e:?}"
+        );
+        let text = e.to_string();
+        assert!(text.contains("collateral.cache_ttl"), "{text}");
+        assert!(text.contains("sets no bound at all"), "{text}");
+
+        // A finite TTL still loads, so the test above is not passing because
+        // the key stopped working.
+        let cfg = ProxyConfig::load(&config_with_cache_ttl(&dir, "finite.toml", "12h"))
+            .expect("a duration is a bound");
+        assert_eq!(cfg.cache_ttl, Latency::Bounded(43_200));
+        assert_eq!(cfg.gate.derive.cache_ttl, Latency::Bounded(43_200));
+        assert_eq!(cfg.gate.collateral_refresh, Latency::Bounded(43_200));
+    }
+
+    /// And the value that used to be loadable does produce the inverted
+    /// manifest, so the refusal above is guarding something real rather than a
+    /// hypothetical.
+    ///
+    /// Constructed directly rather than loaded, since `load` now refuses it:
+    /// the point is that nothing downstream of `load` would have caught this.
+    #[test]
+    fn a_never_cache_ttl_would_have_made_every_bounded_entry_undetectable() {
+        use crate::manifest::WireLatency;
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cfg = ProxyConfig::load(&root.join("examples/proxy.toml")).expect("loadable");
+        let mut gate = cfg.gate.clone();
+        gate.derive.cache_ttl = Latency::Never;
+        gate.collateral_refresh = Latency::Never;
+
+        let outcome = crate::proxy::gate::most_favourable_outcome(&gate);
+        let t = crate::derive::derive(&outcome, &gate.derive).expect("no reference values to fail");
+        let m = crate::manifest::manifest(&gate.deployment(), &t);
+        assert!(
+            m.residual_trust_set
+                .iter()
+                .all(|e| matches!(e.detection_latency, WireLatency::Never { .. })),
+            "the whole set should be undetectable under a `never` TTL: {:?}",
+            m.residual_trust_set
+        );
+
+        // Whereas the shipped 12h configuration leaves two entries bounded.
+        let honest = crate::derive::derive(
+            &crate::proxy::gate::most_favourable_outcome(&cfg.gate),
+            &cfg.gate.derive,
+        )
+        .expect("derivable");
+        let bounded = crate::manifest::manifest(&cfg.gate.deployment(), &honest)
+            .residual_trust_set
+            .iter()
+            .filter(|e| matches!(e.detection_latency, WireLatency::Bounded { .. }))
+            .count();
+        assert_eq!(bounded, 2, "the collateral authority and the cache");
     }
 
     #[test]
