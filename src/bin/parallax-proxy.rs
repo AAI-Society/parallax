@@ -12,11 +12,21 @@
 //! * `2` — bad configuration: the file, the policy it names, the listen
 //!   address, the upstream URL, a reference value, or the listener itself.
 //!
-//! Every decision writes a Residual Trust Manifest to **stdout** as one JSON
-//! object, and the human-readable verdict to **stderr**. That split is so a log
-//! pipeline can consume the manifests — the auditor evidence C10.2.1 asks for,
-//! and the document `parallax check` evaluates — without also consuming the
-//! prose.
+//! Every decision writes one JSON [`DecisionRecord`] to **stdout** and the same
+//! verdict as prose to **stderr**. The split is so a log pipeline can consume
+//! the records without also consuming the prose.
+//!
+//! The record carries the **verdict** — `allow` or `refuse`, with the reason —
+//! a per-process connection number, the attested MRTD, and the Residual Trust
+//! Manifest the decision was made against, nested under `manifest`. That nested
+//! document is the auditor evidence C10.2.1 asks for and the one `parallax
+//! check` evaluates; the verdict beside it is the logged validator *result*
+//! C10.3.3 asks for. The manifest alone was not enough, and the reason is
+//! recorded on [`DecisionRecord`]: two different refusals and an allow could
+//! produce byte-identical manifests, so the stream could not be reconciled
+//! against what was actually forwarded.
+//!
+//! [`DecisionRecord`]: parallax::manifest::DecisionRecord
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;

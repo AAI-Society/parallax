@@ -238,10 +238,13 @@ which is a simpler argument than the tabled resolution we first reached for.
 
 It fails closed everywhere: any verification, binding, collateral or policy
 failure answers `502 Bad Gateway` with the violated assumption named in the
-body, and there is no flag that changes that. Every decision emits a Residual
-Trust Manifest to stdout — the same document `parallax check` evaluates, and
-the per-connection auditor evidence C10.2.1 asks for. Exit codes are `0` clean
-shutdown, `1` the policy admits nothing, `2` bad configuration.
+body, and there is no flag that changes that. Every decision emits one JSON
+record to stdout — the verdict, the reason if refused, a per-process connection
+number, the attested MRTD, and nested under `manifest` the Residual Trust
+Manifest the decision was made against, which is the same document `parallax
+check` evaluates and the per-connection auditor evidence C10.2.1 asks for. Exit
+codes are `0` clean shutdown, `1` the policy admits nothing, `2` bad
+configuration.
 
 Four things worth knowing before you deploy it.
 

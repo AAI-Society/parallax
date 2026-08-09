@@ -113,6 +113,14 @@ pub enum Decision {
     Allow {
         trust_set: TrustSet,
         warnings: Vec<String>,
+        /// The measurement the peer actually attested.
+        ///
+        /// Carried on the decision rather than looked up later because the
+        /// decision is the only thing that reaches the log, and a decision log
+        /// that cannot say *which* workload was admitted is a log of platform
+        /// states rather than of connections. `None` only where no quote
+        /// verified — see [`Decision::mr_td`].
+        mr_td: Option<[u8; 48]>,
     },
     /// The connection is refused. `trust_set` is `Some` only when there was one
     /// to compute: a quote that did not verify, a certificate with no quote and
@@ -127,12 +135,29 @@ pub enum Decision {
     Refuse {
         reason: String,
         trust_set: Option<TrustSet>,
+        /// The measurement the peer attested, when a quote got far enough to
+        /// have one. See [`Decision::mr_td`].
+        mr_td: Option<[u8; 48]>,
     },
 }
 
 impl Decision {
     pub fn is_allow(&self) -> bool {
         matches!(self, Decision::Allow { .. })
+    }
+
+    /// The measurement the peer attested, if a quote verified.
+    ///
+    /// `None` for a certificate with no quote, a quote that did not verify, and
+    /// an upstream that could not be reached — in each of those there is no
+    /// attested measurement, only a claimed one or none at all. `Some` for a
+    /// refuted measurement, which is the case an operator most wants the value
+    /// for: it is the difference between "wrong workload" and "wrong reference
+    /// value", and it is already in the refusal prose.
+    pub fn mr_td(&self) -> Option<[u8; 48]> {
+        match self {
+            Decision::Allow { mr_td, .. } | Decision::Refuse { mr_td, .. } => *mr_td,
+        }
     }
 
     /// The trust set, if one was derived. See [`Decision::Refuse`].
@@ -152,10 +177,22 @@ impl Decision {
     }
 }
 
+/// A refusal with nothing behind it: no trust set, no attested measurement.
 fn refuse(reason: impl Into<String>) -> Decision {
     Decision::Refuse {
         reason: reason.into(),
         trust_set: None,
+        mr_td: None,
+    }
+}
+
+/// A refusal that arrived *after* a quote verified, so the measurement is
+/// known even though the connection is not being forwarded.
+fn refuse_attested(reason: impl Into<String>, mr_td: [u8; 48]) -> Decision {
+    Decision::Refuse {
+        reason: reason.into(),
+        trust_set: None,
+        mr_td: Some(mr_td),
     }
 }
 
@@ -224,10 +261,13 @@ pub fn evaluate_verified(
     policy: &Policy,
 ) -> Decision {
     if let Err(e) = check_binding(&outcome.report_data, cert_der) {
-        return refuse(format!(
-            "the peer's quote is not bound to the certificate that authenticated this \
-             connection: {e}"
-        ));
+        return refuse_attested(
+            format!(
+                "the peer's quote is not bound to the certificate that authenticated this \
+                 connection: {e}"
+            ),
+            outcome.mr_td,
+        );
     }
     match decide(outcome, cfg, policy) {
         Ok(d) => d,
@@ -235,10 +275,13 @@ pub fn evaluate_verified(
         // startup check in `parallax-proxy` catches this before the listener is
         // bound (exit 2), so reaching it here means the policy became
         // unevaluable after startup; either way the connection is refused.
-        Err(e) => refuse(format!(
-            "this proxy's policy could not be evaluated, so the connection is refused \
-             rather than forwarded: {e}"
-        )),
+        Err(e) => refuse_attested(
+            format!(
+                "this proxy's policy could not be evaluated, so the connection is refused \
+                 rather than forwarded: {e}"
+            ),
+            outcome.mr_td,
+        ),
     }
 }
 
@@ -268,7 +311,10 @@ pub fn decide(
 ) -> Result<Decision, PolicyError> {
     let trust_set = match derive(outcome, &cfg.derive) {
         Ok(t) => t,
-        Err(r) => return Ok(refuse(refutation_reason(&r))),
+        // The measurement is carried even though it was refuted — especially
+        // because it was refuted. It is what tells "wrong workload" from
+        // "wrong reference value".
+        Err(r) => return Ok(refuse_attested(refutation_reason(&r), r.mr_td())),
     };
 
     let manifest = manifest(&cfg.deployment(), &trust_set);
@@ -277,6 +323,7 @@ pub fn decide(
         return Ok(Decision::Refuse {
             reason: policy_reason(&violations, &manifest),
             trust_set: Some(trust_set),
+            mr_td: Some(outcome.mr_td),
         });
     }
 
@@ -284,12 +331,14 @@ pub fn decide(
         return Ok(Decision::Refuse {
             reason: no_reference_values_refusal(),
             trust_set: Some(trust_set),
+            mr_td: Some(outcome.mr_td),
         });
     }
 
     Ok(Decision::Allow {
         warnings: warnings(outcome, cfg),
         trust_set,
+        mr_td: Some(outcome.mr_td),
     })
 }
 

@@ -69,8 +69,9 @@
 //! * the `tokio::io::copy_bidirectional` call in `serve::Proxy::handle`'s
 //!   `Decision::Allow` arm;
 //! * `serve::Proxy::log`'s allow arm and its warnings loop, the `println!` that
-//!   emits the Residual Trust Manifest — Step 3's deliverable and the auditor
-//!   evidence C10.2.1 asks for — and its serialisation-error arm;
+//!   emits the decision record — Step 3's deliverable, the auditor evidence
+//!   C10.2.1 asks for and the logged result C10.3.3 asks for — and its
+//!   serialisation-error arm;
 //! * `serve::Proxy::serve`'s accept-error branch and its semaphore-closed
 //!   branch;
 //! * `open_upstream`'s no-certificate branch, and its refusal of a handshake
@@ -100,9 +101,12 @@
 //! `resumption_is_disabled_so_every_handshake_is_full`, which reads a byte per
 //! connection precisely so that it takes the path the real allow path takes.
 //!
-//! What *is* covered: the document that reaches the log sink on an allow, via
-//! `Proxy::manifest_of` — see
-//! `the_manifest_emitted_for_an_allow_carries_the_proxys_own_assumptions`. And,
+//! What *is* covered: the document that reaches the log sink, via
+//! `Proxy::record_of` — see
+//! `the_manifest_emitted_for_an_allow_carries_the_proxys_own_assumptions` for
+//! the allow, and
+//! `the_log_separates_an_allow_from_the_two_refusals_that_carry_a_manifest`
+//! for the property the record exists to give an auditor. And,
 //! over a real TLS session, that a refused connection forwards nothing:
 //! `nothing_reaches_the_upstream_when_the_connection_is_refused` in
 //! `tests/proxy.rs` counts the application bytes the upstream received and

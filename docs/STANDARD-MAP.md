@@ -258,7 +258,7 @@ they check — both call `policy::evaluate` on a manifest.
 | When | in CI, before deployment | per connection, in line |
 | Validation window | whenever CI runs | the connection itself — the tightest window there is |
 | On failure | exit 1, violations on stderr | `502 Bad Gateway`, the violated assumption in the body |
-| Result log | `OK` or the violation list, on stdout/stderr | a Residual Trust Manifest per decision, on stdout |
+| Result log | `OK` or the violation list, on stdout/stderr | one JSON decision record per connection, on stdout: the verdict, the reason if refused, a per-process connection number, the attested MRTD, and the manifest the decision was made against |
 
 The clause **"within the defined validation window"** is what makes the in-line
 validator the stronger reading. A validator that runs after the fact reports a
@@ -267,12 +267,29 @@ long the evidence sat before anyone looked. The proxy's window is the
 connection it is deciding about, and the decision precedes the traffic. There
 is no shorter window available for a per-connection claim.
 
-The clause **"validator results are themselves logged"** is a second obligation, and the
-honest answer is *partially*. Both tools emit their result for every decision —
-the proxy emits a full manifest, not merely a verdict — but they emit it to
-**stdout**, leaving durability, retention and tamper-evidence to whatever the
-operator pipes it into. C10.3.3 sits at Level 4 alongside C10.3.4's alerting;
-a deployment claiming it needs a result store, and parallax does not ship one.
+The clause **"validator results are themselves logged"** is a second obligation,
+and the honest answer is *partially*. Both tools emit their result for every
+decision, to **stdout**, leaving durability, retention and tamper-evidence to
+whatever the operator pipes it into. C10.3.3 sits at Level 4 alongside C10.3.4's
+alerting; a deployment claiming it needs a result store, and parallax does not
+ship one.
+
+> **This paragraph previously read "the proxy emits a full manifest, not merely
+> a verdict", and that was the wrong way round.** The stream carried the
+> manifest and *not* the verdict: the manifest went to stdout, the verdict went
+> to stderr as prose, and a `Manifest`'s five fields say nothing about whether
+> the connection was allowed. Both refusals that carry a trust set — a policy
+> violation and a missing required reference value — emitted one, so every
+> record a given proxy produced for a given platform state was byte-identical,
+> and the refused ones carried the *larger* sets, since a policy refusal happens
+> precisely because the set was too big. The result the requirement asks to have
+> logged was the one thing the log did not contain. Fixed by nesting the
+> manifest inside a decision record that carries the verdict, the reason, a
+> per-process connection number and the attested MRTD; `manifest.rs`'s
+> `DecisionRecord` and
+> `the_log_separates_an_allow_from_the_two_refusals_that_carry_a_manifest`
+> are the code and the test. The claim is recorded here rather than quietly
+> edited out, for the same reason the fourth finding's earlier error is.
 
 Three qualifications, so that "implemented" is not read as more than it is:
 

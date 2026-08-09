@@ -102,6 +102,77 @@ impl Manifest {
     }
 }
 
+/// Names the wrapper format below, so a consumer can tell one of these from a
+/// bare [`Manifest`] without guessing from which keys are present.
+///
+/// Not a URL: the manifest's `$schema` names a published document, and this
+/// wrapper is parallax's own, so inventing a URL for it would claim a
+/// specification that does not exist.
+pub const DECISION_RECORD: &str = "parallax.decision-record.v1";
+
+/// One decision, as it reaches the log: the verdict *and* what it was made
+/// against.
+///
+/// # Why this exists
+///
+/// The proxy used to print the [`Manifest`] to stdout and the verdict to
+/// stderr. Two problems, and the second is fatal to the artifact's purpose.
+///
+/// A policy refusal and a `require_reference_values` refusal both carry a trust
+/// set, so both emitted manifests — and a `Manifest`'s five fields say nothing
+/// about whether the connection was allowed. Every manifest a given proxy
+/// emitted for a given platform state was therefore byte-identical, and the
+/// *refused* ones carried the larger trust sets. An operator reading the stdout
+/// stream could not reconcile what was allowed against what was assumed, which
+/// is the stated purpose of emitting it.
+///
+/// C10.3.3 also requires that "validator results are themselves logged". The
+/// result reached only stderr, as prose, interleaved with warnings.
+///
+/// # Why a wrapper rather than extra keys
+///
+/// The published `$schema` names five top-level keys and parallax already
+/// carries one additive extension inside an entry (`introduced_by_kind`).
+/// Adding a `decision` key beside `$schema` would put parallax's own field in
+/// the position a schema validator reads as the document's identity. Nesting
+/// keeps the manifest exactly the document the schema describes — and exactly
+/// what `parallax check` eats, once `.manifest` is selected.
+///
+/// # `manifest` is `None` for a refusal with no trust set
+///
+/// A quote that did not verify, a certificate with no quote, and an upstream
+/// that could not be reached have no residual trust set, and an empty one would
+/// read as "perfectly verifiable" and compare as a subset of every other set.
+/// The record is still emitted, because "refused, and here is why" is the part
+/// an auditor needs most.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DecisionRecord {
+    /// Always [`DECISION_RECORD`].
+    pub record: String,
+    /// `"allow"` or `"refuse"`. The field this whole type exists for.
+    pub decision: String,
+    /// Why the connection was refused; `null` on an allow.
+    pub reason: Option<String>,
+    /// What an allowed connection did *not* prove. Empty on a refusal.
+    ///
+    /// On stderr these were prose beneath the verdict; an allow is a decision
+    /// rather than a clean bill of health, and the caveats belong with the
+    /// record they qualify.
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    /// A per-process, monotonic connection number.
+    ///
+    /// Not a global identifier and not claimed to be one: it distinguishes the
+    /// lines of one proxy's log from each other, which is what
+    /// byte-identical records prevented. It restarts at zero when the process
+    /// does.
+    pub connection: u64,
+    /// The attested measurement, lowercase hex; `null` when no quote verified.
+    pub mrtd: Option<String>,
+    /// The manifest this decision was made against, if there was one.
+    pub manifest: Option<Manifest>,
+}
+
 pub fn manifest(d: &Deployment, t: &TrustSet) -> Manifest {
     Manifest {
         schema: SCHEMA.to_string(),

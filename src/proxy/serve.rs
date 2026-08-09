@@ -115,6 +115,13 @@ pub struct Proxy {
     /// Caps connections in flight. See [`ProxyConfig::max_connections`] and
     /// [`DEFAULT_MAX_CONNECTIONS`](crate::proxy::config::DEFAULT_MAX_CONNECTIONS).
     permits: Arc<tokio::sync::Semaphore>,
+    /// Numbers the decision records. See [`DecisionRecord::connection`].
+    ///
+    /// `Relaxed` is sufficient: the only property wanted is that no two records
+    /// from one process share a number, which `fetch_add` gives on its own. No
+    /// other memory is being published through it, and the log is not ordered
+    /// by it — records reach stdout in whatever order connections finish.
+    connections: std::sync::atomic::AtomicU64,
 }
 
 /// The TLS client configuration the proxy dials every upstream with.
@@ -188,6 +195,7 @@ impl Proxy {
             tls: Arc::new(tls),
             server_name,
             permits,
+            connections: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -197,10 +205,6 @@ impl Proxy {
     /// `Cache::get`'s decision.
     pub fn collateral(&self) -> &Arc<CollateralSource> {
         &self.collateral
-    }
-
-    pub fn config(&self) -> &ProxyConfig {
-        &self.cfg
     }
 
     /// Bind the configured listen address.
@@ -298,6 +302,8 @@ impl Proxy {
                 self.log(&Decision::Refuse {
                     reason: reason.clone(),
                     trust_set: None,
+                    // No handshake, so no quote and no measurement.
+                    mr_td: None,
                 });
                 self.refuse(&mut client, &reason).await;
                 return;
@@ -422,7 +428,10 @@ impl Proxy {
                         self.cfg.collateral_url
                     ),
                     trust_set: None,
-                }
+                    // The quote was extracted but never appraised, so its
+                    // measurement is claimed rather than attested.
+                    mr_td: None,
+                };
             }
         };
         gate::evaluate_peer(
@@ -435,55 +444,103 @@ impl Proxy {
         )
     }
 
-    /// Emit the Residual Trust Manifest, and the verdict beside it.
+    /// Emit the decision record, and the human-readable verdict beside it.
     ///
-    /// The manifest goes to stdout as one JSON object per decision — the
-    /// auditor evidence C10.2.1 asks for, in the form the automated validator
-    /// C10.3.3 describes, and the same document `parallax check` evaluates. The
-    /// human-readable verdict goes to stderr, so a log pipeline can take one
-    /// without the other.
+    /// One JSON [`DecisionRecord`] per connection goes to stdout — the auditor
+    /// evidence C10.2.1 asks for, and the logged validator *result* C10.3.3
+    /// asks for, in one line. The same rendering goes to stderr as prose, so a
+    /// log pipeline can take one without the other and an operator watching a
+    /// terminal is not reading JSON.
     ///
-    /// A refusal that never produced a trust set produces no manifest, and says
-    /// so rather than emitting an empty one: an empty residual trust set reads
-    /// as "perfectly verifiable" and compares as a subset of every other set.
+    /// **The verdict is in the document, not only beside it.** Before it was,
+    /// the stdout stream was manifests alone: a policy refusal and a
+    /// `require_reference_values` refusal both carry a trust set, so both
+    /// emitted one, and a `Manifest`'s five fields say nothing about whether
+    /// the connection was allowed. Every record a given proxy emitted for a
+    /// given platform state was byte-identical, and the refused ones carried
+    /// the *larger* trust sets. Reconciling what was allowed against what was
+    /// assumed — the stated purpose — could not be done from that stream at
+    /// all. See [`DecisionRecord`], and
+    /// `the_log_separates_an_allow_from_the_two_refusals_that_carry_a_manifest`.
+    ///
+    /// A refusal that never produced a trust set still gets a record; its
+    /// `manifest` is `null` rather than an empty set, because an empty residual
+    /// trust set reads as "perfectly verifiable" and compares as a subset of
+    /// every other set.
     fn log(&self, decision: &Decision) {
-        match self.manifest_of(decision) {
-            Some(m) => match serde_json::to_string(&m) {
-                Ok(json) => println!("{json}"),
-                Err(e) => eprintln!("error: the manifest could not be serialised: {e}"),
-            },
-            None => eprintln!(
-                "note: no Residual Trust Manifest for this connection — the evidence did \
-                 not verify, and there is no residual trust set for a claim that was not \
-                 established"
-            ),
+        let record = self.record_of(decision);
+        match serde_json::to_string(&record) {
+            Ok(json) => println!("{json}"),
+            // Nothing here can fail today — every field is a `String`, a `u64`,
+            // an `Option` of one, or a `Manifest`, which `manifest.rs`
+            // round-trips under test. Reported rather than unwrapped so that a
+            // future field which *can* fail does not turn a decision into a
+            // panic in the logging of it.
+            Err(e) => eprintln!("error: the decision record could not be serialised: {e}"),
         }
         match decision {
             Decision::Allow { warnings, .. } => {
-                eprintln!("allow: forwarding to {}", self.cfg.upstream.url);
+                eprintln!(
+                    "allow: connection {} forwarding to {}",
+                    record.connection, self.cfg.upstream.url
+                );
                 for w in warnings {
                     eprintln!("  warning: {w}");
                 }
             }
             Decision::Refuse { reason, .. } => {
-                eprintln!("refuse: {}", gate::REFUSAL_STATUS);
+                eprintln!(
+                    "refuse: connection {} {}",
+                    record.connection,
+                    gate::REFUSAL_STATUS
+                );
                 eprintln!("  {reason}");
             }
         }
+        if record.manifest.is_none() {
+            eprintln!(
+                "  note: no Residual Trust Manifest for this connection — the evidence did \
+                 not verify, and there is no residual trust set for a claim that was not \
+                 established"
+            );
+        }
     }
 
-    /// The Residual Trust Manifest for a decision, if there is one.
+    /// The document `log` writes, built rather than printed.
     ///
-    /// Split out of [`log`](Self::log) so the document that reaches the log
-    /// sink can be asserted rather than only printed. The socket tests cannot
-    /// reach the `Some` branch — every one of them refuses at the binding, and
-    /// a binding refusal carries no trust set — so without this seam the
-    /// proxy's actual manifest emission would have no coverage at all. See
-    /// `the_manifest_emitted_for_an_allow_carries_the_proxys_own_assumptions`.
-    fn manifest_of(&self, decision: &Decision) -> Option<crate::manifest::Manifest> {
-        decision
-            .trust_set()
-            .map(|t| manifest(&self.cfg.gate.deployment(), t))
+    /// Split out of [`log`](Self::log) so what reaches the log sink can be
+    /// asserted rather than only observed on a terminal. The socket tests
+    /// cannot reach the allow branch — every one of them refuses at the binding
+    /// — so without this seam the proxy's actual emission would have no
+    /// coverage at all.
+    ///
+    /// **Takes the connection number here**, which is why this is not a pure
+    /// function of the decision: the counter is the one piece of state that
+    /// makes two otherwise identical records distinguishable, and taking it at
+    /// record-construction time is what guarantees one number per record.
+    fn record_of(&self, decision: &Decision) -> crate::manifest::DecisionRecord {
+        use std::sync::atomic::Ordering;
+        crate::manifest::DecisionRecord {
+            record: crate::manifest::DECISION_RECORD.to_string(),
+            decision: if decision.is_allow() {
+                "allow"
+            } else {
+                "refuse"
+            }
+            .to_string(),
+            reason: decision.reason().map(str::to_string),
+            warnings: match decision {
+                Decision::Allow { warnings, .. } => warnings.clone(),
+                Decision::Refuse { .. } => Vec::new(),
+            },
+            connection: self.connections.fetch_add(1, Ordering::Relaxed),
+            mrtd: decision
+                .mr_td()
+                .map(|m| crate::collateral::hex_lower(&m[..])),
+            manifest: decision
+                .trust_set()
+                .map(|t| manifest(&self.cfg.gate.deployment(), t)),
+        }
     }
 
     /// Write the 502, drain the client, and close.
@@ -743,20 +800,16 @@ mod tests {
     /// Not reachable over a socket in this repository — every socket test
     /// refuses at the binding, and a binding refusal carries no trust set — so
     /// the emission path is exercised here instead, through the same
-    /// `Proxy::manifest_of` that `log` calls.
+    /// `Proxy::record_of` that `log` calls.
     #[tokio::test]
     async fn the_manifest_emitted_for_an_allow_carries_the_proxys_own_assumptions() {
         let proxy = test_proxy();
-        let outcome = gate::most_favourable_outcome(&proxy.cfg.gate);
-        let trust_set = crate::derive::derive(&outcome, &proxy.cfg.gate.derive)
-            .expect("the floor's measurement matches by construction");
-        let decision = Decision::Allow {
-            trust_set,
-            warnings: vec!["a warning that must reach stderr".to_string()],
-        };
+        let decision = allow(&proxy);
 
-        let m = proxy
-            .manifest_of(&decision)
+        let record = proxy.record_of(&decision);
+        let m = record
+            .manifest
+            .clone()
             .expect("an allow always has a trust set");
         assert_eq!(m.schema, crate::manifest::SCHEMA);
         assert_eq!(m.system_id, proxy.cfg.gate.system_id);
@@ -773,13 +826,16 @@ mod tests {
             );
         }
 
-        // The document really does serialise to the JSON line `log` prints,
-        // and reparses as the same manifest `parallax check` would read.
-        let json = serde_json::to_string(&m).expect("the manifest serialises");
-        let round_tripped: crate::manifest::Manifest =
+        // The record really does serialise to the JSON line `log` prints, and
+        // the manifest nested in it reparses as the document `parallax check`
+        // would read.
+        let json = serde_json::to_string(&record).expect("the record serialises");
+        let round_tripped: crate::manifest::DecisionRecord =
             serde_json::from_str(&json).expect("and parses back");
-        assert_eq!(round_tripped, m);
+        assert_eq!(round_tripped, record);
         round_tripped
+            .manifest
+            .expect("nested")
             .check_schema()
             .expect("this build implements the schema it emits");
 
@@ -790,19 +846,184 @@ mod tests {
         proxy.log(&Decision::Refuse {
             reason: "for the refusal arm".to_string(),
             trust_set: None,
+            mr_td: None,
         });
     }
 
-    /// A refusal that never produced a trust set emits no manifest.
+    /// A refusal that never produced a trust set emits no manifest — but it
+    /// does still emit a record, and the record says it was refused.
     #[test]
-    fn a_refusal_without_a_trust_set_emits_no_manifest() {
+    fn a_refusal_without_a_trust_set_emits_a_record_with_a_null_manifest() {
         let proxy = test_proxy();
-        assert!(proxy
-            .manifest_of(&Decision::Refuse {
-                reason: "the quote did not verify".to_string(),
-                trust_set: None,
-            })
-            .is_none());
+        let r = proxy.record_of(&Decision::Refuse {
+            reason: "the quote did not verify".to_string(),
+            trust_set: None,
+            mr_td: None,
+        });
+        assert!(r.manifest.is_none(), "an empty set would read as clean");
+        assert_eq!(r.decision, "refuse");
+        assert_eq!(r.reason.as_deref(), Some("the quote did not verify"));
+        assert!(r.mrtd.is_none());
+    }
+
+    /// An allow whose measurement matches the configuration's floor.
+    fn allow(proxy: &Proxy) -> Decision {
+        let outcome = gate::most_favourable_outcome(&proxy.cfg.gate);
+        gate::decide(&outcome, &proxy.cfg.gate, &crate::policy::Policy::default())
+            .expect("the default policy is evaluable")
+    }
+
+    /// CRITICAL regression, and the artifact's whole point.
+    ///
+    /// The stdout stream used to be manifests alone. A policy refusal and a
+    /// `require_reference_values` refusal both carry `trust_set: Some(..)`, so
+    /// both emitted one — and `Manifest`'s five fields say nothing about
+    /// whether the connection was allowed, carry no timestamp, no connection
+    /// id, no peer identity and no MRTD. Every manifest a given proxy emitted
+    /// for a given platform state was byte-identical, and the refused ones
+    /// carried the *larger* trust sets, since a policy refusal happens because
+    /// the set was too big. The design spec's stated purpose — "so an operator
+    /// can reconcile what was allowed against what was assumed" — could not be
+    /// performed against that stream at all.
+    ///
+    /// This runs the three decisions that produce a manifest and asserts an
+    /// auditor can separate them from what `log` emits, using nothing but the
+    /// emitted bytes.
+    #[test]
+    fn the_log_separates_an_allow_from_the_two_refusals_that_carry_a_manifest() {
+        let proxy = test_proxy();
+
+        // 1. Allowed.
+        let allowed = allow(&proxy);
+        assert!(allowed.is_allow());
+
+        // 2. Refused by policy — the evidence was good and the rules said no.
+        //    `examples/policy-strict.toml` refuses every TDX attestation.
+        let strict: crate::policy::Policy = toml::from_str(
+            &std::fs::read_to_string(
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("examples/policy-strict.toml"),
+            )
+            .expect("committed"),
+        )
+        .expect("parses");
+        let by_policy = gate::decide(
+            &gate::most_favourable_outcome(&proxy.cfg.gate),
+            &proxy.cfg.gate,
+            &strict,
+        )
+        .expect("evaluable");
+        assert!(!by_policy.is_allow());
+        assert!(by_policy.trust_set().is_some(), "the case at issue");
+
+        // 3. Refused for want of reference values — also carries a trust set.
+        let mut requiring = proxy.cfg.gate.clone();
+        requiring.require_reference_values = true;
+        requiring.derive.reference_values = Vec::new();
+        let by_reference_values = gate::decide(
+            &gate::most_favourable_outcome(&requiring),
+            &requiring,
+            &crate::policy::Policy::default(),
+        )
+        .expect("evaluable");
+        assert!(!by_reference_values.is_allow());
+        assert!(
+            by_reference_values.trust_set().is_some(),
+            "the case at issue"
+        );
+
+        // 4. And a refutation, which carries no trust set but must still be
+        //    distinguishable from silence.
+        let mut wrong = proxy.cfg.gate.clone();
+        wrong.derive.reference_values = vec![[0x01; 48]];
+        let mut outcome = gate::most_favourable_outcome(&wrong);
+        outcome.mr_td = [0xAB; 48];
+        let refuted =
+            gate::decide(&outcome, &wrong, &crate::policy::Policy::default()).expect("evaluable");
+        assert!(refuted.trust_set().is_none());
+
+        // What an auditor actually receives: the serialised lines, parsed back.
+        let lines: Vec<crate::manifest::DecisionRecord> =
+            [&allowed, &by_policy, &by_reference_values, &refuted]
+                .iter()
+                .map(|d| {
+                    let json = serde_json::to_string(&proxy.record_of(d)).expect("serialises");
+                    serde_json::from_str(&json).expect("parses back")
+                })
+                .collect();
+
+        // The verdict is readable, which is the whole finding.
+        assert_eq!(
+            lines
+                .iter()
+                .map(|r| r.decision.as_str())
+                .collect::<Vec<_>>(),
+            vec!["allow", "refuse", "refuse", "refuse"]
+        );
+        assert!(lines[0].reason.is_none(), "an allow has no refusal reason");
+        for r in &lines[1..] {
+            assert!(r.reason.is_some(), "a refusal says why");
+        }
+
+        // The two refusals that carry a manifest are distinguishable from each
+        // other by their reasons, not only from the allow.
+        assert!(lines[1]
+            .reason
+            .as_deref()
+            .expect("some")
+            .contains("violates this proxy's policy"));
+        assert!(lines[2]
+            .reason
+            .as_deref()
+            .expect("some")
+            .contains("configured to require them"));
+        assert!(lines[3]
+            .reason
+            .as_deref()
+            .expect("some")
+            .contains("matched none of them"));
+
+        // Every line is distinct, which is what byte-identical records
+        // prevented — and distinct even before the reasons are read, because
+        // the connection numbers differ.
+        let numbers: Vec<u64> = lines.iter().map(|r| r.connection).collect();
+        assert_eq!(numbers, vec![0, 1, 2, 3]);
+
+        // The peer's identity is in the record, so two workloads on one
+        // platform are not one log line.
+        assert_eq!(
+            lines[3].mrtd.as_deref(),
+            Some(crate::collateral::hex_lower(&[0xAB; 48]).as_str())
+        );
+        assert!(
+            lines[3].manifest.is_none(),
+            "a refuted measurement has no set"
+        );
+        for r in &lines[..3] {
+            assert!(r.manifest.is_some());
+        }
+
+        // And every line names the format, so a consumer can tell one of these
+        // from a bare manifest without guessing from which keys are present.
+        for r in &lines {
+            assert_eq!(r.record, crate::manifest::DECISION_RECORD);
+        }
+    }
+
+    /// The connection number is per-record and monotonic, so two connections
+    /// that decide identically are still two lines.
+    #[test]
+    fn identical_decisions_produce_distinguishable_records() {
+        let proxy = test_proxy();
+        let d = allow(&proxy);
+        let first = proxy.record_of(&d);
+        let second = proxy.record_of(&d);
+        assert_ne!(first, second, "two connections are not one log line");
+        assert_eq!(second.connection, first.connection + 1);
+        // ...and everything else about them agrees, so the difference is the
+        // identifier rather than drift in what was derived.
+        assert_eq!(first.manifest, second.manifest);
+        assert_eq!(first.decision, second.decision);
     }
 
     /// An upstream name the TLS stack cannot use is a construction error, not a
