@@ -158,11 +158,28 @@ one — and it is wrong in a format designed to be trusted. That is worse than n
 tool at all. If you take one thing from this repository, take that sentence
 rather than the incomparability result.
 
-**The evidence base is five deployments we wrote ourselves.** Nothing here has
-been validated against somebody else's production system. The independent-encoding
-experiment we propose as the answer to the limit above has not been run.
+**The evidence base is five architectures we wrote ourselves** (six files —
+the sixth is the negative control). Nothing here has been validated against
+somebody else's production system. The independent-encoding experiment we
+propose as the answer to the limit above has not been run.
 
 ---
+
+## How this maps to the standard
+
+parallax is a research tool for the
+[**Proof-of-Control Standard**](https://github.com/AAI-Society/ov-poc-standard).
+It implements one of its requirements, and contradicts three of its claims:
+
+| | Standard | |
+| :-- | :-- | :-- |
+| ⚠️ | **C8, Tier 3** — *"the trusted party is removed"* | five parties remain, four undetectable |
+| ⚠️ | **C8.1** — deployments sit on an ordered ladder | two deployments can be incomparable |
+| ⚠️ | **C10.2 example** — a ZK deployment has the *"narrowest trust base"* | the sets are disjoint; neither is narrower |
+| ✅ | **C10.2** — *`[WG-INPUT NEEDED]`: the disclosure format is not yet defined* | emits one, generated rather than written |
+| ✅ | **C10.3.3** — an automated validator per claimed Tier | `parallax check`, exits non-zero, runs in CI |
+
+**[→ Full mapping, with the suggested revisions](docs/STANDARD-MAP.md)**
 
 ## The paper
 
@@ -185,6 +202,7 @@ wrong answer rather than an error.
 ## Licence
 
 Apache-2.0 throughout, code and paper alike. Built for the
-[Advanced AI Society](https://advancedaisociety.org) Proof-of-Control initiative.
+[Advanced AI Society](https://advancedaisociety.org) Proof-of-Control initiative —
+see [**AAI-Society/ov-poc-standard**](https://github.com/AAI-Society/ov-poc-standard).
 
 <p align="center"><img src="assets/logo.svg" width="52" alt=""></p>
