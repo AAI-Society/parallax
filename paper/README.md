@@ -183,8 +183,11 @@ to pass.
    reading as a finished claim. It does not fail while the paper is still
    marked `\drafttrue`, because the placeholders are then visible in the
    PDF by design and a permanently red job teaches everyone to ignore it.
-4. **Claims audit.** Six statements are the ones most likely to drift into
-   overclaiming as the paper is edited, and all six are currently correct:
+4. **Claims audit.** Nine statements are the ones most likely to drift into
+   overclaiming as the paper is edited, and all nine are currently correct.
+   (The list read "six" while carrying eight lettered items, which is the same
+   typed-count defect the tripwire table above exists to prevent; if you add an
+   item, change this number.)
    (a) the tool has been run on five deployments plus a negative control, all
    of which we wrote; (b) the composition rules are not proved sound; (c) the
    TDX result derives the *content* of Table 1, not the *identities* of the
@@ -203,6 +206,21 @@ to pass.
    and says which part of "ranks the systems backwards" survives the
    objection and which does not. If any of these stops being stated, the paper is
    overclaiming.
+
+   And (i), which guards work the paper does not yet describe: the repository
+   now contains a **real** attestation verifier and a proxy built on it
+   (`src/verify/`, `src/derive.rs`, `src/proxy/`), and `main.tex` currently
+   says nothing about either. If a revision writes them up, the evidence base
+   for that half is **one real Intel TDX quote**, captured once from one GCP
+   `c3-standard-4` in one platform configuration (FMSPC `00806F050000`), with
+   the Intel collateral current at capture and a pinned verification clock. No
+   second platform, no SGX, no SEV-SNP, and no committed fixture demonstrating
+   a *successful* key binding — the fixture's `report_data` is a placeholder,
+   so the accepting path is exercised only against certificates the tests
+   generate. Do not write "validated against real hardware" without the words
+   "one quote" nearby. `README.md`'s "What is real, and what is not" and
+   `docs/STANDARD-MAP.md` state the full boundary; keep any paper sentence
+   inside it.
 
    Statements (g) and (h) are there because prose contradicted the artifact
    five times over this paper's life. Both families of count are now

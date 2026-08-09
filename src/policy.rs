@@ -25,8 +25,31 @@ pub struct Policy {
     pub allowed_principals: Option<Vec<String>>,
     #[serde(default)]
     pub forbidden_principals: Vec<String>,
-    /// A humantime duration; an undetectable (`Never`) entry always exceeds
-    /// it. The literal string `"never"` is refused rather than parsed: as a
+    /// A humantime duration bounding how long a violation may go unnoticed.
+    ///
+    /// **Setting this to any value also refuses every undetectable entry**,
+    /// which is almost certainly not what the field name suggests to a policy
+    /// author reaching for it. [`evaluate`] scores a `Never` entry as
+    /// exceeding any finite bound, so `max_detection_latency = "24h"` refuses
+    /// exactly what `forbid_undetectable = true` refuses, *plus* anything
+    /// slower than 24 hours. Writing `forbid_undetectable = false` beside it
+    /// does not restore the undetectable entries; the two clauses cancel.
+    ///
+    /// The consequence is a property of this schema, not an oversight to route
+    /// around: **there is no policy expressible here that bounds the collateral
+    /// authority while tolerating undetectable silicon trust.** Bounding one
+    /// bounds them all. A TDX relying party who must actually run therefore
+    /// leaves this unset and enforces collateral freshness elsewhere — see
+    /// `examples/policy-proxy.toml`, which does exactly that and says why.
+    /// Closing the gap needs a new field (a per-impact or per-principal bound),
+    /// not a change to this one: making `Never` pass a finite bound would mean
+    /// a bound that does not bound, which is the mistake
+    /// [`PolicyError::NeverIsNotABound`] exists to prevent in the other
+    /// direction. `a_latency_bound_treats_never_as_exceeding_it` below and
+    /// `a_latency_bound_also_refuses_undetectable_assumptions` in
+    /// `proxy::gate` both pin the behaviour.
+    ///
+    /// The literal string `"never"` is refused rather than parsed: as a
     /// bound it would read like "require detection within never" but
     /// `Latency::Never` is the lattice's top element, so as a bound it
     /// silently means *no bound at all* — the opposite of what a policy
