@@ -24,6 +24,38 @@
 //!   `DeriveConfig` has no clock at all.
 //! * **`Latency::Never` refuses the cache.** See [`Cache::get`].
 //!
+//! # Two things this cache does not do, and what follows from each
+//!
+//! **It never evicts.** An entry is replaced when its key is re-fetched and is
+//! otherwise held for the life of the process. Growth is therefore bounded by
+//! the number of *distinct keys a fetch succeeded for* — one per `(tee, ca,
+//! fmspc)` triple, and a triple that Intel or the configured PCCS has no
+//! collateral for leaves nothing behind, because `CollateralSource::fetch`
+//! stores only what it successfully decoded. A peer cannot make this grow by
+//! inventing FMSPCs; it can only make it grow by presenting quotes from
+//! platforms that really exist, and the real population is small. A bundle is a
+//! few tens of kilobytes.
+//!
+//! **There is no negative caching**, and that is the sharper edge. A failed
+//! fetch is not remembered, so every connection presenting a quote for a
+//! platform the collateral source will not serve costs a fresh round trip to
+//! that source. An unauthenticated client that can reach a `parallax-proxy`
+//! listener therefore has a one-request-to-one-upstream-request amplifier onto
+//! Intel's PCS or the operator's PCCS, in addition to the TLS handshake
+//! amplification onto the protected service that
+//! [`DEFAULT_MAX_CONNECTIONS`](crate::proxy::config::DEFAULT_MAX_CONNECTIONS)
+//! exists to bound. `max_connections` bounds the *concurrency* of that, not its
+//! rate.
+//!
+//! Neither is fixed here, and the reason is the same for both: a bound needs a
+//! policy — how many entries, evicted by what rule, how long a failure is
+//! remembered and whether remembering one lets a transient outage deny a
+//! genuine platform — and inventing that policy inside a cache whose stated job
+//! is a staleness bound would be a second, unexamined trust decision in the
+//! same object. An operator who needs the rate bounded should put the limit in
+//! front of the listener, where it can see the client. Recorded rather than
+//! left to be rediscovered.
+//!
 //! # What needs the network
 //!
 //! Only `CollateralSource::fetch`, which is behind the `fetch-collateral`
@@ -253,12 +285,14 @@ impl Cache {
 
     /// How many entries are held. Says nothing about whether any of them may
     /// still be served — that is [`get`](Self::get)'s question.
-    pub fn len(&self) -> usize {
+    ///
+    /// `pub(crate)`, with no `is_empty` beside it. Outside this crate the
+    /// question is asked through [`CollateralSource::cached_count`], which is
+    /// the only handle a caller has on a cache anyway: `CollateralSource` owns
+    /// its `Cache` behind a private `Mutex` and hands out no reference to it. A
+    /// second public spelling of one number is a second thing to keep true.
+    pub(crate) fn len(&self) -> usize {
         self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 }
 

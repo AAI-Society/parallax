@@ -1,9 +1,33 @@
 upstream = "https://svc.internal:8443"
+
+# Plaintext and unauthenticated. This proxy terminates a bare TCP connection
+# here and forwards bytes; it does not check who the client is, and there is no
+# key or certificate for it to present. Everything the proxy proves is about the
+# *upstream* hop. That is why every example in this repository binds loopback:
+# on any other interface, whoever can reach this port gets the attested
+# upstream's traffic, and the attestation says nothing about them.
 listen   = "127.0.0.1:8080"
+
 policy   = "examples/policy-strict.toml"
 
 [collateral]
 source    = "https://api.trustedservices.intel.com/tdx/certification/v4"
+
+# How stale a served collateral bundle may be, and the detection latency the
+# manifest reports for `urn:parallax:collateral-cache`.
+#
+# It is also the operator's declared refresh interval, handed to `verify_quote`
+# — and against real Intel collateral that half has no effect on the derived
+# set. `derive::pcs_detection_bound` takes the *worse* of this and the width of
+# the window Intel issued the bundle for, and `Latency`'s join is `max`: Intel's
+# TCB info runs about 30 days, so 12h is absorbed and
+# `accurate_collateral_issuance` is reported at the 30-day figure regardless of
+# what is written here. Believing the promise is what `pcs_detection_bound`
+# declines to do. The cache's own entry does move with this value.
+#
+# `"never"` is refused rather than parsed: it disables the cache (so the real
+# staleness is near zero) while reporting the collateral authority as never
+# detectable. See `ConfigError::NeverIsNotABound`.
 cache_ttl = "12h"
 
 [reference_values]
