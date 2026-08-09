@@ -18,6 +18,19 @@
 //! hands back a [`VerificationOutcome`] carrying the *typed* TCB verdict, so
 //! the caller that decides what to trust has to look at it.
 
-pub mod chain;
+//! A second distinction, and the one [`binding`] exists for: a quote that
+//! verifies is evidence that *a* trust domain produced it, not that the peer
+//! on the other end of the connection is that trust domain. Quotes are public.
+//! Only [`check_binding`] — `report_data` committing to the certificate's
+//! public key — turns the first claim into the second, and the three modules
+//! here are meant to be used together: [`quote::quote_from_cert`] to get the
+//! evidence out of the handshake, [`chain::verify_quote`] to check it is
+//! genuine, [`binding::check_binding`] to check it is about this peer.
 
+pub mod binding;
+pub mod chain;
+pub mod quote;
+
+pub use binding::{check_binding, BindingError};
 pub use chain::{verify_quote, PlatformCaveat, RootCa, VerificationOutcome, VerifyError};
+pub use quote::{quote_from_cert, QuoteExtractError, DEFAULT_QUOTE_OID};

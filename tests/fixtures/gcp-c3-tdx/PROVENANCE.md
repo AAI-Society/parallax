@@ -51,11 +51,16 @@ to something outside itself — normally a digest of the key being attested — 
 zeroing it here is deliberate: this fixture exists to exercise signature
 checking and TCB evaluation, which do not depend on what is in that field.
 
-**Nothing in this repository yet tests the real key binding.** That is a
-separate claim needing a separate fixture, captured with a real digest in
-`report_data`, and it is forthcoming rather than done. Until then, do not read
-this fixture's verification as evidence that parallax checks bindings — it does
-not, and a zeroed `report_data` is exactly what an unbound quote looks like.
+**This fixture cannot demonstrate a *successful* key binding.** Parallax does
+now check bindings — `check_binding` in `src/verify/binding.rs` — but a zeroed
+`report_data` is exactly what an unbound quote looks like, and the check
+refuses it: `the_real_fixtures_report_data_is_unbound` verifies this quote and
+then rejects the binding as `BindingError::Unbound`. What this fixture is
+evidence for is therefore the negative case, that a genuine, verifying,
+`UpToDate` quote can still be bound to nothing at all. The positive case needs
+a second fixture captured with a real digest in `report_data`; it is
+forthcoming rather than done, and until it exists the accepting path is
+exercised only against certificates the tests generate with `rcgen`.
 
 ## The PCK chain is in here twice
 

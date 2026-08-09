@@ -62,6 +62,10 @@ x509-cert = { version = "0.3", default-features = false }
 # `default-features = false` match what dcap-qvl already resolves, so this adds
 # no package to the lockfile.
 scale = { package = "parity-scale-codec", version = "3.7.5", default-features = false }
+# The digest an RA-TLS `report_data` commits to: `SHA-256(subjectPublicKeyInfo)`
+# — see `src/verify/binding.rs`. Version matches what dcap-qvl already
+# resolves, so this adds no package to the lockfile.
+sha2 = { version = "0.11", default-features = false }
 
 # The DCAP quote verifier. `default-features = false` plus these four
 # reproduces the crate's default set *minus* `report`, which is what drags in
@@ -87,3 +91,14 @@ tokio = { version = "1", features = [
 # no SIGPIPE, and `println!` there doesn't panic on a closed pipe the same way.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+# Certificates for the RA-TLS tests in `src/verify/binding.rs` and
+# `src/verify/quote.rs`. The committed fixture's `report_data` is 64 zero bytes
+# (a capture-time placeholder — see `tests/fixtures/gcp-c3-tdx/PROVENANCE.md`),
+# so the real quote can only demonstrate a *rejected* binding; a successful one
+# needs a certificate whose key we chose, generated here.
+#
+# `ring` rather than the default `aws_lc_rs` backend: dcap-qvl already resolves
+# ring, so this adds no C toolchain and no cmake build to `cargo test`.
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "ring"] }
