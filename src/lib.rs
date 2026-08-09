@@ -1,5 +1,6 @@
 pub mod compare;
 pub mod deployment;
+pub mod derive;
 pub mod explain;
 pub mod latency;
 pub mod manifest;
@@ -13,6 +14,7 @@ pub mod trust;
 pub mod verify;
 
 pub use deployment::Deployment;
+pub use derive::{derive, DeriveConfig};
 pub use latency::Latency;
 pub use solve::solve;
 pub use trust::{Assumption, Impact, TrustSet};
