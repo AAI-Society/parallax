@@ -11,6 +11,30 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
+      # The default build is the one that must stay dependency-light — no HTTP
+      # client, no TLS stack — so it is checked first and on its own. But until
+      # this job existed, *nothing in CI ever built `fetch-collateral`*: the
+      # collateral fetch and cache, the whole `proxy::serve` module and its 14
+      # socket tests were compiled only on a developer's machine. The README
+      # badge cited a test count CI could not reproduce.
+      #
+      # `live_pcs` stays `#[ignore]`d here and is not un-ignored: it talks to
+      # Intel, and a merge must not depend on somebody else's uptime.
+      - run: cargo clippy --all-targets --features fetch-collateral -- -D warnings
+      - run: cargo test --features fetch-collateral
+      # The default build must link no HTTP client. `fetch-collateral` is
+      # additive and optional precisely so that `parallax solve` stays offline,
+      # and a transitive dependency that pulled `reqwest` into the default
+      # feature set would undo that silently. `cargo tree -i` exits non-zero
+      # when nothing matches, which is the passing case here.
+      - name: the default build links no HTTP client
+        run: |
+          if cargo tree -i reqwest -e normal >/dev/null 2>&1; then
+            echo "::error::reqwest is in the default dependency graph"
+            cargo tree -i reqwest -e normal
+            exit 1
+          fi
+          echo "no reqwest in the default build"
       - name: results are current
         # `git add -A` before diffing, and diff the *index*, because a plain
         # `git diff results/` is blind to untracked files: adding a sixth

@@ -445,11 +445,25 @@ async fn an_upstream_that_does_not_speak_tls_is_refused() {
 /// An upstream that is not there at all.
 #[tokio::test]
 async fn an_unreachable_upstream_is_refused() {
-    // Bind and immediately drop, so the port is almost certainly free and
-    // nothing is listening on it.
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");
-    let dead = listener.local_addr().expect("bound");
-    drop(listener);
+    // Port 1, not a bind-and-drop of an ephemeral port.
+    //
+    // This test used to bind `127.0.0.1:0`, record the address and drop the
+    // listener, on the reasoning that the port was "almost certainly free".
+    // That is a race, and it fired about one run in five: every other test in
+    // this file also binds `127.0.0.1:0`, and the kernel is free to hand the
+    // just-released port straight to one of them. When it did, the "dead"
+    // address was a live listener belonging to a concurrent test, the TCP
+    // connect succeeded, and the refusal came back naming a TLS handshake
+    // reset instead of an unreachable upstream — so the assertion below failed
+    // while the proxy was behaving correctly. It only ever reproduced when the
+    // whole file ran; the test passes in isolation indefinitely, which is why
+    // it survived.
+    //
+    // Port 1 (tcpmux) cannot be handed out by `bind(:0)` — ephemeral ranges
+    // start far above it — and binding it needs root, so nothing in this
+    // process can be listening there. `connect` gets ECONNREFUSED immediately,
+    // which is the condition under test, without a timeout to wait out.
+    let dead: std::net::SocketAddr = "127.0.0.1:1".parse().expect("a literal address");
 
     let addr = start_proxy(dead).await;
     let response = request(addr, GET).await;
