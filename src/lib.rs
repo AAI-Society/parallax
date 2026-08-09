@@ -7,6 +7,7 @@ pub mod latency;
 pub mod manifest;
 pub mod mechanism;
 pub mod policy;
+pub mod proxy;
 pub mod shared;
 pub mod solve;
 pub mod tex;

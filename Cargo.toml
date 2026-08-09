@@ -26,6 +26,19 @@ name = "fetch-collateral"
 path = "src/bin/fetch-collateral.rs"
 required-features = ["fetch-collateral"]
 
+# The proxy. Behind `fetch-collateral` because it cannot work without
+# `CollateralSource::fetch`: appraising a quote needs collateral for the
+# platform that produced it, and a proxy does not know in advance which
+# platforms it will meet. The *gate* — `src/proxy/gate.rs`, where the decision
+# is made — is in the default build and tested there, so the offline build still
+# links no HTTP client and no TLS stack.
+#
+#   cargo run --features fetch-collateral --bin parallax-proxy -- examples/proxy.toml
+[[bin]]
+name = "parallax-proxy"
+path = "src/bin/parallax-proxy.rs"
+required-features = ["fetch-collateral"]
+
 # The only test that talks to Intel. Declared explicitly so it can carry
 # `required-features`: without that, a default `cargo test` would try to build a
 # file that calls the feature-gated `CollateralSource::fetch` and fail to
@@ -39,21 +52,50 @@ name = "live_pcs"
 path = "tests/live_pcs.rs"
 required-features = ["fetch-collateral"]
 
+# The proxy over real sockets. Needs the same feature the binary does, and for
+# the same reason. It talks to nothing outside the process: the collateral
+# source is primed with the committed bundle, so `fetch` is served from the
+# cache and no packet leaves the machine.
+#
+#   cargo test --features fetch-collateral --test proxy
+[[test]]
+name = "proxy"
+path = "tests/proxy.rs"
+required-features = ["fetch-collateral"]
+
 [features]
 default = []
-# Pulls in dcap-qvl's `report` feature (its async PCCS client) and an async
-# runtime to drive it. Off by default, and that default is the point: parallax
-# verifies attestations *offline*, against collateral frozen on disk, and a
-# tool making that argument should not ship a HTTP client and a TLS stack it
-# never calls. Enabling it takes the normal dependency graph from 194 crates to
-# 285, reqwest and rustls among them; `Cargo.lock` itself lists all 361 either
-# way, because a lockfile is not feature-conditional. Both numbers are one
-# command, so check them rather than trusting this comment:
+# Pulls in dcap-qvl's `report` feature (its async PCCS client), an async
+# runtime to drive it, and the TLS client the proxy speaks RA-TLS with. Off by
+# default, and that default is the point: parallax verifies attestations
+# *offline*, against collateral frozen on disk, and a tool making that argument
+# should not ship a HTTP client and a TLS stack it never calls. Enabling it
+# takes the normal dependency graph from 194 crates to 287, reqwest, rustls and
+# tokio-rustls among them; `Cargo.lock` lists all 363 either way, because a
+# lockfile is not feature-conditional. Every number here is one command, so
+# check them rather than trusting this comment:
 #
 #   cargo tree -e normal --prefix none | sed 's/ (.*//' | sort -u | wc -l
 #   cargo tree -e normal --prefix none --features fetch-collateral | ... | wc -l
 #   cargo tree -i reqwest -e normal        # no match without the feature
-fetch-collateral = ["dep:tokio", "dcap-qvl/report"]
+#   cargo tree -i rustls  -e normal        # nor this one
+#
+# `rustls` and `tokio-rustls` ride on this feature rather than on one of their
+# own. They could have had a separate `proxy` feature, and the reason they do
+# not is that the proxy needs `CollateralSource::fetch`, so any build that has
+# the proxy already has reqwest and rustls; a second feature would name a
+# configuration nobody can use. `Cargo.lock` is not feature-conditional and
+# lists everything either way.
+fetch-collateral = [
+    "dep:tokio",
+    "dcap-qvl/report",
+    "dep:rustls",
+    "dep:tokio-rustls",
+    "tokio/net",
+    "tokio/io-util",
+    "tokio/signal",
+    "tokio/time",
+]
 
 [dependencies]
 ascent = "0.8"
@@ -104,6 +146,27 @@ dcap-qvl = { version = "0.6", default-features = false, features = [
 tokio = { version = "1", features = [
     "rt-multi-thread",
     "macros",
+], optional = true }
+
+# The proxy's TLS client. An RA-TLS peer presents a self-signed, ephemeral
+# certificate that no public CA has seen, so `src/proxy/serve.rs` installs a
+# custom `ServerCertVerifier`: the chain check is replaced by the attestation,
+# while the handshake signature check is delegated to rustls' own
+# implementation, because that is what proves the peer holds the key the quote
+# commits to.
+#
+# `aws-lc-rs` rather than `ring`, which is the opposite of the choice made for
+# rcgen below: under this feature reqwest already resolves rustls with
+# aws-lc-rs, so matching it adds no package and no second crypto backend. Both
+# are already built in any build that can run the proxy.
+rustls = { version = "0.23", default-features = false, features = [
+    "std",
+    "tls12",
+    "aws-lc-rs",
+], optional = true }
+tokio-rustls = { version = "0.26", default-features = false, features = [
+    "tls12",
+    "aws-lc-rs",
 ], optional = true }
 
 # Used only to restore the default SIGPIPE disposition in `src/bin/parallax.rs`

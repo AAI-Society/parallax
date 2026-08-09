@@ -1,0 +1,38 @@
+upstream = "https://svc.internal:8443"
+listen   = "127.0.0.1:8080"
+policy   = "examples/policy-strict.toml"
+
+[collateral]
+source    = "https://api.trustedservices.intel.com/tdx/certification/v4"
+cache_ttl = "12h"
+
+[reference_values]
+# Absent on purpose: with no reference values the proxy allows but warns that
+# this attests some code ran in a genuine trust domain, not that it is yours.
+mrtd = []
+
+# This configuration exits 1 at startup, and that is the demonstration.
+#
+# `examples/policy-strict.toml` sets `forbid_undetectable = true`. No TDX
+# attestation can satisfy that: the residual trust set always contains
+# `did:web:intel.com` for `silicon_and_microcode_integrity`, and nothing detects
+# a compromise of Intel's root — there is no monitoring that would notice. The
+# proxy runs `gate::startup_check` before it binds a listener, discovers that
+# even the most favourable outcome this configuration could ever produce is
+# refused, and says so instead of answering 502 to every connection for the
+# rest of its life. `the_shipped_example_fails_its_startup_check` in
+# `src/proxy/config.rs` pins it.
+#
+# For a policy that does admit an attestation, point `policy` at
+# `examples/policy-proxy.toml` and read the comments there for what it gives up.
+#
+# Other keys this file does not set, with their defaults:
+#
+#   quote_oid    = "1.2.840.113741.1337.6"   # Gramine's and Intel's
+#   root_ca_pem  = <unset>                   # Intel's production root
+#   [reference_values].require = false       # warn rather than refuse
+#
+# Setting `require = true` turns the warning above into a refusal. It is the
+# same gate as putting `urn:reference-values:unconfigured` on the policy's
+# forbidden list — see
+# `requiring_reference_values_is_the_same_gate_as_forbidding_the_principal`.

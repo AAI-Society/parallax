@@ -154,6 +154,46 @@ which is a simpler argument than the tabled resolution we first reached for.
 
 ---
 
+## The proxy
+
+`parallax-proxy` is the same analysis with a socket in front of it. It sits
+between a client and an RA-TLS upstream, and on every connection it verifies the
+peer's quote, checks that the quote is bound to the certificate that
+authenticated the TLS session, derives the residual trust set, and evaluates
+your policy against it. Only then does a byte move.
+
+```sh
+cargo run --features fetch-collateral --bin parallax-proxy -- examples/proxy.toml
+```
+
+It fails closed everywhere: any verification, binding, collateral or policy
+failure answers `502 Bad Gateway` with the violated assumption named in the
+body, and there is no flag that changes that. Every decision emits a Residual
+Trust Manifest to stdout — the same document `parallax check` evaluates. Exit
+codes are `0` clean shutdown, `1` the policy admits nothing, `2` bad
+configuration.
+
+Three things worth knowing before you deploy it:
+
+- **`examples/proxy.toml` exits 1 as shipped.** It names
+  `examples/policy-strict.toml`, which sets `forbid_undetectable = true`, and
+  no TDX attestation can satisfy that — silicon integrity has no detection
+  mechanism. The proxy discovers this before binding a port and says so.
+  `examples/policy-proxy.toml` is the version that runs, and its comments say
+  what it gives up.
+- **Setting `max_detection_latency` at all forbids undetectable assumptions**,
+  because `policy::evaluate` treats an undetectable entry as exceeding any
+  bound. So there is no policy that bounds the collateral authority while
+  tolerating undetectable silicon trust.
+- **The forwarding path has no end-to-end test**, and cannot have one from this
+  repository: the only real quote committed has 64 zero bytes in `report_data`,
+  so the binding check correctly refuses it and every path past the binding is
+  unreachable over a socket. The decision logic is a pure function and is tested
+  exhaustively; the untested span is the one `copy_bidirectional` call after an
+  allow. See `src/proxy/mod.rs` and `tests/fixtures/gcp-c3-tdx/PROVENANCE.md`.
+
+---
+
 ## What is real, and what is not
 
 This project is about not overclaiming, so:

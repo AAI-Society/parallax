@@ -173,7 +173,11 @@ fn decode_quote(quote: &[u8]) -> Result<dcap_qvl::quote::Quote, CollateralError>
 /// Written out rather than pulled from the `hex` crate: six bytes do not
 /// justify naming a dependency, and the one property that matters — that the
 /// key is stable and lowercase — is asserted in `the_fixture_quotes_key`.
-fn hex_lower(bytes: &[u8]) -> String {
+///
+/// `pub(crate)` for one other caller: `proxy::gate` renders the 48-byte MRTD of
+/// a refuted measurement into the refusal an operator reads. A second copy of
+/// six lines would be a second spelling of the same value.
+pub(crate) fn hex_lower(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     bytes
         .iter()
@@ -288,7 +292,7 @@ pub struct CollateralSource {
     /// How stale a served bundle may be. This is the detection bound for
     /// revocation — see the module documentation.
     pub cache_ttl: Latency,
-    /// Interior mutability so `fetch` can take `&self`: a proxy will hold one
+    /// Interior mutability so `fetch` can take `&self`: `parallax-proxy` holds one
     /// source behind an `Arc` and fetch from many connections. A poisoned lock
     /// is recovered from rather than unwrapped, so a panic in one caller does
     /// not become a panic in every later one.

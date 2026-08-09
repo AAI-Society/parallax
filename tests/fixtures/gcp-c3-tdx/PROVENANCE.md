@@ -51,18 +51,31 @@ to something outside itself — normally a digest of the key being attested — 
 zeroing it here is deliberate: this fixture exists to exercise signature
 checking and TCB evaluation, which do not depend on what is in that field.
 
-**This fixture cannot demonstrate a *successful* key binding.** Parallax now
-has a binding check — `check_binding` in `src/verify/binding.rs` — but nothing
-shipped calls it yet: the only callers are that module's own tests, and the
-proxy that will use it in a handshake is still to be written. A zeroed
-`report_data` is exactly what an unbound quote looks like, and the check
-refuses it: `the_real_fixtures_report_data_is_unbound` verifies this quote and
-then rejects the binding as `BindingError::Unbound`. What this fixture is
-evidence for is therefore the negative case, that a genuine, verifying,
-`UpToDate` quote can still be bound to nothing at all. The positive case needs
-a second fixture captured with a real digest in `report_data`; it is
-forthcoming rather than done, and until it exists the accepting path is
-exercised only against certificates the tests generate with `rcgen`.
+**This fixture cannot demonstrate a *successful* key binding.** Parallax has a
+binding check — `check_binding` in `src/verify/binding.rs` — and
+`parallax-proxy` now calls it on every connection, between verifying the peer's
+quote and deriving its trust set. A zeroed `report_data` is exactly what an
+unbound quote looks like, and the check refuses it:
+`the_real_fixtures_report_data_is_unbound` verifies this quote and then rejects
+the binding as `BindingError::Unbound`. What this fixture is evidence for is
+therefore the negative case, that a genuine, verifying, `UpToDate` quote can
+still be bound to nothing at all. The positive case needs a second fixture
+captured with a real digest in `report_data`; it is forthcoming rather than
+done, and until it exists the accepting path is exercised only against
+certificates the tests generate with `rcgen`.
+
+**What that costs the proxy, recorded here because this file is the reason.**
+Every path past the binding check is unreachable over a socket with the evidence
+in this repository, so `tests/proxy.rs` asserts only refusals —
+`the_real_fixtures_quote_is_refused_as_unbound` is the headline one — and the
+proxy's allow path is covered in `src/proxy/gate.rs` against outcomes built
+field by field. The one statement no test anywhere exercises is the
+`copy_bidirectional` call in `Proxy::handle`'s `Decision::Allow` arm. Closing
+that gap means recapturing here, with the capture script writing
+`SHA-256(subjectPublicKeyInfo)` of the key the guest is about to serve into
+`report_data` instead of zeros. It does **not** mean relaxing the binding
+check, which is the whole difference between "a TDX machine exists somewhere"
+and "this connection terminates inside one".
 
 ## The PCK chain is in here twice
 

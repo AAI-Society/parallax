@@ -1,0 +1,501 @@
+//! The proxy over real sockets.
+//!
+//! Everything here runs in-process and talks to nothing outside it: the
+//! upstream is a rustls server on `127.0.0.1:0`, and the proxy's collateral
+//! source is primed with the committed bundle so `CollateralSource::fetch` is
+//! served from its cache and no packet leaves the machine.
+//!
+//! # What these tests cover, and what they cannot
+//!
+//! Every assertion here is on a **refusal**. That is not a choice about
+//! coverage, it is what the evidence in this repository permits: the only real
+//! quote committed is `tests/fixtures/gcp-c3-tdx/quote.bin`, whose `report_data`
+//! is 64 zero bytes (see that directory's `PROVENANCE.md`), so `check_binding`
+//! refuses it and every path past the binding is unreachable over a socket.
+//! Weakening the binding, skipping it in a test, or adding a flag to bypass it
+//! would make a forwarding test pass and make the proxy worthless, so none of
+//! those was done. The allow path is covered in `src/proxy/gate.rs`, against
+//! outcomes built field by field, including one with a binding that genuinely
+//! holds (`a_correctly_bound_quote_reaches_the_gate_and_is_allowed`).
+//!
+//! What that leaves untested anywhere is one statement: the
+//! `copy_bidirectional` call in `Proxy::handle`'s `Decision::Allow` arm. The
+//! negative half of it *is* tested here —
+//! `nothing_reaches_the_upstream_when_the_connection_is_refused` counts the
+//! application bytes the upstream received and asserts zero.
+
+use parallax::collateral::cache_key_of;
+use parallax::proxy::{FixedClock, Proxy, ProxyConfig};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+
+/// Gramine's quote OID as the arc list rcgen wants. The dotted spelling is
+/// `parallax::verify::DEFAULT_QUOTE_OID`, and
+/// `the_arcs_are_the_default_quote_oid` asserts they are the same OID.
+const QUOTE_OID_ARCS: &[u64] = &[1, 2, 840, 113741, 1337, 6];
+
+fn manifest_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// The committed quote, its collateral as JSON, and the capture time.
+fn fixture() -> (Vec<u8>, Vec<u8>, u64) {
+    let dir = manifest_dir().join("tests/fixtures/gcp-c3-tdx");
+    let quote = std::fs::read(dir.join("quote.bin")).expect("fixture quote");
+    let collateral = std::fs::read(dir.join("collateral.json")).expect("fixture collateral");
+    let now = humantime::parse_rfc3339(
+        std::fs::read_to_string(dir.join("captured-at"))
+            .expect("captured-at")
+            .trim(),
+    )
+    .expect("captured-at is RFC 3339")
+    .duration_since(std::time::UNIX_EPOCH)
+    .expect("after epoch")
+    .as_secs();
+    (quote, collateral, now)
+}
+
+/// A self-signed certificate carrying `quote` under `arcs`, and its key.
+///
+/// This is an RA-TLS certificate in shape: ephemeral, self-signed, with the
+/// evidence in an extension. What it is not is *bound* — the fixture's
+/// `report_data` is zero, so no certificate can satisfy `check_binding` against
+/// it, which is the whole subject of this file's header.
+fn ra_tls_cert(arcs: Option<&[u64]>, quote: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let key = rcgen::KeyPair::generate().expect("keypair");
+    let mut params = rcgen::CertificateParams::new(vec!["localhost".into()]).expect("params");
+    params.distinguished_name = rcgen::DistinguishedName::new();
+    if let Some(arcs) = arcs {
+        params
+            .custom_extensions
+            .push(rcgen::CustomExtension::from_oid_content(
+                arcs,
+                quote.to_vec(),
+            ));
+    }
+    let cert = params.self_signed(&key).expect("self-signed");
+    (cert.der().to_vec(), key.serialize_der())
+}
+
+/// A TLS echo server that counts the application bytes it received.
+struct Upstream {
+    addr: SocketAddr,
+    received: Arc<AtomicU64>,
+}
+
+impl Upstream {
+    async fn spawn(cert_der: Vec<u8>, key_der: Vec<u8>) -> Upstream {
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let config = rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .expect("default protocol versions")
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from(cert_der)],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der)),
+            )
+            .expect("rcgen's key matches rcgen's certificate");
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("an ephemeral port");
+        let addr = listener.local_addr().expect("bound");
+        let received = Arc::new(AtomicU64::new(0));
+        let counter = Arc::clone(&received);
+
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                let acceptor = acceptor.clone();
+                let counter = Arc::clone(&counter);
+                tokio::spawn(async move {
+                    let Ok(mut tls) = acceptor.accept(tcp).await else {
+                        return;
+                    };
+                    let mut buf = vec![0u8; 4096];
+                    loop {
+                        match tls.read(&mut buf).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => {
+                                counter.fetch_add(n as u64, Ordering::Relaxed);
+                                let Some(echo) = buf.get(..n) else { return };
+                                if tls.write_all(echo).await.is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        Upstream { addr, received }
+    }
+}
+
+/// A scratch directory under `target/`, so tests write nothing outside the
+/// build tree and need no dependency to do it.
+fn scratch() -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = manifest_dir()
+        .join("target/proxy-integration")
+        .join(format!("{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch directory");
+    dir
+}
+
+/// A proxy configuration pointing at `upstream`, with a policy that admits
+/// something.
+fn config_for(upstream: SocketAddr) -> Arc<ProxyConfig> {
+    let dir = scratch();
+    let policy = dir.join("policy.toml");
+    std::fs::write(&policy, "forbid_undetectable = false\n").expect("write the policy");
+    let cfg = dir.join("proxy.toml");
+    std::fs::write(
+        &cfg,
+        format!(
+            "upstream = \"https://{upstream}\"\n\
+             listen = \"127.0.0.1:0\"\n\
+             policy = \"{}\"\n\
+             [collateral]\n\
+             source = \"https://pccs.invalid\"\n\
+             cache_ttl = \"12h\"\n",
+            policy.display()
+        ),
+    )
+    .expect("write the config");
+    Arc::new(ProxyConfig::load(&cfg).expect("the generated config loads"))
+}
+
+/// Start a proxy in front of `upstream`, with its collateral cache primed from
+/// the committed bundle so nothing goes to the network.
+///
+/// Returns the address to connect to. The proxy runs until the test ends.
+async fn start_proxy(upstream: SocketAddr) -> SocketAddr {
+    let (quote, collateral, now) = fixture();
+    let cfg = config_for(upstream);
+    let proxy = Arc::new(
+        Proxy::new(cfg, Arc::new(FixedClock(now))).expect("the TLS client configuration builds"),
+    );
+    proxy.collateral().prime(
+        cache_key_of(&quote).expect("the fixture quote has a cache key"),
+        collateral,
+        now,
+    );
+    let listener = proxy.bind().await.expect("an ephemeral port");
+    let addr = listener.local_addr().expect("bound");
+    tokio::spawn(async move {
+        // Never resolves: the proxy stops when the test's runtime is dropped.
+        proxy.serve(listener, std::future::pending()).await;
+    });
+    addr
+}
+
+/// Connect, send a request, read everything back.
+///
+/// The write half is closed after the request so `Proxy::refuse`'s drain
+/// reaches EOF immediately instead of waiting out its window. A real client
+/// need not do this — draining is bounded by a timeout for exactly that reason
+/// — but a test that waits 250ms per case for no reason is a slower test.
+async fn request(addr: SocketAddr, body: &[u8]) -> String {
+    let mut client = TcpStream::connect(addr)
+        .await
+        .expect("the proxy is listening");
+    client
+        .write_all(body)
+        .await
+        .expect("the request is written");
+    client.shutdown().await.expect("half-close");
+    let mut response = Vec::new();
+    client
+        .read_to_end(&mut response)
+        .await
+        .expect("the proxy closes its end");
+    String::from_utf8_lossy(&response).into_owned()
+}
+
+const GET: &[u8] = b"GET / HTTP/1.1\r\nHost: svc.internal\r\n\r\n";
+
+fn assert_is_502(response: &str) {
+    assert!(
+        response.starts_with("HTTP/1.1 502 Bad Gateway\r\n"),
+        "{response}"
+    );
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .unwrap_or_else(|| panic!("no header/body separator in: {response}"));
+    assert!(
+        headers.contains(&format!("Content-Length: {}", body.len())),
+        "declared length disagrees with the {} byte body: {headers}",
+        body.len()
+    );
+    assert!(body.contains("Nothing was forwarded"), "{body}");
+}
+
+// ---- the fixture's quote is genuine, verifies, and is still refused --------
+
+/// The headline case. A real, verifying, `UpToDate` TDX quote, presented in a
+/// certificate whose key it does not commit to, is refused.
+#[tokio::test]
+async fn the_real_fixtures_quote_is_refused_as_unbound() {
+    let (quote, _, _) = fixture();
+    let (cert, key) = ra_tls_cert(Some(QUOTE_OID_ARCS), &quote);
+    let upstream = Upstream::spawn(cert, key).await;
+    let addr = start_proxy(upstream.addr).await;
+
+    let response = request(addr, GET).await;
+    assert_is_502(&response);
+    assert!(
+        response.contains("not bound to the certificate that authenticated this connection"),
+        "{response}"
+    );
+    assert!(response.contains("commits to no key at all"), "{response}");
+    // The distinction the binding exists to draw, in the words the client sees.
+    assert!(response.contains("a trust domain exists"), "{response}");
+}
+
+/// A refused connection forwards nothing.
+///
+/// The client writes a request before the verdict is known, so this is not
+/// vacuous: the bytes are on the proxy's socket and are never relayed. What the
+/// upstream counts is application data after its TLS handshake; the handshake
+/// itself and the `close_notify` that ends it are not application data.
+#[tokio::test]
+async fn nothing_reaches_the_upstream_when_the_connection_is_refused() {
+    let (quote, _, _) = fixture();
+    let (cert, key) = ra_tls_cert(Some(QUOTE_OID_ARCS), &quote);
+    let upstream = Upstream::spawn(cert, key).await;
+    let addr = start_proxy(upstream.addr).await;
+
+    let response = request(addr, b"POST /transfer HTTP/1.1\r\nHost: x\r\n\r\nsecrets").await;
+    assert_is_502(&response);
+    assert_eq!(
+        upstream.received.load(Ordering::Relaxed),
+        0,
+        "the proxy refused the connection and still forwarded application data"
+    );
+}
+
+// ---- the other refusals ----------------------------------------------------
+
+/// A peer doing no attestation at all, and a peer using another OID, must not
+/// look the same. The refusal names the OID that was looked for.
+#[tokio::test]
+async fn a_certificate_with_no_quote_extension_is_refused_naming_the_oid() {
+    let (cert, key) = ra_tls_cert(None, &[]);
+    let upstream = Upstream::spawn(cert, key).await;
+    let addr = start_proxy(upstream.addr).await;
+
+    let response = request(addr, GET).await;
+    assert_is_502(&response);
+    assert!(
+        response.contains(parallax::verify::DEFAULT_QUOTE_OID),
+        "{response}"
+    );
+    assert!(response.contains("no usable attestation"), "{response}");
+    assert_eq!(upstream.received.load(Ordering::Relaxed), 0);
+}
+
+/// An extension under the right OID whose contents are not a quote.
+#[tokio::test]
+async fn a_certificate_carrying_something_that_is_not_a_quote_is_refused() {
+    let (cert, key) = ra_tls_cert(Some(QUOTE_OID_ARCS), b"these bytes are not a quote");
+    let upstream = Upstream::spawn(cert, key).await;
+    let addr = start_proxy(upstream.addr).await;
+
+    let response = request(addr, GET).await;
+    assert_is_502(&response);
+    // It fails at the collateral stage: the platform cannot be identified from
+    // something that does not parse as a quote, so there is nothing to fetch.
+    assert!(
+        response.contains("could not be obtained") || response.contains("did not verify"),
+        "{response}"
+    );
+    assert_eq!(upstream.received.load(Ordering::Relaxed), 0);
+}
+
+/// The fixture's quote appraised long after its collateral expired.
+///
+/// The same certificate that is refused as `Unbound` at the capture time is
+/// refused *earlier in the pipeline* here, which is the ordering the proxy
+/// wants: a quote that did not verify is not also blamed for its binding.
+#[tokio::test]
+async fn a_quote_whose_collateral_has_expired_is_refused_by_verification() {
+    let (quote, collateral, now) = fixture();
+    let (cert, key) = ra_tls_cert(Some(QUOTE_OID_ARCS), &quote);
+    let upstream = Upstream::spawn(cert, key).await;
+
+    let late = now + 400 * 86_400;
+    let cfg = config_for(upstream.addr);
+    let proxy = Arc::new(Proxy::new(cfg, Arc::new(FixedClock(late))).expect("TLS config"));
+    proxy.collateral().prime(
+        cache_key_of(&quote).expect("cache key"),
+        collateral,
+        // Primed as of the late clock, so the cache serves it and the refusal
+        // is about the collateral's own validity window rather than a miss.
+        late,
+    );
+    let listener = proxy.bind().await.expect("an ephemeral port");
+    let addr = listener.local_addr().expect("bound");
+    tokio::spawn(async move { proxy.serve(listener, std::future::pending()).await });
+
+    let response = request(addr, GET).await;
+    assert_is_502(&response);
+    assert!(response.contains("did not verify"), "{response}");
+    assert_eq!(upstream.received.load(Ordering::Relaxed), 0);
+}
+
+/// An upstream that answers TCP but does not speak TLS.
+#[tokio::test]
+async fn an_upstream_that_does_not_speak_tls_is_refused() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");
+    let upstream = listener.local_addr().expect("bound");
+    tokio::spawn(async move {
+        while let Ok((mut tcp, _)) = listener.accept().await {
+            // Answer the ClientHello with something that is not a ServerHello.
+            let _ = tcp.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await;
+        }
+    });
+
+    let addr = start_proxy(upstream).await;
+    let response = request(addr, GET).await;
+    assert_is_502(&response);
+    assert!(response.contains("TLS handshake"), "{response}");
+}
+
+/// An upstream that is not there at all.
+#[tokio::test]
+async fn an_unreachable_upstream_is_refused() {
+    // Bind and immediately drop, so the port is almost certainly free and
+    // nothing is listening on it.
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");
+    let dead = listener.local_addr().expect("bound");
+    drop(listener);
+
+    let addr = start_proxy(dead).await;
+    let response = request(addr, GET).await;
+    assert_is_502(&response);
+    assert!(response.contains("could not be reached"), "{response}");
+}
+
+// ---- shape -----------------------------------------------------------------
+
+#[test]
+fn the_arcs_are_the_default_quote_oid() {
+    let dotted = QUOTE_OID_ARCS
+        .iter()
+        .map(|arc| arc.to_string())
+        .collect::<Vec<_>>()
+        .join(".");
+    assert_eq!(dotted, parallax::verify::DEFAULT_QUOTE_OID);
+}
+
+// ---- the binary's exit codes -----------------------------------------------
+
+/// `examples/proxy.toml` names `examples/policy-strict.toml`, which forbids
+/// undetectable assumptions and therefore admits no TDX attestation. The proxy
+/// says so and exits 1 instead of binding a port that can only answer 502.
+#[test]
+fn a_policy_that_admits_nothing_exits_1() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_parallax-proxy"))
+        .current_dir(manifest_dir())
+        .arg("examples/proxy.toml")
+        .output()
+        .expect("the binary runs");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("admits nothing"), "{stderr}");
+    assert!(
+        stderr.contains("silicon_and_microcode_integrity"),
+        "{stderr}"
+    );
+}
+
+/// The same configuration against a policy that does admit something.
+#[test]
+fn a_workable_configuration_passes_its_check_and_exits_0() {
+    let dir = scratch();
+    let cfg = dir.join("proxy.toml");
+    std::fs::write(
+        &cfg,
+        format!(
+            "upstream = \"https://svc.internal:8443\"\n\
+             listen = \"127.0.0.1:0\"\n\
+             policy = \"{}\"\n\
+             [collateral]\n\
+             source = \"https://pccs.invalid\"\n\
+             cache_ttl = \"12h\"\n",
+            manifest_dir().join("examples/policy-proxy.toml").display()
+        ),
+    )
+    .expect("write");
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_parallax-proxy"))
+        .current_dir(manifest_dir())
+        .arg("--check")
+        .arg(&cfg)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("admits at least one outcome"), "{stdout}");
+    // ...and it warns that nothing was compared, because no reference values
+    // are configured. An allow is not a clean bill of health.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no reference values are configured"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_configuration_that_does_not_load_exits_2() {
+    for arg in ["/nonexistent/proxy.toml", "Cargo.toml"] {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_parallax-proxy"))
+            .current_dir(manifest_dir())
+            .arg(arg)
+            .output()
+            .expect("the binary runs");
+        assert_eq!(out.status.code(), Some(2), "{arg}: {out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.starts_with("error: "), "{arg}: {stderr}");
+    }
+}
+
+/// A policy this build cannot evaluate is a configuration fault, not a verdict:
+/// exit 2, not 1.
+#[test]
+fn an_unevaluable_policy_exits_2() {
+    let dir = scratch();
+    let policy = dir.join("policy.toml");
+    std::fs::write(&policy, "max_detection_latency = \"never\"\n").expect("write");
+    let cfg = dir.join("proxy.toml");
+    std::fs::write(
+        &cfg,
+        format!(
+            "upstream = \"https://svc.internal:8443\"\n\
+             listen = \"127.0.0.1:0\"\n\
+             policy = \"{}\"\n\
+             [collateral]\n\
+             source = \"https://pccs.invalid\"\n\
+             cache_ttl = \"12h\"\n",
+            policy.display()
+        ),
+    )
+    .expect("write");
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_parallax-proxy"))
+        .current_dir(manifest_dir())
+        .arg(&cfg)
+        .output()
+        .expect("the binary runs");
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("sets no bound at all"), "{stderr}");
+}

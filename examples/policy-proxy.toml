@@ -1,0 +1,50 @@
+# A policy the proxy can actually run under, and what it gives up to be one.
+#
+# `examples/policy-strict.toml` is the relying party who will not accept silent
+# failure modes. This is the one who has to ship. The difference between them is
+# not a matter of degree: strict forbids undetectable assumptions, and every TDX
+# attestation rests on at least four of them, so strict admits no TDX deployment
+# at all. That is a true finding about TDX rather than a defect in either file,
+# and `parallax-proxy` reports it at startup rather than one 502 at a time.
+
+# Undetectable assumptions are permitted, because refusing them refuses TDX.
+#
+# Six of the eight assumptions in a healthy derived trust set carry
+# `Latency::Never`: silicon and microcode integrity (did:web:intel.com), quote
+# signing honesty (urn:qe:tdx), measurement injection resistance
+# (urn:host:unattributed), the correctness of the reference values, this
+# verifier's soundness, and the proxy forwarding only what it verified. None of
+# them has a detection mechanism — no monitoring notices Intel's root key being
+# misused — so `forbid_undetectable = true` is equivalent to "do not use a TEE".
+# Setting this to `false` is not a relaxation of a check; it is an admission
+# that six parties are trusted with no way to find out if they defected.
+forbid_undetectable = false
+
+# `max_detection_latency` is deliberately absent, and it cannot be set here.
+#
+# It looks like the knob for bounding the two assumptions that *do* carry a
+# detection latency — the collateral authority's accurate issuance and this
+# proxy's collateral cache — while leaving the six undetectable ones alone. It
+# is not. `policy::evaluate` treats an undetectable entry as exceeding any
+# bound: `src/policy.rs`'s `let exceeds = match secs { None => true, ... }`.
+# So setting this field to *any* value refuses every `Never` assumption,
+# exactly as `forbid_undetectable = true` does, and the two lines above cancel
+# each other out. `a_latency_bound_also_refuses_undetectable_assumptions` in
+# `src/proxy/gate.rs` pins that behaviour.
+#
+# The consequence, stated plainly rather than worked around: under this policy
+# schema there is no way to bound the collateral authority while tolerating
+# undetectable silicon trust. Bounding the one bounds them all. Until the schema
+# grows a per-impact or per-principal bound, a proxy that has to run leaves this
+# unset and accepts that the collateral freshness bound is enforced by the cache
+# TTL in `proxy.toml` rather than by policy.
+
+# Nothing forbidden by name.
+#
+# The line worth adding when you have reference values configured:
+#
+#   forbidden_principals = ["urn:reference-values:unconfigured"]
+#
+# That refuses any connection whose measurement was compared to nothing, which
+# is the same gate as `[reference_values].require = true` in `proxy.toml`.
+forbidden_principals = []
