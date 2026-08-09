@@ -35,8 +35,8 @@ const _: () = assert!(
 
 /// Named in error messages so an operator meeting a peer with a different
 /// convention sees a layout mismatch rather than an accusation.
-pub const LAYOUT: &str = "the Gramine/Intel layout, SHA-256(SPKI) in \
-                          report_data bytes 0..32, remainder zero";
+pub const LAYOUT: &str = "the Gramine/Intel layout, SHA-256(SPKI) in report_data \
+                          bytes 0..32 with the remainder zero";
 
 /// What `report_data` must contain for a certificate whose SubjectPublicKeyInfo
 /// is `spki_der`.
