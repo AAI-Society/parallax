@@ -1,0 +1,60 @@
+# The same TDX deployment as `sigma2-tdx.toml`, written so that its principals
+# are the ones a *live* verification actually names.
+#
+# `sigma2-tdx.toml` describes a generic TDX deployment with illustrative party
+# names (`did:web:rvp.example.org`, `did:web:cloud.example.com`). This file
+# describes the deployment `src/derive.rs` produces a trust set for when it is
+# handed a real quote: the same five roles, but spelled with the identifiers
+# `derive` emits, because those are the names the evidence supports.
+#
+# Two of them are worth reading twice.
+#
+#   `urn:host:unattributed` — a TDX quote does not name the machine the trust
+#   domain ran on. The party is real and load-bearing; the attestation simply
+#   does not say who it is, and inventing a hostname here would be the written
+#   description claiming knowledge the evidence does not carry.
+#
+#   `urn:reference-values:configured` — whoever chose the MRTD values the
+#   measurement was compared against. Also unnamed by the quote: it is a
+#   property of the verifier's configuration, not of the evidence.
+#
+# `tests/cross_check.rs` checks that solving this file reaches the same five
+# (principal, capability) pairs that `derive` reaches from a verified quote.
+# Renaming a principal here without renaming it in `src/derive.rs` fails that
+# test, which is the point of the file.
+
+name = "verified-tdx"
+claim = "execution_valid"
+
+[[principal]]
+id = "did:web:intel.com"
+role = "SiliconManufacturer"
+
+[[principal]]
+id = "did:web:pcs.intel.com"
+role = "CertificationAuthority"
+
+[[principal]]
+id = "urn:qe:tdx"
+role = "QuotingEnclave"
+
+[[principal]]
+id = "urn:host:unattributed"
+role = "CloudOperator"
+
+[[principal]]
+id = "urn:reference-values:configured"
+role = "ReferenceValueProvider"
+
+[[mechanism]]
+kind = "tee_attestation"
+endorser = "did:web:intel.com"
+quoting_enclave = "urn:qe:tdx"
+collateral_authority = "did:web:pcs.intel.com"
+# 12h, matching the `collateral_refresh` the cross-check hands `verify_quote`.
+# This is the operator's declared policy, not a measured fact — see
+# `derive::pcs_detection_bound` for why the live route does not believe it on
+# its own.
+collateral_refresh = "12h"
+reference_values = "urn:reference-values:configured"
+host = "urn:host:unattributed"

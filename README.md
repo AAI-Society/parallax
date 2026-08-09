@@ -122,10 +122,16 @@ cd parallax
 cargo run -- solve examples/sigma2-tdx.toml
 ```
 
-Six deployments ship in [`examples/`](examples): a software-only host, an Intel
-TDX confidential VM, a 5-of-7 witness quorum, a zero-knowledge rollup, the
+Seven deployments ship in [`examples/`](examples): a software-only host, an
+Intel TDX confidential VM, a 5-of-7 witness quorum, a zero-knowledge rollup, the
 hybrid above — and a variant of the hybrid with two separate build pipelines,
 which correctly reports nothing. A finding you cannot turn off isn't a finding.
+
+The seventh, [`verified-tdx.toml`](examples/verified-tdx.toml), is the TDX
+deployment written with the party names a *live* verification produces.
+`tests/cross_check.rs` solves it and separately derives a trust set from the
+committed quote, and asserts the two routes name the same five parties for the
+same five capabilities.
 
 ## The five commands
 
