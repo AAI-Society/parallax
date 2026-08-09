@@ -10,20 +10,42 @@
 //!
 //! It refuses to write a fixture it cannot verify. That refusal is the point of
 //! the program. A frozen quote plus frozen collateral that do not actually
-//! satisfy `dcap_qvl::verify::verify` is worse than no fixture at all: every
-//! test built on it would be asserting against a bundle nobody ever checked,
-//! and the failure would surface much later as a mysterious verifier bug rather
-//! than here, where it is one line of output.
+//! verify is worse than no fixture at all: every test built on it would be
+//! asserting against a bundle nobody ever checked, and the failure would
+//! surface much later as a mysterious verifier bug rather than here, where it
+//! is one line of output.
+//!
+//! # It goes through the crate's own front door, both ways
+//!
+//! Fetching is [`CollateralSource`], and appraising is
+//! [`verify_quote`](parallax::verify::verify_quote) — not
+//! `dcap_qvl::verify::verify`, which this program used to call directly. That
+//! was the one place in the tree that reached past the guards Task 2 built, and
+//! it was the *worst* place to do it: the collateral it hands over arrives from
+//! a public third-party PCCS moments earlier, and `dcap_qvl::verify::verify`
+//! can abort the process on malformed collateral **before any signature is
+//! checked**, so Intel's signature is no protection against it. See
+//! `require_sane_crl` in `src/verify/chain.rs`, and `CollateralSource::fetch`'s
+//! own documentation, which says exactly this and was being ignored one call
+//! away.
+//!
+//! A one-shot has no use for a cache, but going through `CollateralSource` is
+//! what keeps the fixture-producing path and the proxy's path the same code.
 
 use anyhow::{bail, Context, Result};
+use parallax::collateral::CollateralSource;
+use parallax::verify::{verify_quote, RootCa};
 use std::path::{Path, PathBuf};
 
 /// Where to fetch collateral from. Intel's own PCS is the authority for TCB
 /// info and QE identity, but it requires a subscription key for the PCK
 /// certificate endpoints; Phala runs a public caching PCCS that proxies the
 /// same signed objects, and signatures are checked at verification time
-/// regardless of who served them. `PCCS_URL` overrides this — see
-/// `dcap_qvl::collateral::CollateralClient::from_env`.
+/// regardless of who served them. `PCCS_URL` overrides this; the variable is
+/// read here rather than by `dcap_qvl::collateral::CollateralClient::from_env`,
+/// because the URL is also printed, and a host this program contacted but did
+/// not name would be the same omission `derive::collateral_principal` exists to
+/// prevent.
 fn pccs_url() -> String {
     std::env::var("PCCS_URL")
         .ok()
@@ -98,29 +120,47 @@ async fn main() -> Result<()> {
     // not type 5, where the embedded-chain fallback has nothing to fall back
     // to. That is robustness against a future capture, not a property of this
     // one.
-    let collateral = dcap_qvl::collateral::CollateralClient::with_default_http(&url)
-        .context("building the PCCS client")?
-        .fetch(&quote)
+    //
+    // Reached through `CollateralSource` rather than `CollateralClient`
+    // directly, so that the bundle a fixture is built from and the bundle the
+    // proxy appraises travel the same path. The TTL is irrelevant to a process
+    // that fetches once and exits; `DEFAULT_CACHE_TTL` is the crate's worked
+    // example, and naming it here is cheaper than justifying a second number.
+    let source = CollateralSource::new(&url, parallax::collateral::DEFAULT_CACHE_TTL);
+    let collateral = source
+        .fetch(&quote, now_secs)
         .await
         .with_context(|| format!("fetching collateral from {url}"))?;
 
     // Prove the bundle before writing it, at the same clock the tests will use.
-    let report = dcap_qvl::verify::verify(&quote, &collateral, now_secs)
-        .map_err(|e| anyhow::anyhow!("{e}"))
-        .context("the captured quote does not verify against the collateral just fetched")?;
+    //
+    // `verify_quote`, not `dcap_qvl::verify::verify`: these bytes came off a
+    // public PCCS a moment ago, and dcap-qvl's entry point can abort the
+    // process on malformed collateral before checking a signature. The
+    // declared refresh interval is not a finding about this fixture — nothing
+    // downstream of here reads it — but it is a required input, so it is the
+    // same default the fetch above used.
+    let outcome = verify_quote(
+        &quote,
+        &collateral,
+        now_secs,
+        &RootCa::IntelProduction,
+        parallax::collateral::DEFAULT_CACHE_TTL,
+    )
+    .context("the captured quote does not verify against the collateral just fetched")?;
 
     let json = serde_json::to_vec_pretty(&collateral).context("serialising collateral")?;
     let out = dir.join("collateral.json");
     std::fs::write(&out, &json).with_context(|| format!("writing {}", out.display()))?;
 
     println!(
-        "verified at {now_secs} (capture time): status {}",
-        report.status
+        "verified at {now_secs} (capture time): status {:?}",
+        outcome.tcb_status
     );
-    if report.advisory_ids.is_empty() {
+    if outcome.advisory_ids.is_empty() {
         println!("advisories: none");
     } else {
-        println!("advisories: {}", report.advisory_ids.join(", "));
+        println!("advisories: {}", outcome.advisory_ids.join(", "));
     }
     println!("wrote {} ({} bytes)", out.display(), json.len());
     Ok(())
