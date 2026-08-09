@@ -5,7 +5,7 @@
 # --confidential-compute-type=TDX, or equivalent). It writes `quote.bin`,
 # `captured-at` and `provider` into an output directory; the matching Intel
 # collateral is fetched afterwards, off the machine, by
-# `cargo run --bin fetch-collateral -- <dir>`.
+# `cargo run --features fetch-collateral --bin fetch-collateral -- <dir>`.
 #
 # The split is deliberate. Only the confidential VM can produce a quote, and
 # it is the expensive, short-lived half of this procedure: get the bytes off
@@ -75,4 +75,4 @@ fi
 
 echo "wrote $OUT/quote.bin ($SIZE bytes, provider $(cat "$OUT/provider" 2>/dev/null))"
 echo "captured at $(cat "$OUT/captured-at")"
-echo "now fetch collateral with: cargo run --bin fetch-collateral -- $OUT"
+echo "now fetch collateral with: cargo run --features fetch-collateral --bin fetch-collateral -- $OUT"

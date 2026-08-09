@@ -10,9 +10,9 @@ was captured. Not synthesised.
 | Guest kernel   | `6.17.0-1022-gcp`, Ubuntu 24.04 LTS — see `capture-host.txt`                                             |
 | Captured at    | see `captured-at` (2026-08-09T03:04:16Z)                                                                 |
 | Quote          | DCAP v4, TEE type `0x81` (TDX), FMSPC `00806F050000`                                                     |
-| `report_data`  | 64 zero bytes — a deliberate placeholder. The real key binding is tested separately in `verify::binding`. |
+| `report_data`  | 64 zero bytes — a deliberate placeholder (see below).                                                    |
 | Verifies as    | `UpToDate`, no advisory IDs                                                                              |
-| Reproduced by  | `scripts/capture-on-gcp.sh` then `cargo run --bin fetch-collateral -- <dir>`                              |
+| Reproduced by  | `scripts/capture-on-gcp.sh` then `cargo run --features fetch-collateral --bin fetch-collateral -- <dir>`                              |
 
 `quote.bin` is SHA-256 `3d8c6901f260c0a15305a9cddb6b289ed03c100de211abde80b5ea73490cc50c`.
 
@@ -37,9 +37,39 @@ CRLs and TCB info carry validity windows — this bundle's `nextUpdate` is
 few weeks after capture and CI turns red for a reason that has nothing to do
 with the code. Tests therefore pass `captured-at` as `now_secs`.
 
-**When the opt-in live test fails**, Intel's collateral format or the TCB
-baseline has moved. That is information, not a broken build: recapture with
+The consequence is that this fixture cannot tell you Intel's collateral is
+*currently* valid, only that it was valid and well-formed when taken. A live
+test against today's clock would tell you the other thing, and is **not yet
+written** — when one exists, its failure means Intel's collateral format or the
+TCB baseline has moved. That is information, not a broken build: recapture with
 `scripts/capture-on-gcp.sh` and commit the new fixture.
+
+## The `report_data` placeholder
+
+All 64 bytes are zero. A quote's `report_data` is the field that binds a quote
+to something outside itself — normally a digest of the key being attested — and
+zeroing it here is deliberate: this fixture exists to exercise signature
+checking and TCB evaluation, which do not depend on what is in that field.
+
+**Nothing in this repository yet tests the real key binding.** That is a
+separate claim needing a separate fixture, captured with a real digest in
+`report_data`, and it is forthcoming rather than done. Until then, do not read
+this fixture's verification as evidence that parallax checks bindings — it does
+not, and a zeroed `report_data` is exactly what an unbound quote looks like.
+
+## The PCK chain is in here twice
+
+`collateral.json` carries a `pck_certificate_chain`, and the quote's own
+certification data embeds one too (cert type 5, `PCK_CERT_CHAIN`). They are
+byte-identical — 3677 bytes, same SHA-256. `dcap_qvl` prefers the collateral's
+copy and falls back to the quote's, so for *this* fixture the collateral's copy
+is redundant: strip the field and it still verifies to `UpToDate`.
+
+Recorded because the obvious inference from the code — that the collateral's
+chain is what makes offline verification possible — is false here, and was
+written down as fact in an earlier draft of this repository before being
+tested. A quote whose certification data is some other type would depend on it.
+This one does not.
 
 ## A cross-check on authenticity
 

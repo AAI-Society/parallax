@@ -1,5 +1,11 @@
 /target
 
+# Scratch output from `scripts/capture-on-gcp.sh`. The fixture that counts is
+# committed under tests/fixtures/; anything here is an exploratory re-run, and
+# defaulting the script's output to a spot that is ignored is what keeps such a
+# run from clobbering the tracked fixture.
+/captures
+
 # The compiled paper is committed for convenience, matching ov-poc-standard's
 # convention — the repo should be readable without a LaTeX toolchain.
 # Rebuild with: cd paper && tectonic -Z shell-escape main.tex

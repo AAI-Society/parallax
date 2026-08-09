@@ -17,10 +17,23 @@ path = "src/bin/parallax.rs"
 
 # A one-off tool, not part of the shipped CLI: it is how the test fixture in
 # `tests/fixtures/` was produced, and it is committed so that the fixture can
-# be reproduced rather than merely trusted.
+# be reproduced rather than merely trusted. Behind a feature because it is the
+# only thing here that talks to the network — see `[features]` below.
+#
+#   cargo run --features fetch-collateral --bin fetch-collateral -- <dir>
 [[bin]]
 name = "fetch-collateral"
 path = "src/bin/fetch-collateral.rs"
+required-features = ["fetch-collateral"]
+
+[features]
+default = []
+# Pulls in dcap-qvl's `report` feature (its async PCCS client) and an async
+# runtime to drive it. Off by default, and that default is the point: parallax
+# verifies attestations *offline*, against collateral frozen on disk, and a
+# tool making that argument should not ship a HTTP client and a TLS stack it
+# never calls. Enabling this took Cargo.lock from 78 packages to 354.
+fetch-collateral = ["dep:tokio", "dcap-qvl/report"]
 
 [dependencies]
 ascent = "0.8"
@@ -32,14 +45,24 @@ thiserror = "2"
 anyhow = "1"
 humantime = "2"
 
-# The DCAP quote verifier. Default features carry `report` (the async PCCS
-# collateral client, used only by `fetch-collateral`) and `default-x509`,
-# which is what gates the `verify::verify` entry point everything else uses.
-dcap-qvl = "0.6"
+# The DCAP quote verifier. `default-features = false` plus these four
+# reproduces the crate's default set *minus* `report`, which is what drags in
+# reqwest, rustls, hickory-dns and an async runtime. `default-x509` is the one
+# that gates `verify::verify`, the entry point everything offline uses;
+# `ring` and `rustcrypto` are its crypto backends.
+dcap-qvl = { version = "0.6", default-features = false, features = [
+    "std",
+    "ring",
+    "rustcrypto",
+    "default-x509",
+] }
 # Only `fetch-collateral` needs an async runtime: `CollateralClient::fetch` is
 # the crate's sole async surface. `rt-multi-thread` rather than `rt` because
 # reqwest's connection pool expects to be driven by more than one worker.
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+], optional = true }
 
 # Used only to restore the default SIGPIPE disposition in `src/bin/parallax.rs`
 # before any output is written (see `reset_sigpipe`). Unix-only: Windows has

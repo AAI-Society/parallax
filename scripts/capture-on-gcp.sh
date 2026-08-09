@@ -4,6 +4,13 @@
 #
 #   ./scripts/capture-on-gcp.sh [PROJECT] [ZONE] [OUTDIR]
 #
+# OUTDIR defaults to a fresh timestamped directory under ./captures/, NOT to
+# the committed fixture. Replacing the fixture is a deliberate act — pass
+# tests/fixtures/gcp-c3-tdx explicitly — because an exploratory re-run that
+# silently overwrote tracked files would destroy the very thing the rest of
+# this repository is tested against, and the diff (8000 bytes of binary) is
+# not one anybody reviews closely.
+#
 # Requires gcloud, authenticated, with billing enabled. Creates one c3 instance
 # with --confidential-compute-type=TDX and DELETES IT at the end, including on
 # failure and on interrupt. Cost is a few tens of cents.
@@ -18,9 +25,10 @@ set -euo pipefail
 
 PROJECT="${1:-$(gcloud config get-value project 2>/dev/null)}"
 ZONE="${2:-us-central1-a}"
-OUT="${3:-$(cd "$(dirname "$0")/.." && pwd)/tests/fixtures/gcp-c3-tdx}"
-VM="parallax-tdx-$$"
 HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
+OUT="${3:-$ROOT/captures/$(date -u +%Y%m%dT%H%M%SZ)}"
+VM="parallax-tdx-$$"
 
 if [ -z "$PROJECT" ]; then
   echo "capture-on-gcp.sh: no project. Pass one, or set a default with" >&2
@@ -31,17 +39,46 @@ fi
 # An unattended confidential VM bills by the hour. The trap covers the normal
 # exit, every `set -e` abort, and Ctrl-C — INT and TERM are listed explicitly
 # because bash does not run an EXIT trap for a signal that has no handler.
+#
+# `deleted` latches only on *confirmed* deletion. An earlier version set it
+# unconditionally right after a `|| true` delete, which was the worst of both
+# worlds: a delete that failed was silent, and setting the flag anyway stopped
+# the EXIT trap from ever retrying. A Ctrl-C would then print "==> deleting",
+# swallow the error, verify nothing, and leave a confidential VM running.
+#
+# The confirmation lives inside cleanup() for the same reason — so it runs on
+# the abort and interrupt paths, which are precisely the paths where a leak is
+# both most likely and least likely to be noticed.
 deleted=no
 cleanup() {
-  if [ "$deleted" = no ]; then
-    echo
-    echo "==> deleting $VM"
-    gcloud compute instances delete "$VM" --zone="$ZONE" --project="$PROJECT" \
-      --quiet 2>/dev/null || true
-    deleted=yes
+  [ "$deleted" = yes ] && return 0
+  echo
+  echo "==> deleting $VM"
+  # stderr is deliberately not discarded: if this fails, the reason is the
+  # single most useful thing on the terminal.
+  if gcloud compute instances delete "$VM" --zone="$ZONE" --project="$PROJECT" \
+       --quiet; then
+    :
+  else
+    echo "capture-on-gcp.sh: delete of $VM returned $?" >&2
   fi
+
+  # Trust the describe, not the delete's exit status.
+  if gcloud compute instances describe "$VM" --zone="$ZONE" \
+       --project="$PROJECT" --quiet >/dev/null 2>&1; then
+    echo >&2
+    echo "capture-on-gcp.sh: *** $VM STILL EXISTS AND IS BILLING ***" >&2
+    echo "  Delete it by hand:" >&2
+    echo "  gcloud compute instances delete $VM --zone=$ZONE --project=$PROJECT" >&2
+    return 1
+  fi
+  deleted=yes
+  echo "$VM is gone"
+  return 0
 }
-trap cleanup EXIT
+# `|| true` on the EXIT trap only: a cleanup failure must not mask the exit
+# status of whatever actually went wrong, and it has already shouted.
+trap 'cleanup || true' EXIT
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
 
@@ -87,16 +124,11 @@ gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT" --quiet \
              dmesg 2>/dev/null | grep -i -m3 tdx || sudo dmesg | grep -i -m3 tdx || true' \
   > "$OUT/capture-host.txt" 2>/dev/null || true
 
+# Delete now rather than waiting for the EXIT trap, so the VM's life is as
+# short as the capture and not as long as the script. cleanup() is idempotent
+# and confirms deletion itself, so the trap firing again is a no-op.
 cleanup
-echo
-echo "==> confirming deletion"
-if gcloud compute instances describe "$VM" --zone="$ZONE" --project="$PROJECT" \
-     --quiet >/dev/null 2>&1; then
-  echo "capture-on-gcp.sh: $VM STILL EXISTS. Delete it by hand:" >&2
-  echo "  gcloud compute instances delete $VM --zone=$ZONE --project=$PROJECT" >&2
-  exit 1
-fi
-echo "$VM is gone"
 
 echo
-echo "==> next: cargo run --bin fetch-collateral -- $OUT"
+echo "==> quote is in $OUT"
+echo "==> next: cargo run --features fetch-collateral --bin fetch-collateral -- $OUT"

@@ -41,11 +41,15 @@ fn pccs_url() -> String {
 /// See `tests/fixtures/gcp-c3-tdx/PROVENANCE.md`.
 fn captured_at_secs(dir: &Path) -> Result<u64> {
     let path = dir.join("captured-at");
-    let raw = std::fs::read_to_string(&path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let raw =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let trimmed = raw.trim();
-    let t = humantime::parse_rfc3339(trimmed)
-        .with_context(|| format!("{} is not an RFC 3339 timestamp: {trimmed:?}", path.display()))?;
+    let t = humantime::parse_rfc3339(trimmed).with_context(|| {
+        format!(
+            "{} is not an RFC 3339 timestamp: {trimmed:?}",
+            path.display()
+        )
+    })?;
     let secs = t
         .duration_since(std::time::UNIX_EPOCH)
         .context("capture timestamp predates the Unix epoch")?
@@ -73,11 +77,27 @@ async fn main() -> Result<()> {
     println!("pccs:  {url}");
 
     // `fetch` — not the plan's guessed `get_collateral_for_fmspc_from_quote`,
-    // which does not exist in dcap-qvl 0.6. `fetch` is the one that also
-    // attaches the PCK certificate chain to the returned collateral, which is
-    // exactly what makes the bundle self-contained enough to verify offline;
-    // the sibling `fetch_for_fmspc_without_pck_chain` deliberately leaves that
-    // field `None` and its output cannot verify a quote on its own.
+    // which does not exist in dcap-qvl 0.6.
+    //
+    // An earlier version of this comment claimed the sibling
+    // `fetch_for_fmspc_without_pck_chain` would yield a bundle that cannot
+    // verify offline, because it leaves `pck_certificate_chain` as `None`.
+    // That is **wrong**, and worth correcting here rather than quietly, since
+    // it is the kind of claim a later reader would reasonably act on.
+    // `verify_pck_cert_chain` prefers the collateral's chain but falls back to
+    // the chain embedded in the quote whenever the certification data is
+    // `PCK_CERT_CHAIN` (cert type 5). Our quote is type 5, and the two chains
+    // are byte-identical, so stripping `pck_certificate_chain` from
+    // `collateral.json` still verifies to `UpToDate`. The crate's own doc says
+    // "insufficient to verify a quote *whose certification data doesn't embed
+    // the PCK chain*" — the clause that does the work.
+    //
+    // `fetch` is still the right call, for the reasons that actually hold: it
+    // derives the FMSPC and CA type from the PCK leaf rather than making the
+    // caller supply them, and it keeps working for certification data that is
+    // not type 5, where the embedded-chain fallback has nothing to fall back
+    // to. That is robustness against a future capture, not a property of this
+    // one.
     let collateral = dcap_qvl::collateral::CollateralClient::with_default_http(&url)
         .context("building the PCCS client")?
         .fetch(&quote)
@@ -93,7 +113,10 @@ async fn main() -> Result<()> {
     let out = dir.join("collateral.json");
     std::fs::write(&out, &json).with_context(|| format!("writing {}", out.display()))?;
 
-    println!("verified at {now_secs} (capture time): status {}", report.status);
+    println!(
+        "verified at {now_secs} (capture time): status {}",
+        report.status
+    );
     if report.advisory_ids.is_empty() {
         println!("advisories: none");
     } else {

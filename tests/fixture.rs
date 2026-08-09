@@ -62,13 +62,60 @@ fn committed_fixture_verifies_at_its_capture_time() {
     );
 }
 
+/// The quote occupies 4935 of the file's 8000 bytes; the rest is zero padding.
+///
+/// This is the test the padding was kept for. `PROVENANCE.md` argues the
+/// trailing bytes should stay because configfs-tsm zero-pads `outblob` to a
+/// fixed buffer and any parser this repository ships will meet that on its
+/// first real call — but keeping them and never asserting on them would leave
+/// the argument unbacked, and a future "tidy up the fixture" commit would trim
+/// them with nothing to object.
+///
+/// The 4935 is derived, not hardcoded twice: it is read out of the quote's own
+/// `auth_data_size` and then checked against the constant. A parser that gets
+/// the length arithmetic wrong fails here rather than in the field.
+#[test]
+fn fixture_is_a_4935_byte_quote_zero_padded_to_8000() {
+    let quote = std::fs::read(fixture_dir().join("quote.bin")).expect("missing quote.bin");
+    assert_eq!(quote.len(), 8000, "outblob buffer size changed");
+
+    // 48-byte DCAP header, 584-byte TD report body, then a 4-byte little-endian
+    // length prefix for the signature material that follows.
+    const AUTH_SIZE_OFFSET: usize = 48 + 584;
+    let raw = quote
+        .get(AUTH_SIZE_OFFSET..AUTH_SIZE_OFFSET + 4)
+        .expect("quote is too short to hold an auth_data_size");
+    let auth_data_size = u32::from_le_bytes(raw.try_into().expect("4 bytes")) as usize;
+    assert_eq!(auth_data_size, 4299, "auth_data_size changed");
+
+    let quote_len = AUTH_SIZE_OFFSET + 4 + auth_data_size;
+    assert_eq!(
+        quote_len, 4935,
+        "derived quote length disagrees with PROVENANCE.md"
+    );
+    assert!(
+        quote_len <= quote.len(),
+        "quote claims to be longer than its file"
+    );
+
+    let padding = quote.get(quote_len..).expect("bounds just checked");
+    assert_eq!(padding.len(), 3065, "padding length changed");
+    assert!(
+        padding.iter().all(|&b| b == 0),
+        "the tail after byte {quote_len} is not all zero, so it is not padding \
+         and something about this fixture is not what PROVENANCE.md describes"
+    );
+}
+
 /// The report_data is 64 zero bytes, as `PROVENANCE.md` says it is.
 ///
 /// Worth asserting because the capture script could plausibly have written 64
 /// ASCII `'0'` characters instead — an earlier draft of it did — and the
-/// difference is invisible in a hex dump unless you are looking for it. Task 4
-/// tests the real key binding; this only pins down what the placeholder is, so
-/// that a test which one day expects zeroes is not quietly reading `0x30`s.
+/// difference is invisible in a hex dump unless you are looking for it.
+///
+/// This pins down what the placeholder *is*; it is not a binding test. Testing
+/// the real key binding needs a fixture captured with a genuine digest in
+/// `report_data`, which does not exist here yet.
 #[test]
 fn fixture_report_data_is_the_documented_placeholder() {
     let quote = std::fs::read(fixture_dir().join("quote.bin")).expect("missing quote.bin");
