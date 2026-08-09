@@ -3,12 +3,37 @@
 Where this tool touches [**AAI-Society/ov-poc-standard**](https://github.com/AAI-Society/ov-poc-standard),
 what it supports, and what it contradicts.
 
-Requirement IDs below link into `0.1/en/`. Three of these are **corrections**:
-parallax computes something the standard currently asserts, and the computed
-answer disagrees. A fourth entry is a **finding** rather than a correction: the
-requirement it concerns already exists, in C6 and C1, and what is missing is
-the link from there into the tier an operator claims (C8) and the disclosure a
-relying party reads (C10.2). It is a seam between domains, not an omission.
+Requirement IDs below link into `0.1/en/`.
+
+> **This document previously filed three corrections. One survives, one has been
+> narrowed to a finding, and one is withdrawn.** A final review checked each
+> against the text, and two of them were arguing with the standard for saying
+> something it does not say. What replaced them is smaller and, in one case,
+> stronger. The failed versions are kept below rather than deleted, because a
+> document whose whole subject is confident claims that do not survive checking
+> should not quietly delete its own.
+
+- **One correction.** C8's framing prose grades evidence on a scale;
+  parallax computes two deployments that are not on one. See
+  [correction 1](#1-the-grading-metaphor-assumes-an-order-that-may-not-exist).
+- **Three findings**, where the requirement exists and something around it does
+  not line up: [C8's Tier 3 table row against C8.1's own
+  requirements](#finding-tier-3s-table-row-contradicts-the-requirements-under-it),
+  the [reference-value seam](#a-finding-the-reference-value-seam) between C6/C1
+  and C8/C10.2, and [what the live route structurally cannot
+  supply](#finding-the-live-route-cannot-satisfy-c1021s-named-subject) for
+  C10.2.1.
+- **One withdrawal**: ["Narrowest trust base"](#withdrawn-narrowest-trust-base).
+
+One thing bearing on all of it: **C8 carries a `[DRAFT] — actively in progress`
+banner** ([`0x10-C08`
+line 7](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C08-Verifiability-Tiers.md)),
+and every earlier version of this document argued against C8's table as settled
+text without ever mentioning it. Two of the three corrections were aimed at that
+chapter. A finding against a chapter that says it is being worked on is worth
+filing — the working group is the audience — but it is not the same act as
+finding an error in a ratified requirement, and this document was not
+distinguishing them.
 
 ---
 
@@ -16,38 +41,146 @@ relying party reads (C10.2). It is a seam between domains, not an omission.
 
 | Standard | What it says today | What parallax does | |
 | :-- | :-- | :-- | :-- |
-| [**C8** Tier 3 definition](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C08-Verifiability-Tiers.md) | *"The trusted party is removed"* | Computes **five** remaining parties for an Intel TDX deployment, four of them undetectable | ⚠️ **contradicts** |
-| [**C8.1** Tier Placement](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C08-Verifiability-Tiers.md#c81-tier-placement) | Deployments sit on an ordered four-rung ladder | Two deployments' trust sets can be **incomparable**; all four candidate orderings fail | ⚠️ **contradicts** |
+| [**C8** Four Tiers table, Tier 3](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C08-Verifiability-Tiers.md) | *"The trusted party is removed"* | **Not refuted by parallax**, and not aimed at TDX: C8.1 places a vendor-rooted attestation at Tier 2 (`:36`, C8.1.3). But C8.1.7 admits one *to* Tier 3, when anchored, *"with the vendor trust assumption on the disclosure in both cases"* — so a party survives on the standard's own Tier 3 route, and the table row denies it. The table cell is loose against the requirements under it | 🔎 **finding** (internal) |
+| [**C8** framing prose](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C08-Verifiability-Tiers.md) | *"Grade every piece of evidence by how independently it can be verified — that is, how much you must trust"*; *"a four-tier scale"* | Two deployments' trust sets can be **incomparable**; all four candidate orderings fail. *"How much you must trust"* is not a scalar. C8.1's **requirements** survive this — they are threshold predicates over one claim, never pairwise comparisons | ⚠️ **contradicts** (the framing, not the placement rules) |
 | [**C10.2** Trust-Assumption Disclosure](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure) | *`[WG-INPUT NEEDED]` — the standardized disclosure format itself is not yet defined* | Emits a machine-readable disclosure, **generated rather than written** | ✅ **proposes a format** |
 | [**C10.2.1**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure) | Each residual trust assumption, *"matched one-to-one against the mechanisms in the claim register"* | `introduced_by` carries the exact mechanism that produced each assumption — the one-to-one match is computed, not asserted | ✅ **implements** (described deployments) |
-| [**C10.2.1**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure), live | The same requirement, for a deployment that is running rather than described | `parallax-proxy` emits a Residual Trust Manifest **per connection**, derived from the attestation it just verified — a per-connection disclosure that would satisfy 10.2.1's reconciliation for the connection it is actually about. (C10.2.1 asks for a disclosure, not a per-connection one; the continuous-operation evidence lives in C10.3) | ✅ **implements** (live) |
+| [**C10.2.1**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure), live | The same requirement, for a deployment that is running rather than described — each assumption listed *"with the assumption's subject (named vendor, hardware element, mathematical assumption, or ceremony)"* | `parallax-proxy` emits a manifest **per connection**, derived from the attestation it just verified. But **two of the five core subjects are placeholders naming nobody** — `urn:host:unattributed` and `urn:reference-values:configured` — and the evidence structurally cannot supply either. See [below](#finding-the-live-route-cannot-satisfy-c1021s-named-subject) | ⚠️ **partial** (live) |
 | [**C10.2.2**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure) | Assumptions tagged with categories so disclosures are *"machine-comparable"* | `failure_impact` is that tag — and `parallax compare` is the machine comparison | ✅ **implements** |
-| [**C10.2** worked example](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure) | A ZK-STARK deployment has the *"Narrowest trust base"* | The TDX and ZK trust sets are **disjoint** — neither is narrower | ⚠️ **contradicts** |
+| [**C10.2** worked example, row 2](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure) | A *"ZK-STARK … with transparent setup"* deployment has the *"Narrowest trust base"* | **Withdrawn.** parallax compared it against `examples/sigma4-zk.toml`, which is a *ceremony*-based Groth16 design — the standard's **row 3**, whose risk cell already says *"moderate residual risk from ceremony integrity"*. No shipped example models a transparent-setup STARK, so the claim was never run against the cell it quoted | ⌫ **withdrawn** |
 | [**C10.3.3**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c103-continuously-monitored-operation) | *"an automated validator checks each evidence record against its claimed Tier's requirements **within the defined validation window**, and that **validator results are themselves logged**"* | `parallax check` offline and `parallax-proxy` in line are both that validator — and the proxy's window is the connection itself. But it evaluates against a **local policy**, not a "claimed Tier", deliberately; and the result log is stdout, not a durable store. See [below](#c1033-the-validator-now-exists-in-both-places) | ✅ **implements, partially** |
 | [**C7.2.4**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C07-Evidence-Generation-and-Properties.md#c72-the-contemporaneous-property) | The attestation must cryptographically bind the evidence signing key: *"the key's digest appears in the attested report body (TDX `REPORTDATA`…)"* | `check_binding` is exactly this check, and the proxy runs it on every connection between verifying the quote and deriving the trust set. The committed fixture's 64 zero bytes of `report_data` is a **C7.2.4 failure**, and the check refuses it | ✅ **implements** |
-| [**C8**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C08-Verifiability-Tiers.md) / [**C10.2**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure) vs [**C6.2.2**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C06-Security.md#c62-isolation-and-confidential-execution) and [**C1.3.2**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C01-Provenance.md#c13-compute-substrate-provenance) | C6 and C1 require attestation to be validated *"against published reference values"*. C8's tier table and C10.2's disclosure schema never mention reference values, and have no subject or category for whoever publishes them | The reference-value provider is in the computed trust set — undetectable — whether or not the disclosure schema has a slot for it. A disclosure can pass 10.2.1's one-to-one reconciliation without naming it. See [below](#a-fourth-finding-the-reference-value-seam) | 🔎 **finding** |
+| [**C8**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C08-Verifiability-Tiers.md) / [**C10.2**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure) vs [**C6.2.2**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C06-Security.md#c62-isolation-and-confidential-execution) and [**C1.3.2**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C01-Provenance.md#c13-compute-substrate-provenance) | C6 and C1 require attestation to be validated *"against published reference values"*. C8's tier table and C10.2's disclosure schema never mention reference values, and have no subject or category for whoever publishes them | The reference-value provider is in the computed trust set — undetectable — whether or not the disclosure schema has a slot for it. A disclosure can pass 10.2.1's one-to-one reconciliation without naming it. See [below](#a-finding-the-reference-value-seam) | 🔎 **finding** |
 | [**C10.3.4**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c103-continuously-monitored-operation) | Failures raise alerts *"within the bounded window defined in the claim"* | Detection latency is a first-class computed value, per assumption and composed | ✅ **supplies the bound** |
 | [**C7.4** The Transparent Property](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C07-Evidence-Generation-and-Properties.md#c74-the-transparent-property) | C10.2 *"operationalizes"* it | The manifest is the operationalization | ✅ **implements** |
 | [**C7.3** Tamper-Evident](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C07-Evidence-Generation-and-Properties.md#c73-the-tamper-evident-property) | Anchoring makes a log tamper-evident | Anchoring converts log-operator trust into a bounded window **and ingests a settlement-layer assumption** | ⚡ **refines** |
 
 ---
 
-## The three corrections, in detail
+## The correction
 
-### 1. Tier 3 does not remove the trusted party
+### 1. The grading metaphor assumes an order that may not exist
 
-The Four Tiers table's *What makes it this tier* row gives Tier 3 as *"The
-trusted party is removed"*, and its *Who you must trust* row gives *"The
-cryptographic mechanism (mathematical or distributed assumptions)"*.
+C8's control objective opens: *"Grade every piece of evidence by how
+independently it can be verified — that is, how much you must trust to believe
+it — and draw the yes-or-no line that makes the category procurable.
+Verifiability is a four-tier scale, not a spectrum and not a maturity model."*
+([`0x10-C08` line 5](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C08-Verifiability-Tiers.md).)
 
-Both are cell contents, quoted whole. An earlier version of this paragraph
-rendered the second as *"Who you must trust: the cryptographic mechanism"* — a
-string that appears nowhere in the standard, welding a row label to a truncated
-cell. The dropped parenthetical is not decorative: *"mathematical or
-distributed assumptions"* is the strongest form of the claim this section
-contradicts, so silently cutting it made the target easier than it is.
+*Grade … by how much you must trust* presumes that "how much you must trust" is
+a quantity — that for any two deployments, one is at least as trust-independent
+as the other. It is not.
 
-Run the tool on a TDX deployment and the answer is five parties, not zero:
+```console
+$ parallax compare examples/sigma2-tdx.toml examples/sigma4-zk.toml
+Incomparable
+```
+
+The two trust sets are disjoint: each contains something the other does not.
+We tested the four orderings we could think of. All four fail — set size ranks
+a plain software host *above* a hardware TEE, set inclusion ranks nothing,
+detection latency scores every deployment `never`, and collusion cost is a fact
+about the adversary rather than the system. `results/tier-orderings.txt` is the
+generated table.
+
+**What this does *not* touch, and an earlier version of this section wrongly
+claimed it did: C8.1's requirements.** They are threshold predicates over a
+single claim, never pairwise comparisons. C8.1.2 asks whether *"any single
+trusted party"* is present — *"any single trusted party caps the claim at Tier
+2"*. C8.1.3 asks whether the trust analysis *"names a single trusted party"*.
+Neither ever compares two deployments to each other, so an incomparability
+result cannot contradict them, and the earlier claim that "C8.1 places a
+deployment on a rung, [which] presumes the rungs are ordered" was reading a
+comparison into a predicate. The placement rules are sound as written.
+
+What the result contradicts is the **metaphor the chapter is built on**: a
+scale, a grade, a ladder, *how much* you must trust. Those words are doing
+argumentative work in procurement conversations that the underlying predicates
+do not support, and the gap between them is where a buyer concludes that a
+Tier 3 claim is *more verifiable* than a Tier 2 one in a sense that ranks two
+Tier 3 claims against each other too.
+
+> **Suggested revision.** Keep the threshold. Drop the scale. The tiers are a
+> *classification* by what kind of party remains, not a measurement of how much
+> trust is left; two claims in one tier are not thereby comparable, and the
+> chapter's own requirements already behave that way. A conformance claim
+> publishes its **trust manifest**; a relying party evaluates it against local
+> policy. The tier becomes a summary of the manifest rather than a rank.
+
+---
+
+## Finding: Tier 3's table row contradicts the requirements under it
+
+### What this document used to claim, and why it was wrong
+
+The earlier version of this section quoted the Four Tiers table — Tier 3 as
+*"The trusted party is removed"*, under *Who you must trust* as *"The
+cryptographic mechanism (mathematical or distributed assumptions)"* — and
+refuted it by computing five parties for `examples/sigma2-tdx.toml`.
+
+**The standard never places that deployment at Tier 3.** C8.1's opening
+sentence lists, verbatim, as examples of cryptography that *"still sits at Tier
+2"*: *"an operator publishing a hash of its own data; a system signing its own
+logs; traditional PKI rooted in a CA; a permissioned blockchain; a ZK proof
+with a single-party trusted setup; **a TEE attestation rooted in the chip
+vendor's service**; a centralized Merkle tree"*
+([`0x10-C08:36`](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C08-Verifiability-Tiers.md#c81-tier-placement)).
+C8.1.3 makes it a requirement: claims whose trust analysis names a single
+trusted party — *"vendor-rooted attestations"* among them — *"are registered at
+Tier 2 or below"*. `examples/sigma2-tdx.toml` is a bare `tee_attestation` with
+no anchoring. Computing that it rests on five parties **agrees** with the
+standard; it does not refute it.
+
+The suggested revision was worse. It proposed adding *"plus the parties named in
+the deployment's trust disclosure (C10.2)"* to the Tier 3 cell — which the
+standard already requires, in three places the document did not cite:
+
+- **C8.1.2** (Level 1) — *"each claim's register entry includes a written trust
+  analysis naming every party that must be trusted for the evidence to hold
+  (operator, signer, CA, chip vendor, ceremony participants)"*.
+- **C8.1.7** (Level 3) — *"with the vendor trust assumption on the disclosure in
+  both cases"*.
+- **C7.4.1** (Level 1) — the disclosure *"lists, for each evidence mechanism in
+  use, every party, hardware element, and mathematical assumption that must hold
+  for the evidence to be believed"*.
+
+### What survives, and it is internal to C8
+
+C8.1.7 is the one route by which vendor-rooted attestation reaches Tier 3:
+
+> **8.1.7** — **Verify that** claims resting on a vendor-rooted attestation
+> service are either registered at Tier 2, or composed with independent
+> anchoring (e.g., attestation reports committed to a public transparency log
+> with independent monitors) before being registered at Tier 3 — **with the
+> vendor trust assumption on the disclosure in both cases**.
+
+That last clause is the finding. The standard's own Tier 3 route for this class
+of evidence **concedes that a named vendor party survives the promotion**, and
+requires it to be disclosed. The table row two screens above says *"The trusted
+party is removed"*, and gives *Who you must trust* for Tier 3 as *"The
+cryptographic mechanism (mathematical or distributed assumptions)"* — full
+stop, no parties. Both cannot be read literally.
+
+The requirement is right and the table cell is loose. That is a smaller finding
+than "the tier is wrong", and it is one the working group can act on with a
+one-cell edit, which the failed correction was not.
+
+Two things bearing on how it should be read:
+
+- **C8 is marked draft.** The `[DRAFT] — actively in progress` banner sits at
+  [`0x10-C08:7`](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C08-Verifiability-Tiers.md),
+  immediately under the control objective this document has been quoting since
+  its first version, and no version of this document mentioned it.
+- **The table's source rows are misaligned.** Lines 18–24: the header row has
+  four cells, the delimiter and every body row have five. The body rows carry a
+  leading row-label column the header does not, so as written the Tier labels
+  sit one column left of the data they name. Anyone reproducing that table
+  should read the cells positionally rather than by header.
+
+### What parallax actually contributes here
+
+Not a refutation of the tier. The **content** of the disclosure C8.1.2 and
+C7.4.1 demand, computed rather than written:
 
 ```console
 $ parallax solve examples/sigma2-tdx.toml
@@ -59,69 +192,119 @@ did:web:rvp.example.org     golden_value_correctness           never     Soundne
 urn:qe:tdx                  quote_signing_honesty              never     Soundness
 ```
 
-Four of the five have **no detection mechanism at all**. The attestation still
-verifies cryptographically if any of them is dishonest, and nothing in the
-system contradicts it.
+Five parties, and **four with no detection mechanism at all** — the attestation
+still verifies cryptographically if any of them is dishonest, and nothing in the
+system contradicts it. Neither C8.1.2 nor C7.4.1 asks for that fourth column,
+and it is the one that changes what a reader does about the list.
 
-The standard is right that something changes at the Tier 2/3 boundary. What
-changes is **public verifiability** — anyone may check, without privileged
-access. That is real and valuable. It is not the same as **trust
-independence**, and the Tier 3 row currently claims the second.
+### What is not run
 
-> **Suggested revision.** Keep the tier, change one cell. The *Who you must
-> trust* row currently reads, for Tier 3, *"The cryptographic mechanism
-> (mathematical or distributed assumptions)"*. Proposed: **"The cryptographic
-> mechanism (mathematical or distributed assumptions), plus the parties named
-> in the deployment's trust disclosure (C10.2)."** The parenthetical stays; it
-> is accurate about the *kind* of assumption. What it does not say, and what
-> the addition supplies, is that a mechanism-generated attestation still rests
-> on parties — five of them here — and that the disclosure is where they are
-> named.
-
-### 2. Tier placement assumes an order that may not exist
-
-C8.1 places a deployment on a rung. That presumes the rungs are ordered — that
-for any two deployments, one is at least as verifiable as the other.
-
-```console
-$ parallax compare examples/sigma2-tdx.toml examples/sigma4-zk.toml
-Incomparable
-```
-
-The two trust sets are disjoint: each contains something the other does not.
-We tested the four orderings we could think of. All four fail — set size ranks
-a plain software host *above* a hardware TEE, set inclusion ranks nothing,
-detection latency scores every deployment `never`, and collusion cost is a fact
-about the adversary rather than the system.
-
-> **Suggested revision.** A conformance claim publishes its **trust manifest**;
-> a relying party evaluates it against local policy. The tier becomes a summary
-> of the manifest rather than the claim itself.
-
-### 3. "Narrowest trust base" is doing work the trust sets do not support
-
-C10.2's worked example compares three conformant deployments and gives the
-ZK-STARK one's risk as *"Narrowest trust base, mathematical assumptions only;
-higher compute cost, no single-entity dependency."*
-
-(An earlier version of this quotation dropped *"higher compute cost,"* from the
-middle without an ellipsis. It does not bear on the argument — which is about
-the word *narrowest* — but a silent cut inside quotation marks is a silent cut,
-and the whole cell is no longer than the abridged one.)
-
-parallax finds that the TDX and ZK trust sets are **disjoint**, so neither is
-narrower. The ZK deployment trades named vendors for a ceremony, a circuit
-compiler, and an auditor — different parties, not fewer, and all four
-undetectable. The example's *risk* column is defensible; the word *narrowest*
-implies an ordering the sets do not admit.
-
-> **Suggested revision.** Replace "narrowest" with the disjointness: the ZK
-> deployment's assumptions are *different in kind*, which is what makes the two
-> incomparable rather than rankable.
+**No shipped example models the C8.1.7 Tier 3 route** — a vendor-rooted
+attestation composed with independent anchoring. `examples/sigma5-hybrid.toml`
+composes TDX with a ZK proof, not with anchoring, and the two examples that
+carry an `anchoring` mechanism (`sigma3-quorum`, `sigma4-zk`) are not
+vendor-rooted. So the sentence a reader might want next — *here is the party
+count for a deployment the standard does place at Tier 3* — is not one this
+repository can produce today. Writing it without the example would be the same
+mistake as the withdrawn correction below.
 
 ---
 
-## A fourth finding: the reference-value seam
+## Withdrawn: "Narrowest trust base"
+
+**This correction is withdrawn. It compared the wrong two things.**
+
+The claim was that C10.2's worked example gives a ZK-STARK deployment the
+*"Narrowest trust base"*, and that parallax refutes this because the TDX and ZK
+trust sets are disjoint, so neither is narrower. The evidence offered was
+`parallax compare examples/sigma2-tdx.toml examples/sigma4-zk.toml`.
+
+The cell belongs to **row 2** of that table:
+
+> | Cross-border payment agent | ZK-STARK proofs with **transparent setup**. Trusts collision-resistant hash functions only; no hardware dependency. | **Narrowest trust base**, mathematical assumptions only; higher compute cost, no single-entity dependency. |
+
+`examples/sigma4-zk.toml` is not that deployment. It declares a
+`TrustedSetupCeremony`, a `CircuitCompiler`, a `ConstraintAuditor` and an
+`anchoring` mechanism with a log operator and a settlement layer. That is
+**row 3**:
+
+> | Supply-chain verification agent | **Groth16** ZK proofs with a **multi-party ceremony**. Trusts that at least 1 of 47 ceremony participants was honest, and the BN254 curve. | Ceremony trust distributed; well-studied assumptions; **moderate residual risk from ceremony integrity**. |
+
+The standard does not call that one narrowest. It says the opposite of what the
+correction accused it of: it already books the ceremony as residual risk. The
+correction's own prose two lines later described `sigma4-zk`'s parties
+accurately — *"a ceremony, a circuit compiler, and an auditor"* — and did not
+notice that this is a description of the row it was not arguing with.
+
+**No shipped example models a transparent-setup STARK**, so the claim was never
+run against the cell it quoted. It is withdrawn rather than weakened: a version
+that said "the sets are different in kind" would be a true sentence about two
+deployments neither of which is the standard's row 2, which is not a finding
+about the standard at all.
+
+What would make it a real finding is an example: a transparent-setup STARK
+deployment, solved, showing whether *"collision-resistant hash functions only"*
+survives contact with a circuit compiler and a constraint system. That is
+unwritten work, and it is listed here as unwritten rather than asserted.
+
+---
+
+## Finding: the live route cannot satisfy C10.2.1's named subject
+
+C10.2.1 (Level 1) requires the disclosure list each residual trust assumption
+*"with the assumption's subject (named vendor, hardware element, mathematical
+assumption, or ceremony) — matched one-to-one against the mechanisms in the
+claim register"*.
+
+For a **described** deployment parallax satisfies this: the operator writes the
+principals, and `introduced_by` computes the one-to-one match against the
+mechanism that produced each assumption. That row stays ✅.
+
+For the **live** route — a trust set derived from an attestation the proxy just
+verified — two of the five core subjects are placeholders that name nobody:
+
+| Subject emitted | Assumption | Why nobody can be named |
+| :-- | :-- | :-- |
+| `urn:host:unattributed` | `measurement_injection_resistance` | **A TDX quote does not say which machine it came from.** The party is real and load-bearing — the host extends the RTMRs with what it loads, and nothing in a quote distinguishes a firmware measurement the host executed from one it merely wrote — but no field of the evidence identifies it. `derive` uses one principal for every platform-side assumption rather than inventing hostnames. |
+| `urn:reference-values:configured` | `golden_value_correctness` | Whoever chose the accepted MRTDs. That is a property of the **verifier's own configuration**, not of the evidence: `DeriveConfig::reference_values` is a list of 48-byte values with no author attached. Nothing in the quote, the collateral or the configuration file names the party who picked them. |
+
+The three that *are* named — `did:web:intel.com`, the collateral authority, and
+`urn:qe:tdx` — are named because the evidence names them: the root the chain
+validated to, the host the collateral was fetched from, and the QE whose
+identity was matched against QEIdentity.
+
+**This is a stronger finding than the tick it replaces.** It is not that
+parallax has not got round to naming them. It is that *the live-attestation
+route structurally cannot satisfy a Level 1 requirement*, for two of five
+subjects, on the deployment class the standard's own worked example puts first.
+An operator who runs a real verifier and produces a real disclosure will have
+two lines reading `urn:host:unattributed` and `urn:reference-values:configured`,
+and a C10.2.1 audit has to decide whether that is a finding or the truth.
+
+The honest reading is that it is both: the subjects are genuinely unavailable
+from the evidence, so the disclosure is as complete as evidence allows, and
+C10.2.1 as written has no way to say so. A placeholder that an auditor can
+recognise as *"this subject is not derivable from the evidence"* is different
+from an omission and different from a name, and the requirement admits only the
+last two.
+
+> **Suggested revision.** Let C10.2.1 accept a **declared-unattributable
+> subject** — a subject the disclosure asserts cannot be identified from the
+> evidence, with the reason — distinguishable in an audit from both a named
+> party and a missing line. Otherwise every measurement-based live disclosure is
+> either a finding or a fiction, and the incentive runs towards the fiction: an
+> operator can always write their own cloud provider's name in the box, and
+> nothing in the evidence would contradict them.
+
+Note that the *second* row here is the same party as the [reference-value
+seam](#a-finding-the-reference-value-seam) below, arriving from the other
+direction. There the problem is that C10.2.1's category list has no slot for a
+reference-value publisher; here it is that even with a slot, the live route
+could not fill it.
+
+---
+
+## A finding: the reference-value seam
 
 **The standard already requires reference-value comparison. It requires it in
 C6 and C1, and does not carry it into C8's tier definition or C10.2's
@@ -289,7 +472,7 @@ ship one.
 > `DecisionRecord` and
 > `the_log_separates_an_allow_from_the_two_refusals_that_carry_a_manifest`
 > are the code and the test. The claim is recorded here rather than quietly
-> edited out, for the same reason the fourth finding's earlier error is.
+> edited out, for the same reason the reference-value seam's earlier error is.
 
 Three qualifications, so that "implemented" is not read as more than it is:
 
@@ -366,7 +549,7 @@ or [C9 System Surface](https://github.com/AAI-Society/ov-poc-standard/blob/maste
 and [C6 Security](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C06-Security.md)
 are cited but not mapped**, and the distinction is worth stating rather than
 leaving as an inconsistency. C1.3.2, C6.1.3 and C6.2.2 are load-bearing for the
-fourth finding above — they are the requirements that already say what C8 and
+reference-value seam above — they are the requirements that already say what C8 and
 C10.2 do not — but parallax implements no part of either domain. It does not
 maintain a golden-value register, does not alert on a mismatch, and does not
 record a control-to-evidence mapping. It consumes a reference value the
@@ -380,12 +563,15 @@ accountable but unlinkable identity).
 
 And the standing caveat, in two halves.
 
-The three corrections rest on **five deployments we wrote ourselves**. Nothing
-there has been run against somebody else's production system. A correction
-derived from our own examples is a hypothesis about the standard, not a proof
-about the world.
+The one surviving correction rests on **five deployments we wrote ourselves**.
+Nothing there has been run against somebody else's production system. A
+correction derived from our own examples is a hypothesis about the standard, not
+a proof about the world. Two of the three corrections this document used to
+carry did not survive being checked against the text — see the note at the top —
+which is a second, sharper form of the same caveat: the examples were sound and
+the reading of the standard was not.
 
-The fourth finding and the C10.3.3 claim rest on **one real quote**: a single
+The reference-value seam and the C10.3.3 claim rest on **one real quote**: a single
 capture from a single GCP `c3-standard-4`, one platform configuration (FMSPC
 `00806F050000`), with the Intel collateral current at capture and a pinned
 verification clock. That is enough to establish that the gap is reachable with

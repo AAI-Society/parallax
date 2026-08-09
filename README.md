@@ -4,7 +4,7 @@
 
 <p align="center">
   <img alt="Rust 2021" src="https://img.shields.io/badge/rust-2021%20%C2%B7%201.90%2B-CFFF04?style=flat-square&labelColor=0A0A0A">
-  <img alt="331 tests by default, 360 with fetch-collateral" src="https://img.shields.io/badge/tests-331%20%C2%B7%20360%20with%20collateral-CFFF04?style=flat-square&labelColor=0A0A0A">
+  <img alt="337 tests by default, 368 with fetch-collateral" src="https://img.shields.io/badge/tests-337%20%C2%B7%20368%20with%20collateral-CFFF04?style=flat-square&labelColor=0A0A0A">
   <img alt="Apache 2.0" src="https://img.shields.io/badge/licence-Apache--2.0-CFFF04?style=flat-square&labelColor=0A0A0A">
   <img alt="paper included" src="https://img.shields.io/badge/paper-included-CFFF04?style=flat-square&labelColor=0A0A0A">
 </p>
@@ -134,7 +134,7 @@ requires that comparison — in C6.1.3, C6.2.2 and C1.3.2 — but C8's tier tabl
 and C10.2's disclosure schema never mention reference values, so a deployment
 can claim Tier 3 and publish a conforming disclosure that never names whoever
 chose them. That seam is the
-[reference-value finding](docs/STANDARD-MAP.md#a-fourth-finding-the-reference-value-seam).
+[reference-value finding](docs/STANDARD-MAP.md#a-finding-the-reference-value-seam).
 
 ---
 
@@ -164,7 +164,9 @@ had noticed, and nothing in either layer's own documentation would tell you.
 ### The ladder does not exist
 
 Verifiability standards are built on tiers — a ladder you climb by adopting
-stronger mechanisms. Compare a hardware TEE against a zero-knowledge system:
+stronger mechanisms, graded, in the Proof-of-Control Standard's words, *"by how
+independently [evidence] can be verified — that is, how much you must trust to
+believe it"*. Compare a hardware TEE against a zero-knowledge system:
 
 ```console
 $ parallax compare examples/sigma2-tdx.toml examples/sigma4-zk.toml
@@ -188,6 +190,14 @@ collusion. **All four fail**, each differently:
 | Collusion cost | Not derivable from a description. It is a fact about the adversary, not the system. |
 
 If that holds up, conformance should publish a trust set, not claim a tier.
+
+Note what this does **not** say, because an earlier version of this README did
+say it. It is not a refutation of the standard's *placement rules*: C8.1's
+requirements are thresholds over a single claim — *"any single trusted party
+caps the claim at Tier 2"* — and never compare two deployments to each other.
+What it refutes is the grading metaphor the chapter is framed with, and the
+procurement conversation that metaphor licenses. See
+[the correction](docs/STANDARD-MAP.md#1-the-grading-metaphor-assumes-an-order-that-may-not-exist).
 
 ---
 
@@ -390,16 +400,16 @@ guessed. Falsifying is all one sample can do; it cannot generalise.
 
 parallax is a research tool for the
 [**Proof-of-Control Standard**](https://github.com/AAI-Society/ov-poc-standard).
-It implements several of its requirements, contradicts three of its claims, and
-records one finding about a seam between two of its domains:
+It implements several of its requirements, contradicts one of its claims, and
+records three findings — plus one correction it used to make and has withdrawn:
 
 | | Standard | |
 | :-- | :-- | :-- |
-| ⚠️ | **C8, Tier 3** — *"The trusted party is removed"* | five parties remain, four undetectable |
-| ⚠️ | **C8.1** — deployments sit on an ordered ladder | two deployments can be incomparable |
-| ⚠️ | **C10.2 example** — a ZK deployment has the *"Narrowest trust base"* | the sets are disjoint; neither is narrower |
+| ⚠️ | **C8 framing** — *"Grade every piece of evidence by … how much you must trust"*, on *"a four-tier scale"* | two deployments can be **incomparable**, so "how much" is not a quantity. C8.1's placement *requirements* survive this: they are thresholds over one claim, not comparisons |
+| 🔎 | **C8, Tier 3 table row** — *"The trusted party is removed"* | C8.1.7 admits a vendor-rooted attestation to Tier 3 *"with the vendor trust assumption on the disclosure"* — so a party survives, and the table row denies it. Internal to C8, which is also marked `[DRAFT]`. **parallax does not refute the tier**: C8.1 places a bare TDX attestation at Tier 2, which is where our five-party example belongs |
+| ⌫ | **C10.2 example** — a ZK-STARK deployment has the *"Narrowest trust base"* | **withdrawn.** That cell is the *transparent-setup* row; `examples/sigma4-zk.toml` is the ceremony row beside it, whose risk cell already books the ceremony. No shipped example models the deployment the claim was about |
 | ✅ | **C10.2** — *`[WG-INPUT NEEDED]`: the disclosure format is not yet defined* | emits one, generated rather than written |
-| ✅ | **C10.2.1** — assumptions *"matched one-to-one against the mechanisms"* | `introduced_by` computes the match; and `parallax-proxy` emits a manifest **per connection**, which would satisfy the reconciliation for that connection |
+| ✅⚠️ | **C10.2.1** — each assumption with *"the assumption's subject"*, *"matched one-to-one against the mechanisms"* | `introduced_by` computes the match. **Partial on the live route:** two of five subjects are `urn:host:unattributed` and `urn:reference-values:configured` — a TDX quote does not name its host, and nothing names whoever chose the reference values, so the evidence cannot supply either |
 | ✅ | **C7.2.4** — the attestation must bind the evidence signing key's digest into `REPORTDATA` | `check_binding`, run on every connection. The committed fixture's zeroed `report_data` is a C7.2.4 failure, and it is refused |
 | ⚠️✅ | **C10.3.3** — an automated validator, *"within the defined validation window"*, whose *"results are themselves logged"* | `parallax check` in CI and `parallax-proxy` in line; the proxy's window is the connection itself. **Partial:** it validates against a *local policy*, not a "claimed Tier" — deliberately, per the contradictions above — and its result log is stdout, not a store |
 | 🔎 | **C6.2.2 / C1.3.2 vs C8 / C10.2** | C6 and C1 already require attestation to be validated *"against published reference values"*. C8's tier table and C10.2's disclosure schema never mention them, and have no subject or category for whoever publishes them — so a disclosure can pass C10.2.1 without naming the party whose dishonesty makes the attestation attest the wrong workload |
