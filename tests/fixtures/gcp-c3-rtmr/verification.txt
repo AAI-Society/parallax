@@ -1,0 +1,51 @@
+Verification of the committed RTMR3 spike fixtures.
+
+Produced on a workstation, offline, against nothing but the files committed in
+this directory -- no hardware and no network. The header ends at the rule
+below; everything after it is the verbatim, unedited stdout+stderr of:
+
+    cargo test --test spike_rtmr_fixture -- --nocapture --test-threads=1
+
+Regenerate it with exactly that command, from the repository root. The test
+source is tests/spike_rtmr_fixture.rs, which asserts UpToDate and an empty
+advisory list for each quote rather than merely printing them, so this file
+records what the assertions saw and is not itself the evidence -- the test is.
+
+Note "4935 of 8000 bytes attested": configfs-tsm zero-pads outblob, and only
+the first 4935 bytes of each file are inside the signature.
+
+-------------------------------------------------------------------------------
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running tests/spike_rtmr_fixture.rs (target/debug/deps/spike_rtmr_fixture-6355367437ae0dd3)
+
+running 5 tests
+test all_five_committed_quotes_verify_up_to_date ... quote-before.bin             verified at 1786288295 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+quote-after.bin              verified at 1786288295 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+quote-after2.bin             verified at 1786288295 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+instance-b-quote.bin         verified at 1786288452 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+instance-b-quote-after.bin   verified at 1786288452 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+ok
+test extension_is_deterministic_across_instances ... quote-after.bin              verified at 1786288295 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+instance-b-quote-after.bin   verified at 1786288452 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+rtmr3 after extension, both instances = 73f94f274f5bcfccde03b398fbfd063f2687a0568b0ef760c4db4c4f35a29eae8c6a27a10f6ebc73f61c29afaf5c90c3
+ok
+test extension_is_sha384_of_previous_value_concatenated_with_the_digest ... quote-before.bin             verified at 1786288295 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+quote-after.bin              verified at 1786288295 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+quote-after2.bin             verified at 1786288295 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+rtmr3 before = 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+rtmr3 after  = 73f94f274f5bcfccde03b398fbfd063f2687a0568b0ef760c4db4c4f35a29eae8c6a27a10f6ebc73f61c29afaf5c90c3
+rtmr3 after2 = 49780670e5b2a80eb96a196720c9a20cc4f4c4653246866e5f2d2f53c90f92f4a5cd63022d38e7eee7ae021edbb42858
+ok
+test mrtd_is_stable_across_instances_and_across_fixtures ... quote-before.bin             verified at 1786288295 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+instance-b-quote.bin         verified at 1786288452 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+mrtd, all three captures = c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5
+ok
+test rtmr3_is_at_absolute_offset_520_and_472_is_rtmr2 ... quote-before.bin             verified at 1786288295 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+quote-after.bin              verified at 1786288295 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+quote-after2.bin             verified at 1786288295 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+instance-b-quote.bin         verified at 1786288452 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+instance-b-quote-after.bin   verified at 1786288452 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+

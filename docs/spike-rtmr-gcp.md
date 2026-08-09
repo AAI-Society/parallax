@@ -14,9 +14,28 @@ into RTMR3 *before* the quote is taken, so the premise was tested on real
 hardware before any of it was written, and BLOCKED was an acceptable outcome.
 
 Everything below was produced by `scripts/spike-rtmr.sh` running on the guest,
-driven by `scripts/spike-rtmr-on-gcp.sh`. The full transcript of both runs is
-committed at `tests/fixtures/gcp-c3-rtmr/transcript-instance-a.txt` and
-`…-instance-b.txt`; the excerpts here are copied from those files.
+driven by `scripts/spike-rtmr-on-gcp.sh`. The full transcripts of both runs are
+committed at `tests/fixtures/gcp-c3-rtmr/transcript.txt` (instance A) and
+`instance-b-transcript.txt`.
+
+**The blocks below are excerpts, and they are trimmed — they are not verbatim.**
+The transcripts are; these are not, and the difference matters in a document
+whose value is that its claims are exact. What is trimmed, and nothing else:
+`ls` output loses the `total` line and the `.` and `..` entries; output that
+`head` allowed through but that this document does not quote is replaced by a
+bracketed `[…]` note saying how many lines were dropped; the guest's output
+directory is written as `$OUT` in place of the literal
+`/home/jimschwoebel/spike`; and the `[exit N]` status line that
+`spike-rtmr.sh` prints after every command is dropped except where a non-zero
+status is the point.
+
+**Command lines are never trimmed.** Every `$ …` line below appears verbatim in
+a transcript, `$OUT` aside; that is mechanically checkable and was checked.
+
+**No value, hex string, command, or errno is ever altered or elided.** If a
+block here and the transcript disagree on any of those, the transcript is
+right and this document has a bug. Fixture-naming rule, used throughout:
+unprefixed files are instance A, `instance-b-` files are instance B.
 
 ## The platform
 
@@ -26,18 +45,27 @@ Two instances, both `c3-standard-4` with `--confidential-compute-type=TDX` in
 | | Instance A | Instance B |
 | - | - | - |
 | id | `1000000000000000001` | `1000000000000000002` |
+| name | `parallax-spike-a-54737` | `parallax-spike-b-55694` |
 | captured | `2026-08-09T15:11:35Z` | `2026-08-09T15:14:12Z` |
+
+The ids come from `gcloud compute instances describe`, run against each VM
+before it was deleted and committed as `instance-describe.txt` and
+`instance-b-describe.txt`. The names are independently corroborated by the
+`uname -a` line in each transcript, and the timestamps by `captured-at` and
+`instance-b-captured-at`.
 
 ```
 $ uname -a
-Linux parallax-spike-a-54737 6.17.0-1022-gcp #25-Ubuntu SMP Sat Jul 25 01:12:40 UTC 2026 x86_64 GNU/Linux
+Linux parallax-spike-a-54737.us-central1-a.c.example-project.internal 6.17.0-1022-gcp #25-Ubuntu SMP Sat Jul 25 01:12:40 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
 $ grep -m1 "^model name" /proc/cpuinfo
 model name	: Intel TDX
-$ sudo dmesg | grep -i "tdx\|tsm"
+$ sudo dmesg | grep -i "tdx\|tsm" | head -20
 [    0.000000] tdx: Guest detected
 [    0.000000] tdx: Attributes: SEPT_VE_DISABLE
 [    0.000000] tdx: TD_CTLS: PENDING_VE_DISABLE ENUM_TOPOLOGY VIRT_CPUID2 REDUCE_VE
+[    1.481848] process: using TDX aware idle routine
 [    1.481848] Memory Encryption Features active: Intel TDX
+[    1.481848] smpboot: CPU0: Intel TDX (family: 0x6, model: 0x8f, stepping: 0x8)
 [    3.795408] systemd[1]: Detected confidential virtualization tdx.
 ```
 
@@ -55,7 +83,7 @@ crw------- 1 root root 252, 65536 Aug  9 15:11 /dev/tpmrm0
 $ ls -la /sys/class/tpm/
 lrwxrwxrwx 1 root root 0 Aug  9 15:11 tpm0 -> ../../devices/platform/MSFT0101:00/tpm/tpm0
 
-$ find /sys /dev -iname "*rtmr*"
+$ find /sys /dev -iname "*rtmr*" 2>/dev/null
 /sys/devices/virtual/misc/tdx_guest/measurements/rtmr0:sha384
 /sys/devices/virtual/misc/tdx_guest/measurements/rtmr1:sha384
 /sys/devices/virtual/misc/tdx_guest/measurements/rtmr2:sha384
@@ -72,21 +100,43 @@ kernel ought to use.
 **Yes, through `/sys/class/misc/tdx_guest/measurements/rtmr3:sha384`.** The
 three candidates were tested in the order the brief set out.
 
-### `/dev/tdx_guest` ioctl — no
+### `/dev/tdx_guest` ioctl — no extend command among those probed
 
-The device exists and works, but the running driver implements exactly one
-command. `scripts/spike-rtmr.sh` compiles a probe on the guest that issues
-`TDX_CMD_GET_REPORT0` and then sweeps the rest of the `'T'` ioctl space in all
-four direction encodings at four argument sizes, printing anything that does not
-return `ENOTTY`:
+The device exists and works. `scripts/spike-rtmr.sh` compiles a probe on the
+guest that issues `TDX_CMD_GET_REPORT0` and then sweeps a **bounded window** of
+the `'T'` command space, printing anything that does not return `ENOTTY`:
 
 ```
-$ sudo ./ioctl-probe
+$ sudo $OUT/ioctl-probe
 TDX_CMD_GET_REPORT0  _IOWR('T',1,...)  OK (tdreport[0..3] = 81 00 00 00)
 sweep done: any 'T' command not printed above returned ENOTTY (no such command in this driver)
 ```
 
-Nothing else printed. There is no extend ioctl on this kernel.
+Nothing else printed.
+
+**What that does and does not establish.** The sweep covers command numbers
+**2 through 8 inclusive**, in four direction encodings at four argument sizes —
+112 ioctls — plus `nr=1` issued above as `GET_REPORT0`. Command number 0, and
+numbers 9 through 255, were **never issued**, and `nr=1` was not tried in the
+other three direction encodings. So the supported claim is:
+
+> Among the command numbers probed, `/dev/tdx_guest` implements only
+> `GET_REPORT0`; there is no extend ioctl there.
+
+Not "there is no extend ioctl on this kernel", which is what an earlier draft of
+this document said and which the evidence does not reach. The window was chosen
+because upstream puts `GET_REPORT0` at `nr=1` and the historical out-of-tree TDX
+guest drivers numbered their extra commands immediately after it — but that is a
+reason to look there first, not a proof that nothing lives elsewhere.
+
+The summary line quoted above is the one the committed transcripts carry.
+`scripts/spike-rtmr.sh` has since been corrected to print its exact bounds
+instead, so a future run states its own limits; the probe's *behaviour* is
+unchanged, so the transcripts remain reproducible.
+
+None of this is load-bearing: the sysfs interface below works, and the design
+uses it. It is narrowed here because a document whose entire value is that its
+claims are exact cannot afford a conclusion wider than its evidence.
 
 ### configfs-tsm — no
 
@@ -95,7 +145,7 @@ contains four attributes, and the only writable one is `inblob`, which is
 `report_data`:
 
 ```
-$ sudo mkdir /sys/kernel/config/tsm/report/probe-1736 && ls -la …
+$ sudo mkdir -p /sys/kernel/config/tsm/report/probe-1736 && ls -la /sys/kernel/config/tsm/report/probe-1736
 -r--r--r-- 1 root root 4096 generation
 --w------- 1 root root    0 inblob
 -r--r--r-- 1 root root    0 outblob
@@ -121,18 +171,22 @@ family are read-only, which is exactly the split TDX defines. The kernel has the
 symbol behind it:
 
 ```
-$ sudo grep -i "rtmr\|tsm_mr" /proc/kallsyms
+$ sudo grep -i "rtmr\|tsm_mr\|tdx_mcall" /proc/kallsyms | head -20
+ffffffff8ca836f0 T __pfx_tdx_mcall_get_report0
 ffffffff8ca83700 T tdx_mcall_get_report0
+ffffffff8ca837f0 T __pfx_tdx_mcall_extend_rtmr
 ffffffff8ca83800 T tdx_mcall_extend_rtmr
-… __traceiter_tsm_mr_read / _refresh / _write
+ffffffff8da4a4c0 T __pfx___traceiter_tsm_mr_read
+ffffffff8da4a4d0 T __traceiter_tsm_mr_read
+[14 further tsm_mr trace symbols, of the 20 lines `head -20` allowed through]
 ```
 
 Extension is a single 48-byte write:
 
 ```
-$ sudo dd if=extended-digest.bin of=/sys/class/misc/tdx_guest/measurements/rtmr3:sha384 bs=48 count=1 status=none
+$ sudo dd if=$OUT/extended-digest.bin of=/sys/class/misc/tdx_guest/measurements/rtmr3:sha384 bs=48 count=1 status=none
 [exit 0]
-$ sudo xxd -p /sys/class/misc/tdx_guest/measurements/rtmr3:sha384
+$ sudo xxd -p /sys/class/misc/tdx_guest/measurements/rtmr3:sha384 | tr -d '\n'; echo
 73f94f274f5bcfccde03b398fbfd063f2687a0568b0ef760c4db4c4f35a29eae8c6a27a10f6ebc73f61c29afaf5c90c3
 ```
 
@@ -161,8 +215,10 @@ exotic:
 - a kernel new enough to carry the measurement-register sysfs. The only kernel
   this was measured on is **`6.17.0-1022-gcp`**; the spike did not bisect for
   the earliest version that works, so treat 6.17 as the known-good floor rather
-  than as the true minimum. (configfs-tsm quoting alone needs only 6.7+, which
-  is a different and lower bar.)
+  than as the true minimum. (A lower bar of 6.7+ for configfs-tsm *quoting*
+  alone is repeated in `scripts/capture-fixture.sh` and this repository's
+  README, but it is inherited from those files rather than measured here —
+  **unverified by this spike**, and not something to rely on without checking.)
 - the writing process needs write access to
   `/sys/class/misc/tdx_guest/measurements/rtmr3:sha384`. In a container that
   means the path must be mounted in and the process must be root; `/sys` is
@@ -320,21 +376,51 @@ false in precisely the field that carries platform identity.
 
 ## A quote taken after extension is still a valid quote
 
-All five committed quotes were verified with the crate's own verifier, via
-`cargo run --features fetch-collateral --bin fetch-collateral -- <dir>`, which
-refuses to write collateral it cannot verify the quote against:
+This is the last place the spike could have failed even with the extension
+itself working, so it is the one conclusion here that is a committed, runnable
+test rather than a pasted terminal line.
+
+`tests/spike_rtmr_fixture.rs` verifies all five committed quotes through
+`parallax::verify::verify_quote` — each against its own instance's collateral,
+at its own capture time — and asserts `UpToDate` with an empty advisory list
+rather than merely printing what it saw. It needs no hardware and no network:
+both collateral bundles are committed.
 
 ```
-a-before   verified at 1786288295 (capture time): status UpToDate
-a-after    verified at 1786288295 (capture time): status UpToDate
-a-after2   verified at 1786288295 (capture time): status UpToDate
-b-before   verified at 1786288452 (capture time): status UpToDate
-b-after    verified at 1786288452 (capture time): status UpToDate
+cargo test --test spike_rtmr_fixture -- --nocapture --test-threads=1
 ```
 
-None reported an advisory ID. Extending RTMR3 does not disturb the quote
-signature, the TCB evaluation or the certification data — which was the last
-place this could have failed even with the extension working.
+The verbatim output of that command is committed as
+`tests/fixtures/gcp-c3-rtmr/verification.txt`. Its five verification lines are:
+
+```
+quote-before.bin             verified at 1786288295 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+quote-after.bin              verified at 1786288295 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+quote-after2.bin             verified at 1786288295 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+instance-b-quote.bin         verified at 1786288452 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+instance-b-quote-after.bin   verified at 1786288452 (capture time): status UpToDate, advisories: none, 4935 of 8000 bytes attested
+```
+
+Extending RTMR3 does not disturb the quote signature, the TCB evaluation or the
+certification data.
+
+The same test file also machine-checks the other two load-bearing findings, so
+they are no longer prose either: `rtmr3_is_at_absolute_offset_520_and_472_is_rtmr2`
+compares the bytes at each offset against `VerificationOutcome::rt_mrs`, which
+dcap-qvl parses structurally and which never sees the number 520; and
+`extension_is_sha384_of_previous_value_concatenated_with_the_digest` reproduces
+both hash-chain transitions and asserts the two extensions are *not* equal, which
+is the property Task 4's restart-refusal rests on.
+
+An earlier draft of this section cited
+`cargo run --features fetch-collateral --bin fetch-collateral -- <dir>` as the
+reproduction. **That command cannot run against this fixture** — it reads a file
+literally named `quote.bin` (`src/bin/fetch-collateral.rs:90`) and this directory
+has no such file, only the five differently-named quotes. It is also the wrong
+tool: it fetches collateral from a public PCCS over the network, so it could not
+have demonstrated anything about the committed bundles. `fetch-collateral` is
+how the collateral in this fixture was *obtained*, at capture time; the test
+above is how the fixture is *checked*.
 
 ## What this spike does not show
 

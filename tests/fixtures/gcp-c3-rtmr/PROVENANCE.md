@@ -23,6 +23,10 @@ say so.
 
 ## What each file is
 
+**Naming rule: an unprefixed file belongs to instance A; an `instance-b-` file
+belongs to instance B.** It holds without exception, so the prefix is the only
+thing that has to be read to know which machine a file came from.
+
 | File | What it is |
 | ---- | ---------- |
 | `quote-before.bin` | Instance A, before any extension. RTMR3 is 48 zero bytes. |
@@ -33,10 +37,14 @@ say so.
 | `instance-b-quote-after.bin` | Instance B, after extending the same digest once, on a fresh boot. |
 | `collateral.json` | Intel collateral for instance A's three quotes. |
 | `instance-b-collateral.json` | Intel collateral for instance B's two quotes. |
-| `transcript-instance-a.txt`, `transcript-instance-b.txt` | Every command the spike ran on each guest, with exit status and raw output. |
-| `capture-host.txt`, `captured-at`, `instance-b-captured-at`, `provider` | Capture metadata, in the same form as `gcp-c3-tdx/`. |
+| `verification.txt` | Verbatim output of the test that checks all of the above. See "Every one of these quotes verifies". |
+| `transcript.txt`, `instance-b-transcript.txt` | Every command the spike ran on each guest, with exit status and raw output. |
+| `capture-host.txt`, `instance-b-capture-host.txt` | Kernel, CPU model and TDX dmesg lines, taken on each guest. |
+| `instance-describe.txt`, `instance-b-describe.txt` | `gcloud compute instances describe` for each VM, run before deletion. The only record of the instance ids. |
+| `captured-at`, `instance-b-captured-at` | RFC 3339 capture time for each instance. The verification clock is pinned to these. |
+| `provider` | The configfs-tsm provider that answered: `tdx_guest`. Instance A's; instance B's transcript shows the same. |
 
-SHA-256:
+SHA-256, of every file in this directory except this one:
 
 ```
 845ee23e6381c58195c2682715a4ba025ba9d5b18f012322e2294533f044d3f9  quote-before.bin
@@ -47,7 +55,22 @@ a3dfeca795f91244f49cd1204ac132832cffb5da7b4ff03058dfcf633c14960b  instance-b-quo
 830f04d3dca8349ee7df7e96097850b0434cf066f89e5b13cac55b82ece8c7a3  instance-b-quote-after.bin
 baf89bb44d99dcd2607bca13e6fcf3dbbf988776a848459fc0a4cac42a71bc4b  collateral.json
 3681552b02b074db7a6987e56f2592fe65c6f943c7c87d8f5c6b1853f3529d1e  instance-b-collateral.json
+f08cb2ef0423f4aedfa49ed0a5f9172d6b0fe8dc3b70f4fc8598d246eb9457e5  verification.txt
+0ab4c3c5b057fbf6c997826392efd42d3632217b43e704171953b492fd88c631  transcript.txt
+8c97731b5f085da191aa6bbb6cb61c8020f39ff0101c92326bab29a61f145389  instance-b-transcript.txt
+964b64a21a035013b738051a834c935e2d49597cca6b3e6c652ad0fc3aa0acbc  capture-host.txt
+964b64a21a035013b738051a834c935e2d49597cca6b3e6c652ad0fc3aa0acbc  instance-b-capture-host.txt
+18ec2822da541fcaeddd39da94d96793b4a34e1f085319370b078174bbf1411a  instance-describe.txt
+4644a537459db7fd89edd6c21e6cc196bf443da64dbe22e11521e2572084d752  instance-b-describe.txt
+7c898f06a3fe2a4aeb42c8e9d811d26e1c6ff243426604eb51f9a4854b626897  captured-at
+60b9adf1da7f25205552f8b54c21a371e4c43de33cf867c6f575dc04934cc55d  instance-b-captured-at
+72d8462b0dd08e09959c804e12b2785023b53212bec1498e9fb5813bd2a7bfc7  provider
 ```
+
+`capture-host.txt` and `instance-b-capture-host.txt` hash identically — both
+instances reported the same kernel, CPU model string and TDX `dmesg` lines, so
+the files are byte-for-byte the same. That is a real agreement between the two
+captures, not a copy-paste error in this table.
 
 ## The RTMR3 values, and the arithmetic that ties them together
 
@@ -119,10 +142,18 @@ have made that look true.
 
 ## Every one of these quotes verifies
 
-All five were checked with the crate's own verifier, through
-`cargo run --features fetch-collateral --bin fetch-collateral -- <dir>`, which
-refuses to write collateral it cannot verify the quote against. Each returned
-`UpToDate` with no advisory IDs, at its own capture time.
+All five are checked with the crate's own verifier by
+`tests/spike_rtmr_fixture.rs`, which asserts `UpToDate` with no advisory IDs
+for each, at its own capture time, rather than merely printing what it saw.
+Run it with `cargo test --test spike_rtmr_fixture -- --nocapture
+--test-threads=1`; the verbatim output is committed as `verification.txt`.
+That is a different tool from the one that *produced* this fixture:
+`fetch-collateral` fetched the two `collateral.json` bundles from a public
+PCCS at capture time, reading a file it expects to be literally named
+`quote.bin` — this directory has no such file, only the five differently-named
+quotes, so `fetch-collateral` cannot be pointed at this directory to
+re-verify it. See `docs/spike-rtmr-gcp.md`, "A quote taken after extension is
+still a valid quote", for why that distinction matters.
 
 The one that matters is `quote-after.bin`: **a quote taken after RTMR3 has been
 extended is still a fully valid, `UpToDate` DCAP quote.** Extension does not
@@ -176,3 +207,14 @@ cargo run --features fetch-collateral --bin fetch-collateral -- <dir>
 Each run creates one confidential VM and deletes it on every path including
 interrupt. The output goes to a timestamped directory under `captures/`, which
 is gitignored; replacing this fixture is a deliberate copy, not a default.
+
+The third line is not literally copy-pasteable as written: `fetch-collateral`
+reads a file it expects to be named `quote.bin` in `<dir>`, and
+`spike-rtmr-on-gcp.sh` names its outputs `quote-before.bin` /
+`quote-after.bin` / etc, never `quote.bin`. Some intermediate step — most
+plausibly copying or renaming one quote to `quote.bin` in a scratch
+directory before invoking `fetch-collateral`, once per instance — must have
+happened to produce `collateral.json` and `instance-b-collateral.json`, but
+that step is not recorded anywhere in this fixture and this fix round did not
+re-run it: the two spike VMs are gone. Treat this recipe as the shape of the
+process, not a literal script.

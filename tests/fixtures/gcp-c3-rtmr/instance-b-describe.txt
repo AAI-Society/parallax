@@ -1,0 +1,1 @@
+1000000000000000002	parallax-spike-b-55694	https://www.googleapis.com/compute/v1/projects/example-project/zones/us-central1-a/machineTypes/c3-standard-4	https://www.googleapis.com/compute/v1/projects/example-project/zones/us-central1-a	confidentialInstanceType=TDX

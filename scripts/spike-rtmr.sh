@@ -255,8 +255,20 @@ int main(void)
         printf("TDX_CMD_GET_REPORT0  _IOWR('T',1,...)  errno=%d (%s)\n",
                errno, strerror(errno));
 
-    /* Sweep the rest of the 'T' space in all four direction encodings. An
-     * extend ioctl in any historical driver would be reachable from here. */
+    /* Sweep a BOUNDED window of the 'T' command space in all four direction
+     * encodings. This is a targeted probe, not an exhaustive one, and the
+     * summary line below states its exact bounds so that no reader has to
+     * infer them: a command number outside [NR_LO, NR_HI] was never issued and
+     * nothing here licenses a claim about it.
+     *
+     * The window is where an extend ioctl would be if it existed. Upstream
+     * puts GET_REPORT0 at nr=1, and the historical out-of-tree TDX guest
+     * drivers numbered their additional commands immediately after it. Going
+     * wider is cheap in runtime but not free in risk — issuing thousands of
+     * unknown ioctls at a driver is a good way to find a bug that has nothing
+     * to do with the question being asked — so the bound is deliberate.
+     *
+     * nr=0 and nr=1 are excluded because nr=1 is GET_REPORT0, issued above. */
     static unsigned char arg[4096];
     const char *dirname_[4] = { "_IO  ", "_IOW ", "_IOR ", "_IOWR" };
     const unsigned dir[4] = { _IOC_NONE, _IOC_WRITE, _IOC_READ,
@@ -264,8 +276,9 @@ int main(void)
     /* Sizes of every argument struct an extend command plausibly takes:
      * 48-byte digest alone, digest + index, and a page. */
     const unsigned sizes[4] = { 0, 48, 56, 64 };
+    const unsigned NR_LO = 2, NR_HI = 8;
 
-    for (unsigned nr = 2; nr <= 8; nr++) {
+    for (unsigned nr = NR_LO; nr <= NR_HI; nr++) {
         for (int d = 0; d < 4; d++) {
             for (int s = 0; s < 4; s++) {
                 memset(arg, 0, sizeof(arg));
@@ -279,8 +292,12 @@ int main(void)
             }
         }
     }
-    printf("sweep done: any 'T' command not printed above returned ENOTTY "
-           "(no such command in this driver)\n");
+    printf("sweep done: probed 'T' command numbers %u-%u inclusive, in 4 "
+           "direction encodings x 4 argument sizes (%u ioctls), plus nr=1 as "
+           "GET_REPORT0 above. Every one not printed returned ENOTTY. "
+           "Command numbers 0 and %u-255 were NOT probed and nothing here "
+           "says anything about them.\n",
+           NR_LO, NR_HI, (NR_HI - NR_LO + 1) * 16, NR_HI + 1);
     close(fd);
     return 0;
 }
