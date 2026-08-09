@@ -59,15 +59,34 @@
 //! wrong and wrong in the direction that hides things: it counted the
 //! forwarding call and forgot everything that runs beside it. Every socket test
 //! refuses at the binding, so nothing that only an allowed connection reaches is
-//! exercised over a socket. That is:
+//! exercised over a socket.
+//!
+//! What follows is **the list I can enumerate by reading, not a proof of
+//! exhaustiveness** — that framing is deliberate, because the previous two
+//! versions of it were each presented as complete and each was not. Uncovered,
+//! including but not limited to:
 //!
 //! * the `tokio::io::copy_bidirectional` call in `serve::Proxy::handle`'s
 //!   `Decision::Allow` arm;
-//! * `serve::Proxy::log`'s allow arm and its warnings loop, and the `println!`
-//!   that emits the Residual Trust Manifest — Step 3's deliverable and the
-//!   auditor evidence C10.2.1 asks for;
-//! * `serve::Proxy::serve`'s accept-error branch, and `open_upstream`'s
-//!   no-certificate branch.
+//! * `serve::Proxy::log`'s allow arm and its warnings loop, the `println!` that
+//!   emits the Residual Trust Manifest — Step 3's deliverable and the auditor
+//!   evidence C10.2.1 asks for — and its serialisation-error arm;
+//! * `serve::Proxy::serve`'s accept-error branch and its semaphore-closed
+//!   branch;
+//! * `open_upstream`'s no-certificate branch, and its refusal of a handshake
+//!   that is not full — unreachable by construction, since `tls_config`
+//!   disables resumption, which is the point of having it;
+//! * `ServeError::Bind` and `ServeError::Tls`;
+//! * the *network*-failure sub-case of `evaluate`'s collateral refusal
+//!   (`CollateralError::Fetch`). The arm itself is covered — a certificate
+//!   carrying something that is not a quote fails `cache_key_of` inside
+//!   `fetch`, and that exact message is asserted by
+//!   `a_certificate_carrying_something_that_is_not_a_quote_is_refused` — but
+//!   nothing here makes a PCCS unreachable.
+//!
+//! Most of those are degenerate. So was the item that hid a critical
+//! session-resumption defect last round, which is why they are named rather
+//! than summarised.
 //!
 //! That understatement had a cost, recorded because it is the lesson: reading
 //! from the upstream is what absorbs a TLS `NewSessionTicket`, and reading only

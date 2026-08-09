@@ -1014,27 +1014,42 @@ mod tests {
         }
     }
 
-    /// The floor property holds for the fields the sweep above holds fixed.
+    /// The floor property over the fields the sweep above holds fixed.
     ///
-    /// `the_most_favourable_outcome_is_the_floor` varies the TCB statuses and
-    /// the three PCK flags, which are the axes `derive` branches on most. The
-    /// remaining fields an outcome can differ in are covered here, so "the
-    /// floor is the floor" is not a claim about two axes dressed up as a claim
-    /// about outcomes:
+    /// **What is swept, field by field, and why the rest cannot break it.**
+    /// `the_most_favourable_outcome_is_the_floor` varies the two TCB statuses,
+    /// the three PCK flags and `collateral_expires_at`. This test adds
+    /// `advisory_ids` (on both status fields and the merged one),
+    /// `collateral_issued_at`, `attested_len`, `rt_mrs`,
+    /// `tcb_eval_data_number` and `report_data`. That accounts for every field
+    /// of `VerificationOutcome` except two, and both are argued rather than
+    /// swept:
     ///
-    /// * `advisory_ids` on either status adds `published_advisories_are_not_-
-    ///   exploitable`, which is an addition.
+    /// * `collateral_refresh` and `root_ca` are **echoed inputs**, not
+    ///   findings. `verify_quote` copies the `Latency` and the `&RootCa` it was
+    ///   handed straight into the outcome, and the gate always hands it
+    ///   `cfg.collateral_refresh` and `cfg.root_ca` — the same values
+    ///   `most_favourable_outcome` builds the floor from. An outcome reaching
+    ///   `decide` under a given configuration cannot differ from the floor in
+    ///   either, so a sweep would be asserting something about a value the
+    ///   pipeline cannot produce.
+    ///
+    /// Why each swept field is safe, since the sweep shows it but does not say
+    /// it:
+    ///
+    /// * `advisory_ids` on either status adds
+    ///   `published_advisories_are_not_exploitable`, which is an addition.
+    /// * `collateral_issued_at` and `collateral_expires_at` **are** read by
+    ///   `derive`, through `pcs_detection_bound`, which joins
+    ///   `collateral_refresh` with `Bounded(collateral_validity_secs())` —
+    ///   `join` on `Latency` being `max`. `most_favourable_outcome` pins a
+    ///   zero-width window, so its bound is `collateral_refresh` exactly and
+    ///   any other window can only raise it. The floor property wants the real
+    ///   latency to be no *smaller*, so widening is the safe direction.
     /// * `attested_len`, `rt_mrs` and `tcb_eval_data_number` are not read by
-    ///   `derive` at all — its doc comment lists them as deliberate omissions —
-    ///   so they can change nothing.
+    ///   `derive` at all — its doc comment lists them as deliberate omissions.
     /// * `report_data` is not read by `derive` either; it is `check_binding`'s
     ///   input, one stage earlier.
-    ///
-    /// `root_ca` is **not** swept, and cannot be: `verify_quote` echoes the
-    /// `&RootCa` it was handed into the outcome, and the gate hands it
-    /// `cfg.root_ca`, so an outcome reaching `decide` under this configuration
-    /// always carries this configuration's root. A sweep over it would be
-    /// asserting something about a value the pipeline cannot produce.
     #[test]
     fn the_floor_survives_the_fields_the_sweep_holds_fixed() {
         let cfg = gate(vec![REFVAL]);
@@ -1042,15 +1057,24 @@ mod tests {
 
         let mut variants = Vec::new();
         for advisories in [Vec::new(), vec!["INTEL-SA-00615".to_string()]] {
-            let mut o = most_favourable_outcome(&cfg);
-            o.platform_status = TcbStatusWithAdvisory::new(TcbStatus::UpToDate, advisories.clone());
-            o.qe_status = TcbStatusWithAdvisory::new(TcbStatus::UpToDate, advisories.clone());
-            o.advisory_ids = advisories;
-            o.attested_len = 4935;
-            o.rt_mrs = [[0xCD; 48]; 4];
-            o.tcb_eval_data_number = 19;
-            o.report_data = [0xEF; 64];
-            variants.push(o);
+            // Both a shifted window and a wider one: the first is what the
+            // fixture-based tests in `derive.rs` show does not move the set at
+            // all, the second is the only direction that moves the PCS bound,
+            // and it moves it up.
+            for (issued, expires) in [(0, 0), (1_600_000_000, 1_600_000_000), (0, 30 * 86_400)] {
+                let mut o = most_favourable_outcome(&cfg);
+                o.platform_status =
+                    TcbStatusWithAdvisory::new(TcbStatus::UpToDate, advisories.clone());
+                o.qe_status = TcbStatusWithAdvisory::new(TcbStatus::UpToDate, advisories.clone());
+                o.advisory_ids = advisories.clone();
+                o.collateral_issued_at = issued;
+                o.collateral_expires_at = expires;
+                o.attested_len = 4935;
+                o.rt_mrs = [[0xCD; 48]; 4];
+                o.tcb_eval_data_number = 19;
+                o.report_data = [0xEF; 64];
+                variants.push(o);
+            }
         }
 
         for o in &variants {

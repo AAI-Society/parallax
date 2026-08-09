@@ -189,11 +189,14 @@ Three things worth knowing before you deploy it:
   this repository: the only real quote committed has 64 zero bytes in
   `report_data`, so the binding check correctly refuses it and every path past
   the binding is unreachable over a socket. That covers the forwarding copy,
-  the allow log line, and the manifest emission. The decision logic is a pure
-  function and is tested exhaustively. This gap is not academic — it hid a TLS
-  session-resumption defect until review, because absorbing a session ticket
-  requires reading from the upstream and only the allow path reads. See
-  `src/proxy/mod.rs` and `tests/fixtures/gcp-c3-tdx/PROVENANCE.md`.
+  the allow log line and the manifest emission, plus some degenerate branches
+  — `src/proxy/mod.rs` enumerates them, and is careful to say the enumeration
+  is what can be found by reading rather than a proof of completeness. The
+  decision logic is a pure function and is tested exhaustively. This gap is not
+  academic: it hid a TLS session-resumption defect until review, because
+  absorbing a session ticket requires reading from the upstream and only the
+  allow path reads. See `src/proxy/mod.rs` and
+  `tests/fixtures/gcp-c3-tdx/PROVENANCE.md`.
 
 ---
 

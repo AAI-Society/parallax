@@ -64,18 +64,6 @@ const DRAIN_WINDOW: std::time::Duration = std::time::Duration::from_millis(250);
 /// roughly four bytes a second. This is the bound that actually closes it.
 const DRAIN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// How many connections may be in flight at once.
-///
-/// Not a throughput knob. Every connection — including one that will be refused
-/// — costs a full TLS handshake against the *upstream* before the gate can run,
-/// because the evidence arrives in that handshake and there is nowhere earlier
-/// to get it. An unauthenticated client therefore gets 1:1 handshake
-/// amplification onto the service this proxy is meant to protect, and without a
-/// cap the only limit is the accept rate. The listen backlog absorbs the
-/// overflow, so a client beyond the cap waits rather than being refused with a
-/// 502 it might read as a verdict about the upstream.
-const MAX_CONNECTIONS: usize = 512;
-
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -124,7 +112,8 @@ pub struct Proxy {
     collateral: Arc<CollateralSource>,
     tls: Arc<rustls::ClientConfig>,
     server_name: ServerName<'static>,
-    /// Caps connections in flight. See [`MAX_CONNECTIONS`].
+    /// Caps connections in flight. See [`ProxyConfig::max_connections`] and
+    /// [`DEFAULT_MAX_CONNECTIONS`](crate::proxy::config::DEFAULT_MAX_CONNECTIONS).
     permits: Arc<tokio::sync::Semaphore>,
 }
 
@@ -159,7 +148,8 @@ pub struct Proxy {
 ///
 /// A proxy whose entire premise is per-connection evidence has nothing to gain
 /// from resumption. `resumption_is_disabled_so_every_handshake_is_full` drives
-/// two sequential handshakes through this configuration and asserts both are
+/// three sequential handshakes through this configuration, reading a byte on
+/// each so the session ticket is really absorbed, and asserts all three are
 /// `Full`; [`Proxy::open_upstream`] refuses anything that is not, so the
 /// property is enforced at run time as well as configured.
 fn tls_config() -> Result<rustls::ClientConfig, ServeError> {
@@ -189,6 +179,7 @@ impl Proxy {
             cfg.collateral_url.clone(),
             cfg.cache_ttl.clone(),
         ));
+        let permits = Arc::new(tokio::sync::Semaphore::new(cfg.max_connections));
 
         Ok(Proxy {
             cfg,
@@ -196,7 +187,7 @@ impl Proxy {
             collateral,
             tls: Arc::new(tls),
             server_name,
-            permits: Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS)),
+            permits,
         })
     }
 
@@ -232,6 +223,25 @@ impl Proxy {
     /// dropping the runtime drops them. A connection cut short mid-copy is the
     /// same thing the client would see if the process were killed, which is
     /// what a shutdown is.
+    ///
+    /// **Both waits are cancellable by `shutdown`, and that is the point of the
+    /// shape below.** An earlier version acquired the connection-limit permit
+    /// *inside* the accept arm's body, which meant that once the cap was
+    /// reached and one more connection arrived, `serve` sat in
+    /// `acquire_owned().await` and stopped polling `shutdown` altogether. From
+    /// there Ctrl-C was deferred indefinitely: `copy_bidirectional` on the allow
+    /// path has no timeout, and `parallax-proxy` only drops the runtime once
+    /// this function returns. Two sequential `select!`s, each racing
+    /// `shutdown`, is what makes the cap a limit on concurrency rather than on
+    /// shutting down.
+    ///
+    /// The permit is taken *before* the accept, so one is reserved while the
+    /// listener is idle. That costs one slot out of `max_connections` and
+    /// buys the ordering above. Note also that a refused connection holds its
+    /// permit across [`DRAIN_DEADLINE`], so `max_connections` slow-drip
+    /// clients can stall accepts for up to that long — bounded, and the
+    /// intended trade: the alternative is releasing the permit before the
+    /// refusal is delivered, which is the work the permit exists to bound.
     pub async fn serve(
         self: Arc<Self>,
         listener: TcpListener,
@@ -239,20 +249,28 @@ impl Proxy {
     ) {
         tokio::pin!(shutdown);
         loop {
+            // A slot first, so the cap applies to connections in flight rather
+            // than to tasks created — and racing `shutdown`, so waiting for a
+            // slot is not a way to become unstoppable.
+            let permit = tokio::select! {
+                _ = &mut shutdown => return,
+                acquired = Arc::clone(&self.permits).acquire_owned() => match acquired {
+                    Ok(permit) => permit,
+                    // Only reachable if something closed the semaphore, which
+                    // nothing here does. Treated as a reason to stop accepting
+                    // rather than to accept without a permit: an uncapped proxy
+                    // is the condition the cap exists to prevent.
+                    Err(_) => {
+                        eprintln!("error: the connection limiter closed; no longer accepting");
+                        return;
+                    }
+                },
+            };
+
             tokio::select! {
                 _ = &mut shutdown => return,
                 accepted = listener.accept() => match accepted {
                     Ok((client, _peer)) => {
-                        // Acquired before spawning, so the cap applies to
-                        // connections in flight rather than to tasks created.
-                        // `acquire_owned` only errors on a closed semaphore,
-                        // which nothing here does; a closed one is treated as a
-                        // reason to stop accepting rather than to accept
-                        // without a permit.
-                        let Ok(permit) = Arc::clone(&self.permits).acquire_owned().await else {
-                            eprintln!("error: the connection limiter closed; no longer accepting");
-                            return;
-                        };
                         let me = Arc::clone(&self);
                         tokio::spawn(async move {
                             me.handle(client).await;
@@ -263,7 +281,10 @@ impl Proxy {
                     // listener: a peer that vanished between the SYN and the
                     // accept is the common case. Reported and skipped rather
                     // than taken as a reason to stop serving everyone else.
-                    Err(e) => eprintln!("error: {}", ServeError::Accept(e)),
+                    Err(e) => {
+                        eprintln!("error: {}", ServeError::Accept(e));
+                        drop(permit);
+                    }
                 },
             }
         }

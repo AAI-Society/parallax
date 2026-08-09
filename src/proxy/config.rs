@@ -52,6 +52,12 @@ pub enum ConfigError {
          ({reason}); an MRTD is 96 hex characters"
     )]
     ReferenceValue { index: usize, reason: String },
+    #[error(
+        "`max_connections = 0` accepts nothing and is refused rather than \
+         guessed at: it reads equally well as `no limit` and as `serve no \
+         traffic`. Omit the key for the default, or set a positive number."
+    )]
+    MaxConnections,
     #[error("could not read the root CA at {path}: {source}")]
     RootCa {
         path: String,
@@ -159,6 +165,10 @@ struct File {
     /// one means supplying collateral built around it — see `RootCa::Custom`.
     #[serde(default)]
     root_ca_pem: Option<String>,
+    /// How many connections may be in flight at once. See
+    /// [`DEFAULT_MAX_CONNECTIONS`].
+    #[serde(default)]
+    max_connections: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,6 +190,18 @@ struct ReferenceValuesTable {
     require: bool,
 }
 
+/// How many connections may be in flight at once, when the file does not say.
+///
+/// Not a throughput knob. Every connection — including one that will be refused
+/// — costs a full TLS handshake against the *upstream* before the gate can run,
+/// because the evidence arrives in that handshake and there is nowhere earlier
+/// to get it. An unauthenticated client therefore gets 1:1 handshake
+/// amplification onto the service this proxy is meant to protect, and without a
+/// cap the only limit is the accept rate. The listen backlog absorbs the
+/// overflow, so a client beyond the cap waits rather than being refused with a
+/// 502 it might read as a verdict about the upstream.
+pub const DEFAULT_MAX_CONNECTIONS: usize = 512;
+
 /// A parsed, validated proxy configuration.
 #[derive(Debug)]
 pub struct ProxyConfig {
@@ -194,6 +216,8 @@ pub struct ProxyConfig {
     /// long a revocation goes unnoticed, and it reaches the trust set as the
     /// `serves_current_collateral` assumption's detection latency.
     pub cache_ttl: Latency,
+    /// Connections in flight at once. See [`DEFAULT_MAX_CONNECTIONS`].
+    pub max_connections: usize,
     pub gate: GateConfig,
 }
 
@@ -245,6 +269,14 @@ impl ProxyConfig {
             reference_values.push(parse_mrtd(hex, index)?);
         }
 
+        // Zero is refused rather than silently meaning "no limit" or "accept
+        // nothing": both readings are defensible, so neither is guessed at.
+        let max_connections = match file.max_connections {
+            None => DEFAULT_MAX_CONNECTIONS,
+            Some(0) => return Err(ConfigError::MaxConnections),
+            Some(n) => n,
+        };
+
         let root_ca = match &file.root_ca_pem {
             None => RootCa::IntelProduction,
             Some(p) => RootCa::Custom(std::fs::read_to_string(p).map_err(|source| {
@@ -287,6 +319,7 @@ impl ProxyConfig {
             policy,
             collateral_url: file.collateral.source,
             cache_ttl,
+            max_connections,
             gate,
         })
     }
@@ -467,6 +500,42 @@ requrie = true
         .expect("write");
         let e = ProxyConfig::load(&cfg).expect_err("`twelve hours` is not a duration");
         assert!(e.to_string().contains("collateral.cache_ttl"), "{e}");
+    }
+
+    #[test]
+    fn the_connection_limit_defaults_and_can_be_set_but_not_to_zero() {
+        let dir = tempdir();
+        let policy = dir.join("policy.toml");
+        std::fs::write(&policy, "forbid_undetectable = false\n").expect("write");
+        let write = |name: &str, cap: &str| {
+            let path = dir.join(name);
+            std::fs::write(
+                &path,
+                format!(
+                    "upstream = \"https://a:1\"\nlisten = \"127.0.0.1:0\"\npolicy = \"{}\"\n\
+                     {cap}[collateral]\nsource = \"https://pccs\"\ncache_ttl = \"12h\"\n",
+                    policy.display()
+                ),
+            )
+            .expect("write");
+            path
+        };
+
+        assert_eq!(
+            ProxyConfig::load(&write("default.toml", ""))
+                .expect("loads")
+                .max_connections,
+            DEFAULT_MAX_CONNECTIONS
+        );
+        assert_eq!(
+            ProxyConfig::load(&write("set.toml", "max_connections = 8\n"))
+                .expect("loads")
+                .max_connections,
+            8
+        );
+        let e = ProxyConfig::load(&write("zero.toml", "max_connections = 0\n"))
+            .expect_err("zero is ambiguous, not a limit");
+        assert!(e.to_string().contains("accepts nothing"), "{e}");
     }
 
     #[test]

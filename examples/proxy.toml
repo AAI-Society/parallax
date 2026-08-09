@@ -28,9 +28,18 @@ mrtd = []
 #
 # Other keys this file does not set, with their defaults:
 #
-#   quote_oid    = "1.2.840.113741.1337.6"   # Gramine's and Intel's
-#   root_ca_pem  = <unset>                   # Intel's production root
-#   [reference_values].require = false       # warn rather than refuse
+#   quote_oid       = "1.2.840.113741.1337.6"   # Gramine's and Intel's
+#   root_ca_pem     = <unset>                   # Intel's production root
+#   max_connections = 512                       # connections in flight
+#   [reference_values].require = false          # warn rather than refuse
+#
+# `max_connections` is not a throughput knob. Every connection, including one
+# that will be refused, costs a full TLS handshake against the upstream before
+# the gate can run — the evidence arrives in that handshake and there is nowhere
+# earlier to get it — so an unauthenticated client has 1:1 handshake
+# amplification onto the service this proxy protects. Clients beyond the cap
+# wait in the listen backlog rather than receiving a 502 they might read as a
+# verdict about the upstream.
 #
 # Setting `require = true` turns the warning above into a refusal. It is the
 # same gate as putting `urn:reference-values:unconfigured` on the policy's

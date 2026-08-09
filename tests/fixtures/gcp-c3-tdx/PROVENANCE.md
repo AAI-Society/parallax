@@ -71,8 +71,10 @@ in this repository, so `tests/proxy.rs` asserts only refusals —
 proxy's allow path is covered in `src/proxy/gate.rs` against outcomes built
 field by field. What no test exercises over a socket is the **allow half of the
 socket layer**: the `copy_bidirectional` call in `Proxy::handle`'s
-`Decision::Allow` arm, `Proxy::log`'s allow arm and the manifest it prints,
-`serve`'s accept-error branch, and `open_upstream`'s no-certificate branch.
+`Decision::Allow` arm, and `Proxy::log`'s allow arm with the manifest it prints.
+A handful of degenerate branches go with them; `src/proxy/mod.rs` names each
+one, and says that the list is what reading finds rather than a proof that
+nothing else is missing.
 
 That is not a bookkeeping detail. Because no test ever took the allow path,
 nothing in the suite ever read from the upstream, so nothing ever absorbed a TLS

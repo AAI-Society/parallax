@@ -19,12 +19,14 @@
 //! holds (`a_correctly_bound_quote_reaches_the_gate_and_is_allowed`).
 //!
 //! What that leaves untested over a socket is **the allow half of the socket
-//! layer**: the `copy_bidirectional` call in `Proxy::handle`'s
+//! layer** — the `copy_bidirectional` call in `Proxy::handle`'s
 //! `Decision::Allow` arm, `Proxy::log`'s allow arm and the `println!` that
-//! emits the Residual Trust Manifest, `serve`'s accept-error branch, and
-//! `open_upstream`'s no-certificate branch. See `src/proxy/mod.rs` for why the
-//! narrower phrasing this file used to carry ("exactly one statement") turned
-//! out to hide a TLS session-resumption defect that no test here could observe.
+//! emits the Residual Trust Manifest — together with a handful of degenerate
+//! branches. `src/proxy/mod.rs` carries the enumeration, and says why it is
+//! offered as "including but not limited to" rather than as a complete list:
+//! the narrower phrasing this file used to carry ("exactly one statement")
+//! turned out to hide a TLS session-resumption defect that no test here could
+//! observe.
 //!
 //! The negative half *is* tested here —
 //! `nothing_reaches_the_upstream_when_the_connection_is_refused` counts the
@@ -160,9 +162,18 @@ fn scratch() -> PathBuf {
 /// A proxy configuration pointing at `upstream`, with a policy that admits
 /// something.
 fn config_for(upstream: SocketAddr) -> Arc<ProxyConfig> {
+    config_capped(upstream, None)
+}
+
+/// [`config_for`] with an explicit `max_connections`.
+fn config_capped(upstream: SocketAddr, max_connections: Option<usize>) -> Arc<ProxyConfig> {
     let dir = scratch();
     let policy = dir.join("policy.toml");
     std::fs::write(&policy, "forbid_undetectable = false\n").expect("write the policy");
+    let cap = match max_connections {
+        Some(n) => format!("max_connections = {n}\n"),
+        None => String::new(),
+    };
     let cfg = dir.join("proxy.toml");
     std::fs::write(
         &cfg,
@@ -170,6 +181,7 @@ fn config_for(upstream: SocketAddr) -> Arc<ProxyConfig> {
             "upstream = \"https://{upstream}\"\n\
              listen = \"127.0.0.1:0\"\n\
              policy = \"{}\"\n\
+             {cap}\
              [collateral]\n\
              source = \"https://pccs.invalid\"\n\
              cache_ttl = \"12h\"\n",
@@ -185,8 +197,24 @@ fn config_for(upstream: SocketAddr) -> Arc<ProxyConfig> {
 ///
 /// Returns the address to connect to. The proxy runs until the test ends.
 async fn start_proxy(upstream: SocketAddr) -> SocketAddr {
+    let (addr, shutdown, served) = start_primed(config_for(upstream)).await;
+    // Leaked on purpose: dropping the sender resolves the receiver, which would
+    // shut the proxy down before the test has used it. These proxies stop when
+    // the test's runtime is dropped.
+    std::mem::forget(shutdown);
+    drop(served);
+    addr
+}
+
+/// A primed proxy, its address, a shutdown trigger, and the `serve` task.
+async fn start_primed(
+    cfg: Arc<ProxyConfig>,
+) -> (
+    SocketAddr,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<()>,
+) {
     let (quote, collateral, now) = fixture();
-    let cfg = config_for(upstream);
     let proxy = Arc::new(
         Proxy::new(cfg, Arc::new(FixedClock(now))).expect("the TLS client configuration builds"),
     );
@@ -197,11 +225,15 @@ async fn start_proxy(upstream: SocketAddr) -> SocketAddr {
     );
     let listener = proxy.bind().await.expect("an ephemeral port");
     let addr = listener.local_addr().expect("bound");
-    tokio::spawn(async move {
-        // Never resolves: the proxy stops when the test's runtime is dropped.
-        proxy.serve(listener, std::future::pending()).await;
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let served = tokio::spawn(async move {
+        proxy
+            .serve(listener, async {
+                let _ = rx.await;
+            })
+            .await;
     });
-    addr
+    (addr, tx, served)
 }
 
 /// Connect, send a request, read everything back.
@@ -348,12 +380,16 @@ async fn a_certificate_carrying_something_that_is_not_a_quote_is_refused() {
 
     let response = request(addr, GET).await;
     assert_is_502(&response);
-    // It fails at the collateral stage: the platform cannot be identified from
-    // something that does not parse as a quote, so there is nothing to fetch.
+    // It fails at the collateral stage, which is `Proxy::evaluate`'s
+    // fetch-error refusal arm: the platform cannot be identified from something
+    // that does not parse as a quote, so `cache_key_of` fails inside `fetch`
+    // and there is nothing to appraise against. Asserted exactly rather than as
+    // "this or a verification failure", so the arm this reaches is pinned.
     assert!(
-        response.contains("could not be obtained") || response.contains("did not verify"),
+        response.contains("collateral for the peer's platform could not be obtained"),
         "{response}"
     );
+    assert!(response.contains("quote did not parse"), "{response}");
     assert_eq!(upstream.received.load(Ordering::Relaxed), 0);
 }
 
@@ -419,6 +455,69 @@ async fn an_unreachable_upstream_is_refused() {
     let response = request(addr, GET).await;
     assert_is_502(&response);
     assert!(response.contains("could not be reached"), "{response}");
+}
+
+// ---- shutdown --------------------------------------------------------------
+
+/// Shutdown is not blocked by a saturated connection limit.
+///
+/// The regression this pins is one the previous round's fix introduced.
+/// `acquire_owned().await` used to sit *inside* the `select!` accept arm's
+/// body, so once `max_connections` were in flight and one more client arrived,
+/// `serve` stopped polling `shutdown` and Ctrl-C was deferred indefinitely —
+/// `copy_bidirectional` has no timeout, and `parallax-proxy` only drops the
+/// runtime after `serve` returns.
+///
+/// `max_connections = 1` makes the state reachable in one connection. Client A
+/// is refused and then **keeps dribbling a byte every 100 ms**, which is inside
+/// `DRAIN_WINDOW`, so its handler stays in `refuse`'s drain — holding the only
+/// permit — until the five-second `DRAIN_DEADLINE`. Client B then arrives with
+/// no permit to be had. The assertion is that `serve` returns within two
+/// seconds of the shutdown signal, comfortably inside those five.
+///
+/// **The dribble is what gives this teeth, and it was added after the first
+/// version passed against the reverted code.** Without it the drain ends after
+/// one 250 ms window, the permit comes back, and the old shape unblocks and
+/// shuts down in well under the two-second bound — so the test would have been
+/// green either way. Reverting `serve` to acquire inside the accept arm now
+/// fails it.
+#[tokio::test]
+async fn shutdown_is_not_blocked_by_a_saturated_connection_limit() {
+    let (quote, _, _) = fixture();
+    let (cert, key) = ra_tls_cert(Some(QUOTE_OID_ARCS), &quote);
+    let upstream = Upstream::spawn(cert, key).await;
+    let (addr, shutdown, served) = start_primed(config_capped(upstream.addr, Some(1))).await;
+
+    // A takes the only permit. Reading the status line proves its handler got
+    // as far as `refuse`, which is after the permit was taken.
+    let mut a = TcpStream::connect(addr)
+        .await
+        .expect("the proxy is listening");
+    a.write_all(GET).await.expect("written");
+    let mut head = [0u8; 15];
+    a.read_exact(&mut head).await.expect("the 502 status line");
+    assert_eq!(&head, b"HTTP/1.1 502 Ba");
+
+    // ...and keeps it, by never letting the drain's per-read window expire.
+    let dribble = tokio::spawn(async move {
+        while a.write_all(b".").await.is_ok() {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    });
+
+    // B arrives with no permit available.
+    let mut b = TcpStream::connect(addr)
+        .await
+        .expect("the proxy is listening");
+    let _ = b.write_all(GET).await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    shutdown.send(()).expect("the proxy is still serving");
+    let returned = tokio::time::timeout(std::time::Duration::from_secs(2), served).await;
+    dribble.abort();
+    returned
+        .expect("serve must return on shutdown even with every permit taken")
+        .expect("the serve task did not panic");
 }
 
 // ---- shape -----------------------------------------------------------------
