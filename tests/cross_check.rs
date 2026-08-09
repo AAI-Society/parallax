@@ -232,6 +232,11 @@ fn cfg() -> DeriveConfig {
         reference_values: vec![MR_TD],
         verifier_id: "urn:parallax:dcap-qvl:0.6.1".into(),
         cache_ttl: Latency::Bounded(43_200),
+        // Intel's own service, because the described deployment
+        // (`examples/verified-tdx.toml`) names `did:web:pcs.intel.com` as its
+        // collateral authority. A different source here would name a different
+        // party and the cross-check would — correctly — stop matching.
+        collateral_source: parallax::collateral::INTEL_PCS_URL.into(),
     }
 }
 

@@ -555,6 +555,7 @@ mod tests {
                 reference_values,
                 verifier_id: verifier_id(),
                 cache_ttl: Latency::Bounded(43_200),
+                collateral_source: crate::collateral::INTEL_PCS_URL.to_string(),
             },
             root_ca: RootCa::IntelProduction,
             quote_oid: DEFAULT_QUOTE_OID.to_string(),

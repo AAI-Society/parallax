@@ -331,6 +331,11 @@ impl ProxyConfig {
                 // deployment actually runs with rather than a second number
                 // typed next to it.
                 cache_ttl: cache_ttl.clone(),
+                // The host this proxy will actually ask for collateral, so the
+                // manifest names the party that chose the bundle. An operator
+                // running their own PCCS is trusting their own PCCS, not Intel,
+                // for which still-valid bundle they are handed.
+                collateral_source: file.collateral.source.clone(),
             },
             root_ca,
             quote_oid: file

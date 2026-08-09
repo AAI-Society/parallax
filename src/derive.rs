@@ -60,6 +60,9 @@ const VIA_PROXY: &str = "proxy";
 /// Whoever owns the trust anchor on the built-in path.
 const INTEL: &str = "did:web:intel.com";
 /// Intel's Provisioning Certification Service, which issues the collateral.
+///
+/// Emitted **only** when the collateral actually came from Intel's own service.
+/// See [`collateral_principal`], which is the one place this name is chosen.
 const PCS: &str = "did:web:pcs.intel.com";
 /// The Quoting Enclave that signed the quote.
 const QE: &str = "urn:qe:tdx";
@@ -97,6 +100,65 @@ pub struct DeriveConfig {
     pub verifier_id: String,
     /// How long the proxy's own collateral cache may serve a stale copy.
     pub cache_ttl: Latency,
+    /// The base URL the collateral was actually fetched from.
+    ///
+    /// **Read, not decorative.** [`collateral_principal`] turns it into the
+    /// principal that carries `accurate_collateral_issuance`, so a deployment
+    /// pointing at its own PCCS names its own PCCS rather than Intel. Before
+    /// this field existed the principal was the constant [`PCS`] regardless,
+    /// and two deployments differing only in which party chose their collateral
+    /// produced byte-identical trust sets — while `Impact::Revocation`, the
+    /// impact that entry carries, is *exactly* the thing a PCCS decides by
+    /// choosing which still-valid bundle to serve.
+    ///
+    /// It participates in `DeriveConfig`'s `PartialEq`, and so in trust-set
+    /// identity, which is the point: see `RootCa::Custom`, which carries a
+    /// whole PEM for the same reason.
+    pub collateral_source: String,
+}
+
+/// The party that served the collateral this appraisal rested on.
+///
+/// [`PCS`] when — and only when — `source` is Intel's own service. Anything
+/// else gets a principal built from the host it names, because that host is a
+/// different party: it cannot forge Intel's signatures, but it chooses *which*
+/// still-valid bundle to hand over, and choosing to serve the bundle from
+/// before a revocation is precisely the `Impact::Revocation` this assumption
+/// carries.
+///
+/// **Compared by origin, not by string.** `examples/proxy.toml` writes
+/// `https://api.trustedservices.intel.com/tdx/certification/v4` — Intel's
+/// service with the path suffix dcap-qvl trims — and a literal `==` against
+/// [`INTEL_PCS_URL`](crate::collateral::INTEL_PCS_URL) would call that a third
+/// party. Being wrong in that direction is quieter but no more honest than
+/// being wrong in the other, so the scheme-and-authority prefix is what is
+/// compared, case-insensitively, and a suffix like `.evil.com` does not match.
+///
+/// The emitted principal carries the origin rather than the whole URL: the
+/// party is the host, and two paths on one PCCS are one party.
+pub fn collateral_principal(source: &str) -> String {
+    let origin = origin_of(source);
+    if origin.eq_ignore_ascii_case(origin_of(crate::collateral::INTEL_PCS_URL)) {
+        PCS.to_string()
+    } else {
+        format!("urn:collateral-source:{origin}")
+    }
+}
+
+/// `scheme://authority` out of a URL, or the whole string if there is no path.
+///
+/// Deliberately not a URL parser: this crate has no URL dependency, the value
+/// is an operator-written base URL rather than anything a peer controls, and
+/// the only decision resting on it is which of two principal names to emit. A
+/// string it cannot make sense of is returned unchanged, which yields a
+/// distinct principal — the safe direction, since the only name that must be
+/// earned is Intel's.
+fn origin_of(url: &str) -> &str {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url;
+    };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    url.get(..scheme.len() + 3 + authority.len()).unwrap_or(url)
 }
 
 /// A check that ran and came back negative.
@@ -364,9 +426,11 @@ pub fn derive(o: &VerificationOutcome, cfg: &DeriveConfig) -> Result<TrustSet, R
     ));
 
     // Collateral was fetched and was in date at the verification time. The
-    // bound is argued in `pcs_detection_bound`.
+    // bound is argued in `pcs_detection_bound`; the party is chosen by
+    // `collateral_principal`, which names Intel only if Intel was asked.
+    let collateral_party = collateral_principal(&cfg.collateral_source);
     push(a(
-        PCS,
+        &collateral_party,
         "accurate_collateral_issuance",
         pcs_detection_bound(o),
         Impact::Revocation,
@@ -669,6 +733,7 @@ mod tests {
             reference_values: refvals,
             verifier_id: "urn:parallax:dcap-qvl:0.6.1".into(),
             cache_ttl: Latency::Bounded(43_200),
+            collateral_source: crate::collateral::INTEL_PCS_URL.into(),
         }
     }
 
@@ -1443,5 +1508,92 @@ mod tests {
             ]
         );
         assert_eq!(t.principals().len(), 8, "eight distinct parties");
+    }
+
+    // ---- the collateral source is a party, not a constant ------------------
+
+    /// The principal that appears in the set for a given source.
+    fn collateral_party(source: &str) -> String {
+        let c = DeriveConfig {
+            collateral_source: source.to_string(),
+            ..cfg(vec![[0xAB; 48]])
+        };
+        derive(&outcome(), &c)
+            .expect("the measurement matches")
+            .0
+            .iter()
+            .find(|a| a.capability == "accurate_collateral_issuance")
+            .expect("the collateral assumption is unconditional")
+            .principal
+            .clone()
+    }
+
+    /// CRITICAL regression. The collateral authority used to be the constant
+    /// `did:web:pcs.intel.com` no matter who was actually asked.
+    ///
+    /// A PCCS cannot forge Intel's signatures, but it chooses *which*
+    /// still-valid bundle to serve — which is exactly the `Impact::Revocation`
+    /// this entry carries. An operator pointing `[collateral].source` at their
+    /// own PCCS, which `examples/proxy.toml` explicitly invites, got a manifest
+    /// naming a party they never contacted and omitting the one they did, and
+    /// two deployments differing only here produced byte-identical trust sets.
+    #[test]
+    fn a_non_intel_collateral_source_is_a_different_party() {
+        let intel = collateral_party(crate::collateral::INTEL_PCS_URL);
+        assert_eq!(intel, "did:web:pcs.intel.com");
+
+        let own = collateral_party("https://pccs.corp.internal:8081");
+        assert_ne!(own, intel, "a PCCS is not Intel");
+        assert_eq!(own, "urn:collateral-source:https://pccs.corp.internal:8081");
+
+        // ...and two different PCCS hosts are two different parties, so the
+        // trust sets are not merely "not Intel" but distinguishable.
+        assert_ne!(
+            collateral_party("https://pccs.a.example"),
+            collateral_party("https://pccs.b.example")
+        );
+    }
+
+    /// Intel's service with the path suffix dcap-qvl trims is still Intel.
+    ///
+    /// `examples/proxy.toml` writes exactly this URL, so a literal `==` against
+    /// `INTEL_PCS_URL` would have made the shipped example name a third party
+    /// that does not exist — wrong in the quieter direction, but still wrong.
+    #[test]
+    fn intels_service_is_recognised_through_its_path_suffix_and_case() {
+        for source in [
+            "https://api.trustedservices.intel.com",
+            "https://api.trustedservices.intel.com/tdx/certification/v4",
+            "https://API.TrustedServices.Intel.com/sgx/certification/v4",
+        ] {
+            assert_eq!(collateral_principal(source), PCS, "{source}");
+        }
+    }
+
+    /// A host that merely looks like Intel's does not get Intel's name.
+    #[test]
+    fn a_lookalike_host_does_not_earn_intels_name() {
+        for source in [
+            "https://api.trustedservices.intel.com.evil.example",
+            "https://evil.example/api.trustedservices.intel.com",
+            "https://api.trustedservices.intel.com@evil.example",
+            "http://api.trustedservices.intel.com",
+            "api.trustedservices.intel.com",
+            "",
+        ] {
+            assert_ne!(collateral_principal(source), PCS, "{source}");
+        }
+    }
+
+    /// The shipped proxy example names Intel, since it points at Intel.
+    #[test]
+    fn the_shipped_proxy_example_still_names_intel() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cfg = crate::proxy::config::ProxyConfig::load(&root.join("examples/proxy.toml"))
+            .expect("loadable");
+        assert_eq!(
+            collateral_principal(&cfg.gate.derive.collateral_source),
+            PCS
+        );
     }
 }
