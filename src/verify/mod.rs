@@ -20,4 +20,4 @@
 
 pub mod chain;
 
-pub use chain::{verify_quote, RootCa, VerificationOutcome, VerifyError};
+pub use chain::{verify_quote, PlatformCaveat, RootCa, VerificationOutcome, VerifyError};

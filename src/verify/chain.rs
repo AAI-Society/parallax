@@ -29,6 +29,38 @@ pub enum RootCa {
     Custom(String),
 }
 
+/// A platform property that weakens what an attestation proves, independently
+/// of whether the TCB is up to date.
+///
+/// These come from the PCK certificate, not from the TCB info, so they are
+/// invisible to every status field on [`VerificationOutcome`]. A platform can
+/// be `UpToDate` with no advisories and still be one of these — the committed
+/// fixture is two of them — which is exactly why they need a name of their own
+/// rather than living as three flags a caller has to know to look at.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+pub enum PlatformCaveat {
+    /// The platform can change its TCB at runtime without re-provisioning.
+    DynamicPlatform,
+    /// Provisioning keys are cached rather than derived on demand.
+    CachedKeys,
+    /// Simultaneous multithreading is on, so sibling threads share
+    /// microarchitectural state with the TD.
+    SmtEnabled,
+}
+
+impl PlatformCaveat {
+    /// The one canonical rendering, for the same reason `Latency::label` has
+    /// one: this string will end up in a trust set and in printed output, and
+    /// two spellings of the same caveat would compare as two caveats.
+    pub fn label(&self) -> &'static str {
+        match self {
+            PlatformCaveat::DynamicPlatform => "dynamic-platform",
+            PlatformCaveat::CachedKeys => "cached-keys",
+            PlatformCaveat::SmtEnabled => "smt-enabled",
+        }
+    }
+}
+
 /// What verification established, and — just as importantly — what it
 /// assumed in order to establish it. Every field here becomes an assumption
 /// in `derive`.
@@ -120,15 +152,19 @@ impl VerificationOutcome {
     /// are behind on their microcode or misconfigured, and whose attestations
     /// are correspondingly weaker evidence.
     ///
-    /// It is also not the whole health question: a fully `UpToDate` platform
-    /// with [`smt_enabled`] set is `true` here and still carries a caveat.
+    /// **It speaks only to TCB status.** It says nothing about the PCK
+    /// platform flags, which are a separate axis and are reported separately
+    /// by [`caveats`]. The committed fixture returns `true` here *and* two
+    /// caveats, and `QuotePolicy::strict` rejects it on one of them — so a
+    /// caller that treats this method as the whole health question reaches the
+    /// opposite conclusion from Intel's own default appraisal. Ask both.
+    ///
+    /// [`caveats`]: Self::caveats
     ///
     /// The match is written out variant by variant rather than as
     /// `!= UpToDate` so that a future `TcbStatus` variant is a compile error
     /// here instead of being silently sorted into "unhealthy" — or, worse, if
     /// the sense were ever inverted, into "healthy".
-    ///
-    /// [`smt_enabled`]: Self::smt_enabled
     pub fn is_up_to_date(&self) -> bool {
         match self.tcb_status {
             TcbStatus::UpToDate => true,
@@ -143,6 +179,51 @@ impl VerificationOutcome {
             // nothing stops a caller constructing one.
             | TcbStatus::Revoked => false,
         }
+    }
+
+    /// The PCK platform flags that are set, as named caveats.
+    ///
+    /// The other axis of "is this platform healthy", and the one
+    /// [`is_up_to_date`] does not cover. Returned in a fixed order so that two
+    /// outcomes with the same caveats produce the same list.
+    ///
+    /// Only `PckCertFlag::True` counts. `False` is a flag explicitly cleared;
+    /// `Undefined` is a flag absent from the certificate, which is the normal
+    /// case for a Processor CA PCK cert and is *not* evidence that the
+    /// property is off — merely that this certificate does not say.
+    ///
+    /// [`is_up_to_date`]: Self::is_up_to_date
+    pub fn caveats(&self) -> Vec<PlatformCaveat> {
+        // Written as an exhaustive match rather than `== PckCertFlag::True` so
+        // that a new flag variant is a compile error here, and so that the
+        // treatment of `Undefined` is a decision on the page rather than a
+        // fallthrough.
+        fn set(flag: PckCertFlag) -> bool {
+            match flag {
+                PckCertFlag::True => true,
+                PckCertFlag::False | PckCertFlag::Undefined => false,
+            }
+        }
+
+        let mut caveats = Vec::new();
+        if set(self.dynamic_platform) {
+            caveats.push(PlatformCaveat::DynamicPlatform);
+        }
+        if set(self.cached_keys) {
+            caveats.push(PlatformCaveat::CachedKeys);
+        }
+        if set(self.smt_enabled) {
+            caveats.push(PlatformCaveat::SmtEnabled);
+        }
+        caveats
+    }
+
+    /// Whether the platform carries any caveat beyond its TCB status.
+    ///
+    /// `is_up_to_date() && !has_platform_caveats()` is the pair that means
+    /// what a single `is_ok()` looks like it means. Neither half is enough.
+    pub fn has_platform_caveats(&self) -> bool {
+        !self.caveats().is_empty()
     }
 }
 
@@ -296,13 +377,21 @@ fn attested_len(buffer: &[u8]) -> Result<usize, VerifyError> {
 /// been accepted is lost. The difference is only whether the rejection is an
 /// error or an abort.
 ///
-/// The other two callers of `bit_string_flags` — a certificate's KeyUsage
-/// (`crl/mod.rs:199`) and a CRLDistributionPoint's `reasons` (`cert.rs:344`) —
-/// are read only inside `RevocationOptions::check`, which `check_signed_chain`
-/// reaches only *after* `verify_signed_data` succeeds for that path node
-/// (`verify_cert.rs:150-165`). Reaching them would take a certificate validly
-/// signed up to Intel's root, so they are not attacker-reachable and are not
-/// guarded here.
+/// The same `bit_string_flags` defect has two other callers, handled
+/// elsewhere rather than here:
+///
+/// - A CRLDistributionPoint's `reasons` (`cert.rs:344`). **Reachable**, with
+///   no signature verification at all: `check_single_cert_crl` calls
+///   `RevocationOptions::check` directly, and `crl.authoritative(path)` walks
+///   the anchor certificate's `cRLDistributionPoints` before any signature is
+///   checked. Closed by [`require_sane_crl_distribution_points`].
+/// - A certificate's KeyUsage (`crl/mod.rs:199`). Not reached for the anchor:
+///   `check_single_cert_crl` passes `issuer_ku = None` (`crl/mod.rs:294`), and
+///   `check_signed_chain` initialises `issuer_key_usage` to `None` for the
+///   trust anchor (`verify_cert.rs:147`), replacing it only with certificates
+///   from the path. Certificates arriving inside the quote's PCK chain are not
+///   pre-validated by this module at all; reaching their flag parsers requires
+///   a signature that validates to the installed anchor.
 fn require_sane_crl(der: &[u8]) -> Result<(), String> {
     use x509_cert::der::oid::ObjectIdentifier;
     use x509_cert::der::Decode;
@@ -354,7 +443,69 @@ fn root_ca_der(pem_text: &str) -> Result<Vec<u8>, VerifyError> {
     }
     let der = parsed.into_contents();
     require_self_issued(&der)?;
+    require_sane_crl_distribution_points(&der)?;
     Ok(der)
+}
+
+/// Reject a root whose `cRLDistributionPoints` carries a `reasons` field.
+///
+/// What the guard does: decodes the extension and refuses the certificate if
+/// any distribution point has `reasons` present.
+///
+/// Why that is safe to refuse: webpki will not use such a distribution point
+/// either. `IssuingDistributionPoint::authoritative_for` returns `false` for
+/// any `cert_dp` with `reasons` set (`crl/types.rs:622`) — three statements
+/// after the parse that reads it. Refusing here loses nothing that would have
+/// been accepted there.
+///
+/// Why it has to be refused *here*: that parse is
+/// `CrlDistributionPoint::from_der`, which calls the same `bit_string_flags`
+/// as [`require_sane_crl`] and aborts the process on the same input, an empty
+/// BIT STRING with zero padding bits (`81 01 00` in the `reasons` position).
+/// It is reached with **no signature verification**: `check_single_cert_crl`
+/// calls `RevocationOptions::check` directly, and `crl.authoritative(path)`
+/// walks the anchor's distribution points as soon as the collateral CRL has
+/// an issuingDistributionPoint of its own. A root PEM and a collateral file
+/// are both operator-supplied files, so this is malformed file input.
+///
+/// The check is on `reasons` being *present*, not on it being empty. That is
+/// deliberately broader than the defect: `x509-cert` decodes the malformed
+/// encoding to a `ReasonFlags` with no bits set and gives no way to see that
+/// the underlying BIT STRING had zero bytes, so a narrower guard would have
+/// to reason about representations it cannot observe.
+fn require_sane_crl_distribution_points(der: &[u8]) -> Result<(), VerifyError> {
+    use x509_cert::der::oid::ObjectIdentifier;
+    use x509_cert::der::Decode;
+    use x509_cert::ext::pkix::CrlDistributionPoints;
+
+    // RFC 5280 §4.2.1.13. Spelled out for the same reason as the OID in
+    // `require_sane_crl`: x509-cert 0.3.0's `AssociatedOid` constants are not
+    // to be trusted without checking, and a guard that matches nothing
+    // reports success.
+    const ID_CE_CRL_DISTRIBUTION_POINTS: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("2.5.29.31");
+
+    let cert = x509_cert::Certificate::from_der(der)
+        .map_err(|e| VerifyError::RootCa(format!("not a DER certificate: {e}")))?;
+    let extensions = cert.tbs_certificate().extensions();
+    let Some(extensions) = extensions.as_ref() else {
+        return Ok(());
+    };
+    for ext in extensions.iter() {
+        if ext.extn_id != ID_CE_CRL_DISTRIBUTION_POINTS {
+            continue;
+        }
+        let points = CrlDistributionPoints::from_der(ext.extn_value.as_bytes())
+            .map_err(|e| VerifyError::RootCa(format!("malformed cRLDistributionPoints: {e}")))?;
+        if points.0.iter().any(|point| point.reasons.is_some()) {
+            return Err(VerifyError::RootCa(
+                "cRLDistributionPoints carries a reasons field; distribution points \
+                 sharded by revocation reason are not usable as a root CA's"
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Reject a custom root that is not self-issued, before it reaches `dcap_qvl`.
@@ -540,9 +691,59 @@ mod tests {
         assert_eq!(out.dynamic_platform, PckCertFlag::True);
         assert_eq!(out.cached_keys, PckCertFlag::False);
         assert_eq!(out.smt_enabled, PckCertFlag::True);
-        // And the platform is nonetheless fully patched: "up to date" and
-        // "no caveats" are different questions, which is the point.
-        assert!(out.is_up_to_date());
+    }
+
+    /// The two health questions disagree on the committed fixture.
+    ///
+    /// `is_up_to_date()` is `true` and `has_platform_caveats()` is also `true`
+    /// — on a real, correctly-signed, advisory-free quote that
+    /// `QuotePolicy::strict` rejects. This is the assertion that stops a
+    /// future caller from treating either method as the whole answer, and it
+    /// is only assertable because both axes reach the outcome.
+    #[test]
+    fn a_healthy_tcb_can_still_carry_platform_caveats() {
+        let (q, c, now) = fixture();
+        let out = verify_quote(&q, &c, now, &RootCa::IntelProduction, refresh()).expect("verifies");
+        assert!(out.is_up_to_date(), "the TCB really is up to date");
+        assert!(
+            out.has_platform_caveats(),
+            "and it really does carry caveats"
+        );
+        assert_eq!(
+            out.caveats(),
+            vec![PlatformCaveat::DynamicPlatform, PlatformCaveat::SmtEnabled],
+            "cached_keys is False on this fixture, so it is not a caveat"
+        );
+        assert_eq!(
+            out.caveats().iter().map(|c| c.label()).collect::<Vec<_>>(),
+            ["dynamic-platform", "smt-enabled"]
+        );
+    }
+
+    /// `Undefined` is "the certificate does not say", not "off".
+    ///
+    /// Worth pinning separately from the fixture, which has no `Undefined`
+    /// flag to exercise: the tempting shorthand `flag != PckCertFlag::False`
+    /// would turn every Processor CA certificate into three caveats.
+    #[test]
+    fn only_flags_that_are_true_become_caveats() {
+        let (q, c, now) = fixture();
+        let real =
+            verify_quote(&q, &c, now, &RootCa::IntelProduction, refresh()).expect("verifies");
+        for (flag, expected) in [
+            (PckCertFlag::True, vec![PlatformCaveat::SmtEnabled]),
+            (PckCertFlag::False, vec![]),
+            (PckCertFlag::Undefined, vec![]),
+        ] {
+            let out = VerificationOutcome {
+                dynamic_platform: PckCertFlag::Undefined,
+                cached_keys: PckCertFlag::Undefined,
+                smt_enabled: flag,
+                ..real.clone()
+            };
+            assert_eq!(out.caveats(), expected, "smt_enabled = {flag:?}");
+            assert_eq!(out.has_platform_caveats(), !expected.is_empty());
+        }
     }
 
     // ---- the buffer is not the evidence ----------------------------------
@@ -1190,5 +1391,152 @@ mod tests {
                 "{degraded:?} was classified as up to date"
             );
         }
+    }
+
+    /// A root whose `cRLDistributionPoints` carries a `reasons` field is an
+    /// error, not an abort.
+    ///
+    /// Regression test for the third reachable instance of the same
+    /// `bit_string_flags` defect, and the one that survived the first two
+    /// guards. The certificate below is canonical DER and self-issued, so it
+    /// passes `require_self_issued` unchanged; the CRL below has an
+    /// issuingDistributionPoint with a fullName and no `onlySomeReasons`, so it
+    /// passes `require_sane_crl` unchanged. Together they reach
+    /// `IssuingDistributionPoint::authoritative_for`, which walks the anchor's
+    /// distribution points, with **no signature verified anywhere**.
+    ///
+    /// Both halves are operator-supplied files. Remove
+    /// `require_sane_crl_distribution_points` and this test aborts the process
+    /// at `dcap-qvl-webpki/src/der.rs:389` instead of failing.
+    #[test]
+    fn a_root_with_reason_sharded_distribution_points_is_rejected_without_panicking() {
+        use x509_cert::der::{Decode, Encode};
+
+        // `[0] fullName { [6] URI }`, shared by the certificate and the CRL so
+        // that the CRL is authoritative for the certificate.
+        fn full_name() -> Vec<u8> {
+            tlv(0xa0, &tlv(0x86, b"http://example.invalid/c"))
+        }
+        // `SEQUENCE { SET { SEQUENCE { OID 2.5.4.3, PrintableString "R" } } }`
+        fn name() -> Vec<u8> {
+            let atv = tlv(
+                0x30,
+                &[vec![0x06, 0x03, 0x55, 0x04, 0x03], vec![0x13, 0x01, 0x52]].concat(),
+            );
+            tlv(0x30, &tlv(0x31, &atv))
+        }
+        let alg = tlv(0x30, &ECDSA_WITH_SHA256);
+
+        // The distribution point: a full name, plus `reasons` as an empty BIT
+        // STRING with zero padding bits. That last field is the whole test.
+        let dp = tlv(
+            0x30,
+            &[tlv(0xa0, &full_name()), vec![0x81, 0x01, 0x00]].concat(),
+        );
+        let crldp = tlv(
+            0x30,
+            &[
+                vec![0x06, 0x03, 0x55, 0x1d, 0x1f], // 2.5.29.31
+                tlv(0x04, &tlv(0x30, &dp)),
+            ]
+            .concat(),
+        );
+        let basic_constraints = tlv(
+            0x30,
+            &[
+                vec![0x06, 0x03, 0x55, 0x1d, 0x13], // 2.5.29.19
+                vec![0x01, 0x01, 0xff],
+                tlv(0x04, &tlv(0x30, &[0x01, 0x01, 0xff])),
+            ]
+            .concat(),
+        );
+        let spki = tlv(
+            0x30,
+            &[
+                tlv(
+                    0x30,
+                    &[
+                        vec![0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01],
+                        vec![0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07],
+                    ]
+                    .concat(),
+                ),
+                tlv(0x03, &[vec![0x00, 0x04], vec![0x07; 64]].concat()),
+            ]
+            .concat(),
+        );
+        let validity = tlv(
+            0x30,
+            &[tlv(0x17, b"250101000000Z"), tlv(0x17, b"300101000000Z")].concat(),
+        );
+        let tbs = tlv(
+            0x30,
+            &[
+                vec![0xa0, 0x03, 0x02, 0x01, 0x02], // version v3
+                vec![0x02, 0x01, 0x01],             // serial
+                alg.clone(),
+                name(), // issuer
+                validity,
+                name(), // subject: self-issued
+                spki,
+                tlv(0xa3, &tlv(0x30, &[basic_constraints, crldp].concat())),
+            ]
+            .concat(),
+        );
+        let cert_der = tlv(
+            0x30,
+            &[tbs, alg.clone(), tlv(0x03, &[0x00, 0x01, 0x02])].concat(),
+        );
+
+        // The certificate must survive the first two guards, or this test
+        // would pass for the wrong reason.
+        let parsed = x509_cert::Certificate::from_der(&cert_der).expect("x509-cert parses it");
+        assert_eq!(
+            parsed.to_der().expect("re-encodable"),
+            cert_der,
+            "the crafted root must be canonical DER, or require_self_issued rejects it first"
+        );
+
+        // A CRL with an issuingDistributionPoint and no onlySomeReasons: it
+        // passes require_sane_crl, and its presence is what makes webpki look
+        // at the certificate's distribution points at all.
+        let idp = tlv(0x30, &tlv(0xa0, &full_name()));
+        let idp_ext = tlv(
+            0x30,
+            &[
+                vec![0x06, 0x03, 0x55, 0x1d, 0x1c], // 2.5.29.28
+                vec![0x01, 0x01, 0xff],
+                tlv(0x04, &idp),
+            ]
+            .concat(),
+        );
+        let crl_tbs = tlv(
+            0x30,
+            &[
+                vec![0x02, 0x01, 0x01],
+                alg.clone(),
+                name(), // issuer, matching the certificate's
+                tlv(0x17, b"250101000000Z"),
+                tlv(0x17, b"300101000000Z"),
+                tlv(0xa0, &tlv(0x30, &idp_ext)),
+            ]
+            .concat(),
+        );
+        let crl = tlv(
+            0x30,
+            &[crl_tbs, alg, tlv(0x03, &[0x00, 0x01, 0x02])].concat(),
+        );
+
+        let (q, c, now) = fixture();
+        let mut collateral = c.clone();
+        collateral.root_ca_crl = crl;
+        let root = RootCa::Custom(pem::encode(&pem::Pem::new("CERTIFICATE", cert_der)));
+
+        let err = verify_quote(&q, &collateral, now, &root, refresh())
+            .expect_err("a reason-sharded distribution point must be refused");
+        assert!(
+            matches!(&err, VerifyError::RootCa(m) if m.contains("reasons field")),
+            "{err}"
+        );
     }
 }
