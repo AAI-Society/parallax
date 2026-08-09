@@ -22,6 +22,15 @@
 # (principal, capability) pairs that `derive` reaches from a verified quote.
 # Renaming a principal here without renaming it in `src/derive.rs` fails that
 # test, which is the point of the file.
+#
+# **This file is not an independent encoding**, and the cross-check is not the
+# experiment the paper's Section 7.1 proposes. That experiment needs a second
+# author. This file was written by the author of `src/derive.rs`, to name the
+# principals `src/derive.rs` emits. What the cross-check establishes is that
+# those principals and capabilities pair up as a bijection a single
+# `tee_attestation` stanza can express, and that they keep doing so under every
+# TCB status, platform caveat and advisory condition — not that two people
+# reached the same answer separately.
 
 name = "verified-tdx"
 claim = "execution_valid"

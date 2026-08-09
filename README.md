@@ -124,14 +124,19 @@ cargo run -- solve examples/sigma2-tdx.toml
 
 Seven deployments ship in [`examples/`](examples): a software-only host, an
 Intel TDX confidential VM, a 5-of-7 witness quorum, a zero-knowledge rollup, the
-hybrid above — and a variant of the hybrid with two separate build pipelines,
-which correctly reports nothing. A finding you cannot turn off isn't a finding.
+hybrid above, a variant of the hybrid with two separate build pipelines, which
+correctly reports nothing — a finding you cannot turn off isn't a finding — and
+[`verified-tdx.toml`](examples/verified-tdx.toml), which is the TDX deployment
+respelled with the party names a *live* verification produces.
 
-The seventh, [`verified-tdx.toml`](examples/verified-tdx.toml), is the TDX
-deployment written with the party names a *live* verification produces.
-`tests/cross_check.rs` solves it and separately derives a trust set from the
-committed quote, and asserts the two routes name the same five parties for the
-same five capabilities.
+That last one is what `tests/cross_check.rs` uses. It solves the file and
+separately derives a trust set from the committed quote, and asserts the two
+routes name the same five parties for the same five capabilities. The two routes
+are **not** independent encodings — the same author wrote both sides, and the
+capability names were shared deliberately — so this is not the
+independent-encoding experiment below. What it establishes is that the
+attribution the verifier produces is a bijection expressible as one
+`tee_attestation` stanza, and that it stays one across every platform condition.
 
 ## The five commands
 
@@ -164,10 +169,14 @@ one — and it is wrong in a format designed to be trusted. That is worse than n
 tool at all. If you take one thing from this repository, take that sentence
 rather than the incomparability result.
 
-**The evidence base is five architectures we wrote ourselves** (six files —
-the sixth is the negative control). Nothing here has been validated against
-somebody else's production system. The independent-encoding experiment we
-propose as the answer to the limit above has not been run.
+**The evidence base is five architectures we wrote ourselves** (seven files —
+one is a negative control, and one is the TDX architecture respelled with the
+identifiers a live verification produces). Nothing here has been validated
+against somebody else's production system, though the TDX correspondence is
+exercised against a real GCP C3 quote and the Intel collateral current when it
+was taken. The independent-encoding experiment we propose as the answer to the
+limit above has not been run: `tests/cross_check.rs` is a cross-check between
+two routes the same author wrote, which is a weaker thing.
 
 ---
 

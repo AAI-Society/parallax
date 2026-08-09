@@ -1,13 +1,41 @@
-//! Two independent routes to one trust set.
+//! Two routes to one trust set.
 //!
 //! `solve` computes a TDX trust set from a written description —
 //! `examples/verified-tdx.toml`, a file an operator authored. `derive` computes
-//! one from a verified quote. Nothing connects the two: the composition rules
-//! in `src/mechanism.rs` were written against the paper's Table 2, and the
-//! correspondence in `src/derive.rs` was written against what `verify_quote`
-//! actually checks. This file is where they are made to agree, which is a
-//! narrow instance of the independent-encoding experiment the paper proposes
-//! and admits it has not run.
+//! one from a verified quote. The two were written against different sources:
+//! the composition rules in `src/mechanism.rs` against the paper's Table 2, and
+//! the correspondence in `src/derive.rs` against what `verify_quote` actually
+//! checks.
+//!
+//! **They are not independent encodings, and this is not the experiment in the
+//! paper's Section 7.1.** That experiment is defined as having *a second author
+//! encode the same deployment independently* and diffing the two trust sets
+//! (`paper/main.tex`, the paragraph beginning "This matters beyond tidiness").
+//! Neither half of that holds here. One author wrote `derive`, choosing its
+//! capability names to match the ones `mechanism.rs` already used; the same
+//! author then wrote `examples/verified-tdx.toml` to name the principals
+//! `derive` emits. The shared vocabulary was deliberate and it was fixed before
+//! this file existed. Anything that cites this test as evidence for the
+//! independent-encoding experiment is citing it wrongly.
+//!
+//! What it *does* establish, which is real and is not free:
+//!
+//! - `derive`'s attribution of capabilities to parties is a **bijection**
+//!   expressible as a single `tee_attestation` stanza. Five capabilities, five
+//!   principals, one each. That had to be true for the comparison to be
+//!   possible at all, and it did not have to be true: `derive` could have split
+//!   the platform across two invented principals — it attributes the RTMR
+//!   chain, the platform TCB level and the PCK flags to one `HOST` on the
+//!   argument that they are one party — and the core would then have had no
+//!   expression in a stanza with one `host` field.
+//! - The pairing is checked, not just the two sets of names. Permuting
+//!   `endorser` and `quoting_enclave` in the deployment file leaves both
+//!   principal sets and both capability sets identical and still fails, because
+//!   the comparison is over pairs.
+//! - The bijection **holds across every platform condition**, swept over 2,646
+//!   outcomes below. No TCB degradation, platform caveat, undeclared flag or
+//!   advisory moves a party into or out of the core; they only add rows outside
+//!   it.
 //!
 //! **The comparison is scoped, and the scope is the interesting part.** The two
 //! routes do not produce equal trust sets and must not be asked to. A live
@@ -47,7 +75,7 @@ use parallax::solve::solve;
 use parallax::trust::{Assumption, TrustSet};
 use parallax::verify::{verify_quote, RootCa, VerificationOutcome};
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The five assumptions the attestation itself establishes. `derive` reaches
 /// these from a quote; `mechanism::assumptions` reaches them from a written
@@ -224,9 +252,15 @@ fn pairs_of(t: &TrustSet) -> BTreeSet<(String, String)> {
 }
 
 /// What the written description says, solved.
+///
+/// Resolved against `CARGO_MANIFEST_DIR` rather than the process's working
+/// directory, matching [`fixture`] below: `cargo test` happens to run integration
+/// tests from the package root, but nothing in Cargo's contract promises it, and
+/// two path conventions in one file is one of them being wrong.
 fn from_description() -> BTreeSet<(String, String)> {
-    let d = Deployment::load(Path::new("examples/verified-tdx.toml"))
-        .expect("examples/verified-tdx.toml loads and validates");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/verified-tdx.toml");
+    let d = Deployment::load(&path)
+        .unwrap_or_else(|e| panic!("{} loads and validates: {e}", path.display()));
     let solved = solve(&d).expect("it solves");
     pairs_of(&solved)
 }
@@ -294,11 +328,13 @@ fn deriving_from_a_quote_agrees_with_solving_a_description() {
 /// The sweep above builds outcomes by hand. This one goes through
 /// `verify_quote` against the committed fixture and its frozen collateral, so
 /// the "live quote" half of the claim is literal rather than synthetic. The
-/// fixture is a caveated platform — `dynamic_platform` and `smt_enabled` are
-/// both `True`, which `verify/chain.rs`'s
-/// `the_committed_fixture_is_rejected_by_intels_strict_policy` shows Intel's own
-/// default appraisal refuses — and the core still lines up exactly. The caveats
-/// land outside it.
+/// fixture is a caveated platform: `dynamic_platform` and `smt_enabled` are both
+/// `True` and `cached_keys` is `False`, asserted in `verify/chain.rs`'s
+/// `the_pck_platform_flags_are_reported`; Intel's own default appraisal refuses
+/// it on the first of those, asserted in the same file's
+/// `the_committed_fixture_is_rejected_by_intels_strict_policy`, which pins the
+/// message `"Dynamic platform is not allowed by policy"`. The core still lines
+/// up exactly. The caveats land outside it.
 #[test]
 fn the_real_quotes_core_agrees_with_the_description() {
     let (quote, collateral, now) = fixture();
@@ -331,8 +367,8 @@ fn the_real_quotes_core_agrees_with_the_description() {
         .iter()
         .find(|a| a.capability == "accurate_collateral_issuance")
         .expect("the collateral authority is in the core, so it is in the set");
+    // 2_590_799s, a shade under 30 days — not the 43_200s the file declares.
     assert_eq!(pcs.latency, Latency::Bounded(2_590_799));
-    assert_ne!(pcs.latency, Latency::Bounded(43_200));
 }
 
 /// Everything outside the core belongs to a named family.
