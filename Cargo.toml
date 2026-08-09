@@ -45,7 +45,14 @@ default = []
 # runtime to drive it. Off by default, and that default is the point: parallax
 # verifies attestations *offline*, against collateral frozen on disk, and a
 # tool making that argument should not ship a HTTP client and a TLS stack it
-# never calls. Enabling this took Cargo.lock from 78 packages to 354.
+# never calls. Enabling it takes the normal dependency graph from 194 crates to
+# 285, reqwest and rustls among them; `Cargo.lock` itself lists all 361 either
+# way, because a lockfile is not feature-conditional. Both numbers are one
+# command, so check them rather than trusting this comment:
+#
+#   cargo tree -e normal --prefix none | sed 's/ (.*//' | sort -u | wc -l
+#   cargo tree -e normal --prefix none --features fetch-collateral | ... | wc -l
+#   cargo tree -i reqwest -e normal        # no match without the feature
 fetch-collateral = ["dep:tokio", "dcap-qvl/report"]
 
 [dependencies]
