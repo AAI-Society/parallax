@@ -56,6 +56,26 @@ const DRAIN_LIMIT: usize = 64 * 1024;
 /// on the wire, short enough that a silent client does not hold a task.
 const DRAIN_WINDOW: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// A wall-clock bound on the whole drain, not on one read of it.
+///
+/// [`DRAIN_WINDOW`] and [`DRAIN_LIMIT`] together do **not** bound the loop:
+/// a client dribbling one byte just inside each window holds the task for
+/// `DRAIN_LIMIT × DRAIN_WINDOW`, which is about four and a half hours at
+/// roughly four bytes a second. This is the bound that actually closes it.
+const DRAIN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How many connections may be in flight at once.
+///
+/// Not a throughput knob. Every connection — including one that will be refused
+/// — costs a full TLS handshake against the *upstream* before the gate can run,
+/// because the evidence arrives in that handshake and there is nowhere earlier
+/// to get it. An unauthenticated client therefore gets 1:1 handshake
+/// amplification onto the service this proxy is meant to protect, and without a
+/// cap the only limit is the accept rate. The listen backlog absorbs the
+/// overflow, so a client beyond the cap waits rather than being refused with a
+/// 502 it might read as a verdict about the upstream.
+const MAX_CONNECTIONS: usize = 512;
+
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -104,17 +124,59 @@ pub struct Proxy {
     collateral: Arc<CollateralSource>,
     tls: Arc<rustls::ClientConfig>,
     server_name: ServerName<'static>,
+    /// Caps connections in flight. See [`MAX_CONNECTIONS`].
+    permits: Arc<tokio::sync::Semaphore>,
+}
+
+/// The TLS client configuration the proxy dials every upstream with.
+///
+/// **Resumption is disabled, and that is a security property, not a tuning
+/// choice.** rustls' default is `Resumption::in_memory_sessions(256)`, keyed on
+/// the `ServerName` — which this proxy takes from its configuration, so every
+/// connection to the upstream shares one cache entry. On a resumed handshake
+/// rustls performs no `CertificateVerify` and repopulates `peer_certificates()`
+/// from the *stored* session rather than from the wire (rustls-0.23.43
+/// `src/client/tls13.rs`, whose own comment reads "We *don't* reverify the
+/// certificate chain here"). Two things then break at once:
+///
+/// * [`AttestedPeer::verify_tls13_signature`] is never invoked, and it is the
+///   only thing in this stack that proves the peer holds the private key the
+///   quote commits to — [`AttestedPeer::verify_server_cert`] accepts every
+///   chain unconditionally, on purpose. The binding check would still pass,
+///   because it is the same certificate; it would simply be a certificate from
+///   an *earlier* connection, which is precisely the misuse `check_binding`'s
+///   contract warns about.
+/// * Attestation freshness becomes per-ticket-lifetime rather than
+///   per-connection.
+///
+/// The concrete failure is an upstream that resolves to a fleet sharing TLS
+/// ticket keys, which is the ordinary nginx/envoy/haproxy configuration:
+/// connection 1 lands on an attested trust domain and is forwarded, connection
+/// 2 presents the ticket to a **non-TDX host** in the same fleet, rustls
+/// reports `Resumed` and hands back the cached certificate, everything
+/// verifies, and traffic goes to a machine that presented no attestation at
+/// all.
+///
+/// A proxy whose entire premise is per-connection evidence has nothing to gain
+/// from resumption. `resumption_is_disabled_so_every_handshake_is_full` drives
+/// two sequential handshakes through this configuration and asserts both are
+/// `Full`; [`Proxy::open_upstream`] refuses anything that is not, so the
+/// property is enforced at run time as well as configured.
+fn tls_config() -> Result<rustls::ClientConfig, ServeError> {
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let mut tls = rustls::ClientConfig::builder_with_provider(Arc::clone(&provider))
+        .with_safe_default_protocol_versions()
+        .map_err(ServeError::Tls)?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(AttestedPeer { provider }))
+        .with_no_client_auth();
+    tls.resumption = rustls::client::Resumption::disabled();
+    Ok(tls)
 }
 
 impl Proxy {
     pub fn new(cfg: Arc<ProxyConfig>, clock: Arc<dyn Clock>) -> Result<Self, ServeError> {
-        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-        let tls = rustls::ClientConfig::builder_with_provider(Arc::clone(&provider))
-            .with_safe_default_protocol_versions()
-            .map_err(ServeError::Tls)?
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(AttestedPeer { provider }))
-            .with_no_client_auth();
+        let tls = tls_config()?;
 
         let server_name = ServerName::try_from(cfg.upstream.host.clone()).map_err(|e| {
             ServeError::ServerName {
@@ -134,6 +196,7 @@ impl Proxy {
             collateral,
             tls: Arc::new(tls),
             server_name,
+            permits: Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS)),
         })
     }
 
@@ -180,8 +243,21 @@ impl Proxy {
                 _ = &mut shutdown => return,
                 accepted = listener.accept() => match accepted {
                     Ok((client, _peer)) => {
+                        // Acquired before spawning, so the cap applies to
+                        // connections in flight rather than to tasks created.
+                        // `acquire_owned` only errors on a closed semaphore,
+                        // which nothing here does; a closed one is treated as a
+                        // reason to stop accepting rather than to accept
+                        // without a permit.
+                        let Ok(permit) = Arc::clone(&self.permits).acquire_owned().await else {
+                            eprintln!("error: the connection limiter closed; no longer accepting");
+                            return;
+                        };
                         let me = Arc::clone(&self);
-                        tokio::spawn(async move { me.handle(client).await });
+                        tokio::spawn(async move {
+                            me.handle(client).await;
+                            drop(permit);
+                        });
                     }
                     // Accepting failed for this connection, not for the
                     // listener: a peer that vanished between the SYN and the
@@ -224,7 +300,14 @@ impl Proxy {
                 // alert rather than application data;
                 // `nothing_reaches_the_upstream_when_the_connection_is_refused`
                 // in `tests/proxy.rs` counts what the upstream actually read.
+                //
+                // Dropped rather than merely shut down, and before the drain
+                // below: draining a refused client can take seconds, and
+                // holding a socket to the protected service open for that long
+                // per refusal is the resource an unauthenticated client would
+                // be spending.
                 let _ = upstream.shutdown().await;
+                drop(upstream);
                 self.refuse(&mut client, &reason).await;
             }
         }
@@ -256,6 +339,30 @@ impl Proxy {
                     up.url
                 )
             })?;
+
+        // A resumed handshake would mean the certificate below came out of
+        // rustls' session cache rather than off this connection's wire, and
+        // that no `CertificateVerify` was checked — so nothing would tie this
+        // connection to the attested trust domain. `tls_config` disables
+        // resumption, which is what makes this unreachable; the check is here
+        // anyway because it is the property the whole design rests on and a
+        // future edit to the client configuration must not be able to remove it
+        // silently.
+        match stream.get_ref().1.handshake_kind() {
+            Some(rustls::HandshakeKind::Full)
+            | Some(rustls::HandshakeKind::FullWithHelloRetryRequest) => {}
+            other => {
+                return Err(format!(
+                    "the TLS handshake with {} was {other:?}, not a full handshake: a resumed \
+                     session carries no CertificateVerify and rustls repopulates the peer's \
+                     certificate from its session cache rather than from this connection, so \
+                     the attestation would be about an earlier connection rather than this \
+                     one. This proxy disables resumption; reaching this means something \
+                     re-enabled it.",
+                    up.url
+                ));
+            }
+        }
 
         // The end-entity certificate: the leaf the peer proved possession of
         // the private key for during the handshake, which is the only one
@@ -319,14 +426,11 @@ impl Proxy {
     /// so rather than emitting an empty one: an empty residual trust set reads
     /// as "perfectly verifiable" and compares as a subset of every other set.
     fn log(&self, decision: &Decision) {
-        match decision.trust_set() {
-            Some(t) => {
-                let m = manifest(&self.cfg.gate.deployment(), t);
-                match serde_json::to_string(&m) {
-                    Ok(json) => println!("{json}"),
-                    Err(e) => eprintln!("error: the manifest could not be serialised: {e}"),
-                }
-            }
+        match self.manifest_of(decision) {
+            Some(m) => match serde_json::to_string(&m) {
+                Ok(json) => println!("{json}"),
+                Err(e) => eprintln!("error: the manifest could not be serialised: {e}"),
+            },
             None => eprintln!(
                 "note: no Residual Trust Manifest for this connection — the evidence did \
                  not verify, and there is no residual trust set for a claim that was not \
@@ -347,6 +451,20 @@ impl Proxy {
         }
     }
 
+    /// The Residual Trust Manifest for a decision, if there is one.
+    ///
+    /// Split out of [`log`](Self::log) so the document that reaches the log
+    /// sink can be asserted rather than only printed. The socket tests cannot
+    /// reach the `Some` branch — every one of them refuses at the binding, and
+    /// a binding refusal carries no trust set — so without this seam the
+    /// proxy's actual manifest emission would have no coverage at all. See
+    /// `the_manifest_emitted_for_an_allow_carries_the_proxys_own_assumptions`.
+    fn manifest_of(&self, decision: &Decision) -> Option<crate::manifest::Manifest> {
+        decision
+            .trust_set()
+            .map(|t| manifest(&self.cfg.gate.deployment(), t))
+    }
+
     /// Write the 502, drain the client, and close.
     ///
     /// Errors are ignored throughout: the client may already be gone, and there
@@ -361,22 +479,30 @@ impl Proxy {
     /// 502 it was about to read and sees a connection reset instead. Draining
     /// first is what makes the refusal actually arrive.
     ///
-    /// Bounded in both directions so a client that keeps talking cannot hold
-    /// the connection open: at most [`DRAIN_LIMIT`] bytes, and at most
-    /// [`DRAIN_WINDOW`] waiting for each read.
+    /// **Three bounds, and the third is the one that matters.** At most
+    /// [`DRAIN_LIMIT`] bytes; at most [`DRAIN_WINDOW`] waiting for any single
+    /// read; and at most [`DRAIN_DEADLINE`] for the whole loop. An earlier
+    /// version had only the first two and claimed to be bounded, which was
+    /// wrong by about four and a half hours: a client dribbling one byte just
+    /// inside each window satisfies both of them 65 536 times over.
     async fn refuse(&self, client: &mut TcpStream, reason: &str) {
         let _ = client.write_all(&gate::refusal_response(reason)).await;
         let _ = client.flush().await;
 
-        let mut sink = [0u8; 4096];
-        let mut drained = 0usize;
-        while drained < DRAIN_LIMIT {
-            match tokio::time::timeout(DRAIN_WINDOW, client.read(&mut sink)).await {
-                // EOF, a read error, or the client has gone quiet.
-                Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
-                Ok(Ok(n)) => drained = drained.saturating_add(n),
+        // The result is discarded: expiring the deadline is a normal outcome
+        // for a client that will not close its end, not an error.
+        let _ = tokio::time::timeout(DRAIN_DEADLINE, async {
+            let mut sink = [0u8; 4096];
+            let mut drained = 0usize;
+            while drained < DRAIN_LIMIT {
+                match tokio::time::timeout(DRAIN_WINDOW, client.read(&mut sink)).await {
+                    // EOF, a read error, or the client has gone quiet.
+                    Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
+                    Ok(Ok(n)) => drained = drained.saturating_add(n),
+                }
             }
-        }
+        })
+        .await;
 
         let _ = client.shutdown().await;
     }
@@ -476,5 +602,198 @@ mod tests {
             !verifier.supported_verify_schemes().is_empty(),
             "the handshake signature is still checked, by the provider's algorithms"
         );
+    }
+
+    // ---- resumption ---------------------------------------------------------
+
+    /// A TLS server on an ephemeral port that sends one byte after the
+    /// handshake and counts how many `CertificateVerify` signatures the client
+    /// asked it to produce — indirectly, by counting full handshakes.
+    ///
+    /// The byte is the point. rustls issues its `NewSessionTicket` after the
+    /// handshake, so a client that never reads never absorbs it and never
+    /// resumes. That is exactly why no test in `tests/proxy.rs` could observe
+    /// the resumption defect: every one of them refuses, and the refusal path
+    /// never reads from the upstream.
+    async fn ticket_issuing_server() -> SocketAddr {
+        let key = rcgen::KeyPair::generate().expect("keypair");
+        let mut params = rcgen::CertificateParams::new(vec!["localhost".into()]).expect("params");
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        let cert = params.self_signed(&key).expect("self-signed");
+
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let config = rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .expect("default protocol versions")
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from(cert.der().to_vec())],
+                rustls::pki_types::PrivateKeyDer::Pkcs8(
+                    rustls::pki_types::PrivatePkcs8KeyDer::from(key.serialize_der()),
+                ),
+            )
+            .expect("rcgen's key matches rcgen's certificate");
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("an ephemeral port");
+        let addr = listener.local_addr().expect("bound");
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    if let Ok(mut tls) = acceptor.accept(tcp).await {
+                        let _ = tls.write_all(b"x").await;
+                        let _ = tls.flush().await;
+                        // Held open briefly so the client's read sees the
+                        // session ticket rather than a close.
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                });
+            }
+        });
+        addr
+    }
+
+    /// Every handshake this proxy makes is a full handshake.
+    ///
+    /// The defect this pins: rustls' default `Resumption::in_memory_sessions`
+    /// is keyed on the `ServerName`, which the proxy takes from configuration,
+    /// so one `ClientConfig` shared across connections resumes. On a resumed
+    /// handshake rustls checks no `CertificateVerify` and repopulates
+    /// `peer_certificates()` from its cache, so `check_binding` would be handed
+    /// a certificate from an *earlier* connection and pass — which is the
+    /// misuse `check_binding`'s own contract warns about. With an upstream
+    /// behind shared TLS ticket keys, the later connections need not even be
+    /// the same machine.
+    ///
+    /// The client reads a byte on each connection so the `NewSessionTicket`
+    /// really is absorbed; without that this test would pass with resumption
+    /// enabled and prove nothing. Revert `tls_config`'s
+    /// `resumption = Resumption::disabled()` and the second assertion fails
+    /// with `Some(Resumed)`.
+    #[tokio::test]
+    async fn resumption_is_disabled_so_every_handshake_is_full() {
+        let addr = ticket_issuing_server().await;
+        let tls = Arc::new(tls_config().expect("the client configuration builds"));
+        let name = ServerName::try_from("localhost").expect("a name");
+
+        let mut kinds = Vec::new();
+        for _ in 0..3 {
+            let tcp = TcpStream::connect(addr).await.expect("the server is up");
+            let connector = tokio_rustls::TlsConnector::from(Arc::clone(&tls));
+            let mut stream = connector
+                .connect(name.clone(), tcp)
+                .await
+                .expect("the handshake completes");
+            // Absorb the session ticket. This is what `copy_bidirectional`
+            // does on the allow path, and what nothing on the refusal path
+            // does.
+            let mut byte = [0u8; 1];
+            let _ = stream.read(&mut byte).await;
+            kinds.push(stream.get_ref().1.handshake_kind());
+        }
+
+        assert_eq!(
+            kinds,
+            vec![
+                Some(rustls::HandshakeKind::Full),
+                Some(rustls::HandshakeKind::Full),
+                Some(rustls::HandshakeKind::Full)
+            ],
+            "a resumed handshake carries no CertificateVerify and reuses a cached certificate"
+        );
+    }
+
+    // ---- what reaches the log sink -----------------------------------------
+
+    fn test_proxy() -> Proxy {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cfg = Arc::new(
+            crate::proxy::ProxyConfig::load(&root.join("examples/proxy.toml"))
+                .expect("the shipped example loads"),
+        );
+        Proxy::new(cfg, Arc::new(FixedClock(1_754_000_000))).expect("the TLS configuration builds")
+    }
+
+    /// The manifest the proxy actually emits on an allow.
+    ///
+    /// Not reachable over a socket in this repository — every socket test
+    /// refuses at the binding, and a binding refusal carries no trust set — so
+    /// the emission path is exercised here instead, through the same
+    /// `Proxy::manifest_of` that `log` calls.
+    #[tokio::test]
+    async fn the_manifest_emitted_for_an_allow_carries_the_proxys_own_assumptions() {
+        let proxy = test_proxy();
+        let outcome = gate::most_favourable_outcome(&proxy.cfg.gate);
+        let trust_set = crate::derive::derive(&outcome, &proxy.cfg.gate.derive)
+            .expect("the floor's measurement matches by construction");
+        let decision = Decision::Allow {
+            trust_set,
+            warnings: vec!["a warning that must reach stderr".to_string()],
+        };
+
+        let m = proxy
+            .manifest_of(&decision)
+            .expect("an allow always has a trust set");
+        assert_eq!(m.schema, crate::manifest::SCHEMA);
+        assert_eq!(m.system_id, proxy.cfg.gate.system_id);
+        for capability in [
+            "sound_quote_verification",
+            "serves_current_collateral",
+            "forwards_only_what_it_verified",
+        ] {
+            assert!(
+                m.residual_trust_set
+                    .iter()
+                    .any(|e| e.capability_assumed == capability),
+                "the proxy's own {capability} is missing from what it emits"
+            );
+        }
+
+        // The document really does serialise to the JSON line `log` prints,
+        // and reparses as the same manifest `parallax check` would read.
+        let json = serde_json::to_string(&m).expect("the manifest serialises");
+        let round_tripped: crate::manifest::Manifest =
+            serde_json::from_str(&json).expect("and parses back");
+        assert_eq!(round_tripped, m);
+        round_tripped
+            .check_schema()
+            .expect("this build implements the schema it emits");
+
+        // And both arms of `log` run without panicking. Its output goes to the
+        // process's stdout and stderr and is not captured here, so this asserts
+        // that the arms execute, not what they printed.
+        proxy.log(&decision);
+        proxy.log(&Decision::Refuse {
+            reason: "for the refusal arm".to_string(),
+            trust_set: None,
+        });
+    }
+
+    /// A refusal that never produced a trust set emits no manifest.
+    #[test]
+    fn a_refusal_without_a_trust_set_emits_no_manifest() {
+        let proxy = test_proxy();
+        assert!(proxy
+            .manifest_of(&Decision::Refuse {
+                reason: "the quote did not verify".to_string(),
+                trust_set: None,
+            })
+            .is_none());
+    }
+
+    /// An upstream name the TLS stack cannot use is a construction error, not a
+    /// per-connection refusal.
+    #[test]
+    fn an_unusable_upstream_name_fails_at_construction() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut cfg =
+            crate::proxy::ProxyConfig::load(&root.join("examples/proxy.toml")).expect("loads");
+        cfg.upstream.host = "not a host name".to_string();
+        let e = Proxy::new(Arc::new(cfg), Arc::new(FixedClock(0)))
+            .expect_err("rustls will not accept that as a server name");
+        assert!(matches!(e, ServeError::ServerName { .. }), "{e}");
     }
 }

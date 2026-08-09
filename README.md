@@ -185,12 +185,15 @@ Three things worth knowing before you deploy it:
   because `policy::evaluate` treats an undetectable entry as exceeding any
   bound. So there is no policy that bounds the collateral authority while
   tolerating undetectable silicon trust.
-- **The forwarding path has no end-to-end test**, and cannot have one from this
-  repository: the only real quote committed has 64 zero bytes in `report_data`,
-  so the binding check correctly refuses it and every path past the binding is
-  unreachable over a socket. The decision logic is a pure function and is tested
-  exhaustively; the untested span is the one `copy_bidirectional` call after an
-  allow. See `src/proxy/mod.rs` and `tests/fixtures/gcp-c3-tdx/PROVENANCE.md`.
+- **The allow half of the socket layer has no test**, and cannot have one from
+  this repository: the only real quote committed has 64 zero bytes in
+  `report_data`, so the binding check correctly refuses it and every path past
+  the binding is unreachable over a socket. That covers the forwarding copy,
+  the allow log line, and the manifest emission. The decision logic is a pure
+  function and is tested exhaustively. This gap is not academic — it hid a TLS
+  session-resumption defect until review, because absorbing a session ticket
+  requires reading from the upstream and only the allow path reads. See
+  `src/proxy/mod.rs` and `tests/fixtures/gcp-c3-tdx/PROVENANCE.md`.
 
 ---
 

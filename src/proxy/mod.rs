@@ -52,10 +52,39 @@
 //!
 //! So the allow path is covered where it is decidable — in [`gate::decide`],
 //! against outcomes built field by field, exhaustively — and the gap is stated
-//! here rather than papered over. Concretely, what no test in this repository
-//! exercises is one statement: the `tokio::io::copy_bidirectional` call in
-//! `serve::Proxy::handle`'s `Decision::Allow` arm. What *is* exercised over a
-//! real TLS session is that a refused connection forwards nothing —
+//! here rather than papered over.
+//!
+//! **The gap is the allow half of the socket layer, not one statement.** An
+//! earlier version of this paragraph said "exactly one statement", which was
+//! wrong and wrong in the direction that hides things: it counted the
+//! forwarding call and forgot everything that runs beside it. Every socket test
+//! refuses at the binding, so nothing that only an allowed connection reaches is
+//! exercised over a socket. That is:
+//!
+//! * the `tokio::io::copy_bidirectional` call in `serve::Proxy::handle`'s
+//!   `Decision::Allow` arm;
+//! * `serve::Proxy::log`'s allow arm and its warnings loop, and the `println!`
+//!   that emits the Residual Trust Manifest — Step 3's deliverable and the
+//!   auditor evidence C10.2.1 asks for;
+//! * `serve::Proxy::serve`'s accept-error branch, and `open_upstream`'s
+//!   no-certificate branch.
+//!
+//! That understatement had a cost, recorded because it is the lesson: reading
+//! from the upstream is what absorbs a TLS `NewSessionTicket`, and reading only
+//! happens inside `copy_bidirectional`. Because no test ever took the allow
+//! path, every handshake in the suite was `Full`, and a session-resumption
+//! defect — rustls skips `CertificateVerify` on resumption and refills
+//! `peer_certificates()` from its cache, so the attestation would have been
+//! about an earlier connection — was invisible to the whole test suite. It is
+//! fixed in [`serve`] (resumption disabled, plus a run-time check that every
+//! handshake is full) and pinned by
+//! `resumption_is_disabled_so_every_handshake_is_full`, which reads a byte per
+//! connection precisely so that it takes the path the real allow path takes.
+//!
+//! What *is* covered: the document that reaches the log sink on an allow, via
+//! `Proxy::manifest_of` — see
+//! `the_manifest_emitted_for_an_allow_carries_the_proxys_own_assumptions`. And,
+//! over a real TLS session, that a refused connection forwards nothing:
 //! `nothing_reaches_the_upstream_when_the_connection_is_refused` in
 //! `tests/proxy.rs` counts the application bytes the upstream received and
 //! asserts zero.

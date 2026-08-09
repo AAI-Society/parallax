@@ -1014,6 +1014,58 @@ mod tests {
         }
     }
 
+    /// The floor property holds for the fields the sweep above holds fixed.
+    ///
+    /// `the_most_favourable_outcome_is_the_floor` varies the TCB statuses and
+    /// the three PCK flags, which are the axes `derive` branches on most. The
+    /// remaining fields an outcome can differ in are covered here, so "the
+    /// floor is the floor" is not a claim about two axes dressed up as a claim
+    /// about outcomes:
+    ///
+    /// * `advisory_ids` on either status adds `published_advisories_are_not_-
+    ///   exploitable`, which is an addition.
+    /// * `attested_len`, `rt_mrs` and `tcb_eval_data_number` are not read by
+    ///   `derive` at all — its doc comment lists them as deliberate omissions —
+    ///   so they can change nothing.
+    /// * `report_data` is not read by `derive` either; it is `check_binding`'s
+    ///   input, one stage earlier.
+    ///
+    /// `root_ca` is **not** swept, and cannot be: `verify_quote` echoes the
+    /// `&RootCa` it was handed into the outcome, and the gate hands it
+    /// `cfg.root_ca`, so an outcome reaching `decide` under this configuration
+    /// always carries this configuration's root. A sweep over it would be
+    /// asserting something about a value the pipeline cannot produce.
+    #[test]
+    fn the_floor_survives_the_fields_the_sweep_holds_fixed() {
+        let cfg = gate(vec![REFVAL]);
+        let floor = derive(&most_favourable_outcome(&cfg), &cfg.derive).expect("matches");
+
+        let mut variants = Vec::new();
+        for advisories in [Vec::new(), vec!["INTEL-SA-00615".to_string()]] {
+            let mut o = most_favourable_outcome(&cfg);
+            o.platform_status = TcbStatusWithAdvisory::new(TcbStatus::UpToDate, advisories.clone());
+            o.qe_status = TcbStatusWithAdvisory::new(TcbStatus::UpToDate, advisories.clone());
+            o.advisory_ids = advisories;
+            o.attested_len = 4935;
+            o.rt_mrs = [[0xCD; 48]; 4];
+            o.tcb_eval_data_number = 19;
+            o.report_data = [0xEF; 64];
+            variants.push(o);
+        }
+
+        for o in &variants {
+            let real = derive(o, &cfg.derive).expect("the measurement still matches");
+            for b in &floor.0 {
+                let a = real
+                    .0
+                    .iter()
+                    .find(|a| a.principal == b.principal && a.capability == b.capability)
+                    .unwrap_or_else(|| panic!("{} / {} left the set", b.principal, b.capability));
+                assert!(a.latency >= b.latency, "{} / {}", b.principal, b.capability);
+            }
+        }
+    }
+
     /// `examples/policy-strict.toml` cannot admit any TDX attestation.
     ///
     /// Not a defect in the policy and not one in the proxy: `forbid_undetectable

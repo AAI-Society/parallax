@@ -18,11 +18,18 @@
 //! outcomes built field by field, including one with a binding that genuinely
 //! holds (`a_correctly_bound_quote_reaches_the_gate_and_is_allowed`).
 //!
-//! What that leaves untested anywhere is one statement: the
-//! `copy_bidirectional` call in `Proxy::handle`'s `Decision::Allow` arm. The
-//! negative half of it *is* tested here —
+//! What that leaves untested over a socket is **the allow half of the socket
+//! layer**: the `copy_bidirectional` call in `Proxy::handle`'s
+//! `Decision::Allow` arm, `Proxy::log`'s allow arm and the `println!` that
+//! emits the Residual Trust Manifest, `serve`'s accept-error branch, and
+//! `open_upstream`'s no-certificate branch. See `src/proxy/mod.rs` for why the
+//! narrower phrasing this file used to carry ("exactly one statement") turned
+//! out to hide a TLS session-resumption defect that no test here could observe.
+//!
+//! The negative half *is* tested here —
 //! `nothing_reaches_the_upstream_when_the_connection_is_refused` counts the
-//! application bytes the upstream received and asserts zero.
+//! application bytes the upstream received and asserts zero — and the manifest
+//! the allow path would emit is asserted in `src/proxy/serve.rs`.
 
 use parallax::collateral::cache_key_of;
 use parallax::proxy::{FixedClock, Proxy, ProxyConfig};
@@ -280,6 +287,36 @@ async fn nothing_reaches_the_upstream_when_the_connection_is_refused() {
         0,
         "the proxy refused the connection and still forwarded application data"
     );
+}
+
+/// Two connections through one `Proxy`, each attested on its own evidence.
+///
+/// **What this pins and what it does not.** It pins that a second connection
+/// through the same `Proxy` — sharing one `rustls::ClientConfig` — reaches the
+/// same verdict rather than inheriting anything from the first. It does *not*
+/// on its own catch a re-enabled TLS session resumption: the refusal path never
+/// reads from the upstream, so it never absorbs the `NewSessionTicket` and both
+/// handshakes stay `Full` either way. The test with teeth for that is
+/// `resumption_is_disabled_so_every_handshake_is_full` in `src/proxy/serve.rs`,
+/// which reads a byte on each connection the way `copy_bidirectional` would.
+/// The run-time guard is in `Proxy::open_upstream`, which refuses any handshake
+/// that is not full.
+#[tokio::test]
+async fn a_second_connection_is_attested_on_its_own_evidence() {
+    let (quote, _, _) = fixture();
+    let (cert, key) = ra_tls_cert(Some(QUOTE_OID_ARCS), &quote);
+    let upstream = Upstream::spawn(cert, key).await;
+    let addr = start_proxy(upstream.addr).await;
+
+    for connection in 1..=2 {
+        let response = request(addr, GET).await;
+        assert_is_502(&response);
+        assert!(
+            response.contains("commits to no key at all"),
+            "connection {connection}: {response}"
+        );
+    }
+    assert_eq!(upstream.received.load(Ordering::Relaxed), 0);
 }
 
 // ---- the other refusals ----------------------------------------------------

@@ -94,26 +94,46 @@ impl Upstream {
         if rest.is_empty() {
             return Err(bad("names no host"));
         }
-        let (host, port) = match rest.rsplit_once(':') {
-            // An IPv6 literal's colons are inside brackets; a port would follow
-            // the closing bracket, so a `:` before one is part of the address.
-            Some((_, after)) if after.contains(']') => (rest, 443),
-            Some((before, after)) => {
-                let port = after
-                    .parse::<u16>()
-                    .map_err(|e| bad(&format!("has an unusable port `{after}`: {e}")))?;
-                (before, port)
-            }
-            None => (rest, 443),
+        let port_of = |text: &str| {
+            text.parse::<u16>()
+                .map_err(|e| bad(&format!("has an unusable port `{text}`: {e}")))
         };
+
+        // A bracketed IPv6 literal is parsed as one, rather than by stripping
+        // brackets off whatever is there. `split_once` rather than `rsplit_once`
+        // and an explicit `Ipv6Addr::parse` so that `[[::1]]` and `[::1` are
+        // errors here instead of hosts that only fail later, inside rustls'
+        // server-name check, where the message is about a name rather than
+        // about the configuration line that produced it.
+        let (host, port) = if let Some(bracketed) = rest.strip_prefix('[') {
+            let (inside, after) = bracketed
+                .split_once(']')
+                .ok_or_else(|| bad("opens a bracketed IPv6 literal and never closes it"))?;
+            inside.parse::<std::net::Ipv6Addr>().map_err(|e| {
+                bad(&format!(
+                    "brackets `{inside}`, which is not an IPv6 address: {e}"
+                ))
+            })?;
+            let port = match after {
+                "" => 443,
+                p => port_of(
+                    p.strip_prefix(':')
+                        .ok_or_else(|| bad("has trailing characters after its IPv6 literal"))?,
+                )?,
+            };
+            (inside.to_string(), port)
+        } else {
+            match rest.rsplit_once(':') {
+                Some((before, after)) => (before.to_string(), port_of(after)?),
+                None => (rest.to_string(), 443),
+            }
+        };
+
         if host.is_empty() {
             return Err(bad("names no host"));
         }
         Ok(Upstream {
-            host: host
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .to_string(),
+            host,
             port,
             url: value.to_string(),
         })
@@ -385,6 +405,13 @@ mod tests {
             "https://host:notaport",
             "https://host:99999",
             "svc.internal:8443",
+            // Brackets are parsed as an IPv6 literal, not trimmed off whatever
+            // is inside them.
+            "https://[[::1]]",
+            "https://[::1",
+            "https://[not-an-address]",
+            "https://[::1]8443",
+            "https://[::1]:notaport",
         ] {
             assert!(Upstream::parse(value).is_err(), "{value:?} was accepted");
         }

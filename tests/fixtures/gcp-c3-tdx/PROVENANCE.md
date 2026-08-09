@@ -69,9 +69,19 @@ Every path past the binding check is unreachable over a socket with the evidence
 in this repository, so `tests/proxy.rs` asserts only refusals —
 `the_real_fixtures_quote_is_refused_as_unbound` is the headline one — and the
 proxy's allow path is covered in `src/proxy/gate.rs` against outcomes built
-field by field. The one statement no test anywhere exercises is the
-`copy_bidirectional` call in `Proxy::handle`'s `Decision::Allow` arm. Closing
-that gap means recapturing here, with the capture script writing
+field by field. What no test exercises over a socket is the **allow half of the
+socket layer**: the `copy_bidirectional` call in `Proxy::handle`'s
+`Decision::Allow` arm, `Proxy::log`'s allow arm and the manifest it prints,
+`serve`'s accept-error branch, and `open_upstream`'s no-certificate branch.
+
+That is not a bookkeeping detail. Because no test ever took the allow path,
+nothing in the suite ever read from the upstream, so nothing ever absorbed a TLS
+`NewSessionTicket` — and a session-resumption defect in the proxy, where rustls
+would skip `CertificateVerify` and refill the peer certificate from its cache,
+was invisible to every test in the repository until a reviewer reproduced it by
+hand. This fixture's zeroed `report_data` is the root cause of that blind spot.
+
+Closing it means recapturing here, with the capture script writing
 `SHA-256(subjectPublicKeyInfo)` of the key the guest is about to serve into
 `report_data` instead of zeros. It does **not** mean relaxing the binding
 check, which is the whole difference between "a TDX machine exists somewhere"
