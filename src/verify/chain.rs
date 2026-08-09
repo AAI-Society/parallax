@@ -136,9 +136,12 @@ pub fn verify_quote(
         .map_err(|e| VerifyError::Rejected(flatten(&e)))?;
 
     // `as_td10` accepts both `Report::TD10` and `Report::TD15`, returning the
-    // latter's `base`. TD15 is TD10 plus a TEE-TCB-SVN field and mr_servicetd;
-    // the measurements this outcome carries are in the shared prefix, so a
-    // TD15 quote is verified rather than refused for being too new.
+    // latter's `base`. `TDReport15` is literally `{ base: TDReport10,
+    // tee_tcb_svn2, mr_service_td }`, so every measurement this outcome
+    // carries lives in the shared prefix and a TD15 quote is verified rather
+    // than refused for being too new. The two extra fields are dropped; a
+    // deployment that needs to appraise a service TD will have to widen
+    // `VerificationOutcome`, not work around this.
     let td = claims.report.as_td10().ok_or(VerifyError::NotTdx)?;
 
     Ok(VerificationOutcome {
