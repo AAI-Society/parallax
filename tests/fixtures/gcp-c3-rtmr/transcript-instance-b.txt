@@ -1,0 +1,245 @@
+
+===============================================================
+== Step 2: what the guest exposes
+===============================================================
+
+$ uname -a
+Linux parallax-spike-b-55694.us-central1-a.c.example-project.internal 6.17.0-1022-gcp #25-Ubuntu SMP Sat Jul 25 01:12:40 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+[exit 0]
+
+$ grep -m1 "^model name" /proc/cpuinfo
+model name	: Intel TDX
+[exit 0]
+
+$ cat /etc/os-release | head -3
+PRETTY_NAME="Ubuntu 24.04.4 LTS"
+NAME="Ubuntu"
+VERSION_ID="24.04"
+[exit 0]
+
+$ ls -la /sys/kernel/config/tsm/
+total 0
+drwxr-xr-x 3 root root 0 Aug  9 15:13 .
+drwxr-xr-x 5 root root 0 Aug  9 15:13 ..
+drwxr-xr-x 2 root root 0 Aug  9 15:13 report
+[exit 0]
+
+$ ls -laR /sys/kernel/config/tsm/
+/sys/kernel/config/tsm/:
+total 0
+drwxr-xr-x 3 root root 0 Aug  9 15:13 .
+drwxr-xr-x 5 root root 0 Aug  9 15:13 ..
+drwxr-xr-x 2 root root 0 Aug  9 15:13 report
+
+/sys/kernel/config/tsm/report:
+total 0
+drwxr-xr-x 2 root root 0 Aug  9 15:13 .
+drwxr-xr-x 3 root root 0 Aug  9 15:13 ..
+[exit 0]
+
+$ ls -la /dev/tdx_guest /dev/tpm0 /dev/tpmrm0
+crw------- 1 root root  10,   262 Aug  9 15:13 /dev/tdx_guest
+crw------- 1 root root  10,   224 Aug  9 15:13 /dev/tpm0
+crw------- 1 root root 252, 65536 Aug  9 15:13 /dev/tpmrm0
+[exit 0]
+
+$ ls -la /sys/class/tpm/
+total 0
+drwxr-xr-x  2 root root 0 Aug  9 15:14 .
+drwxr-xr-x 69 root root 0 Aug  9 15:13 ..
+lrwxrwxrwx  1 root root 0 Aug  9 15:13 tpm0 -> ../../devices/platform/MSFT0101:00/tpm/tpm0
+[exit 0]
+
+$ sudo dmesg | grep -i "tdx\|tsm" | head -20
+[    0.000000] tdx: Guest detected
+[    0.000000] tdx: Attributes: SEPT_VE_DISABLE
+[    0.000000] tdx: TD_CTLS: PENDING_VE_DISABLE ENUM_TOPOLOGY VIRT_CPUID2 REDUCE_VE
+[    1.458674] process: using TDX aware idle routine
+[    1.458674] Memory Encryption Features active: Intel TDX
+[    1.458674] smpboot: CPU0: Intel TDX (family: 0x6, model: 0x8f, stepping: 0x8)
+[    3.780518] systemd[1]: Detected confidential virtualization tdx.
+[exit 0]
+
+$ find /sys /dev -iname "*rtmr*" 2>/dev/null
+/sys/devices/virtual/misc/tdx_guest/measurements/rtmr0:sha384
+/sys/devices/virtual/misc/tdx_guest/measurements/rtmr1:sha384
+/sys/devices/virtual/misc/tdx_guest/measurements/rtmr2:sha384
+/sys/devices/virtual/misc/tdx_guest/measurements/rtmr3:sha384
+[exit 1]
+
+$ find /sys -type d -name "measurement*" 2>/dev/null
+/sys/devices/virtual/misc/tdx_guest/measurements
+[exit 1]
+
+$ ls -la /sys/class/misc/tdx_guest/ 2>&1
+total 0
+drwxr-xr-x  4 root root    0 Aug  9 15:14 .
+drwxr-xr-x 21 root root    0 Aug  9 15:13 ..
+-r--r--r--  1 root root 4096 Aug  9 15:14 dev
+drwxr-xr-x  2 root root    0 Aug  9 15:14 measurements
+drwxr-xr-x  2 root root    0 Aug  9 15:14 power
+lrwxrwxrwx  1 root root    0 Aug  9 15:13 subsystem -> ../../../../class/misc
+-rw-r--r--  1 root root 4096 Aug  9 15:13 uevent
+[exit 0]
+
+$ sudo grep -i "rtmr\|tsm_mr\|tdx_mcall" /proc/kallsyms | head -20
+ffffffff824836f0 T __pfx_tdx_mcall_get_report0
+ffffffff82483700 T tdx_mcall_get_report0
+ffffffff824837f0 T __pfx_tdx_mcall_extend_rtmr
+ffffffff82483800 T tdx_mcall_extend_rtmr
+ffffffff8344a4c0 T __pfx___traceiter_tsm_mr_read
+ffffffff8344a4d0 T __traceiter_tsm_mr_read
+ffffffff8344a520 T __pfx___probestub_tsm_mr_read
+ffffffff8344a530 T __probestub_tsm_mr_read
+ffffffff8344a540 T __pfx___traceiter_tsm_mr_refresh
+ffffffff8344a550 T __traceiter_tsm_mr_refresh
+ffffffff8344a5a0 T __pfx___probestub_tsm_mr_refresh
+ffffffff8344a5b0 T __probestub_tsm_mr_refresh
+ffffffff8344a5c0 T __pfx___traceiter_tsm_mr_write
+ffffffff8344a5d0 T __traceiter_tsm_mr_write
+ffffffff8344a620 T __pfx___probestub_tsm_mr_write
+ffffffff8344a630 T __probestub_tsm_mr_write
+ffffffff8344a640 t __pfx_trace_event_get_offsets_tsm_mr_read
+ffffffff8344a650 t trace_event_get_offsets_tsm_mr_read
+ffffffff8344a780 t __pfx_trace_raw_output_tsm_mr_read
+ffffffff8344a790 t trace_raw_output_tsm_mr_read
+[exit 141]
+
+$ ls /usr/include/asm/tdx.h && cat /usr/include/asm/tdx.h
+ls: cannot access '/usr/include/asm/tdx.h': No such file or directory
+[exit 2]
+
+===============================================================
+== Q1: is there an extension interface?
+===============================================================
+digest to extend = SHA-384("parallax-attest-spike-v1") = ff5d3205e8418cff8dbc9224178136b148cfe9b632c5eb2b5815a61f54e3311f5da84e305915556d0b599cf8a73873e0
+extended-digest.bin is 48 bytes
+
+===============================================================
+== Q1 candidate 1: configfs-tsm
+===============================================================
+
+$ ls -la /sys/kernel/config/tsm/
+total 0
+drwxr-xr-x 3 root root 0 Aug  9 15:13 .
+drwxr-xr-x 5 root root 0 Aug  9 15:13 ..
+drwxr-xr-x 2 root root 0 Aug  9 15:13 report
+[exit 0]
+
+$ sudo mkdir -p /sys/kernel/config/tsm/report/probe-1682 && ls -la /sys/kernel/config/tsm/report/probe-1682
+total 0
+drwxr-xr-x 2 root root    0 Aug  9 15:14 .
+drwxr-xr-x 3 root root    0 Aug  9 15:14 ..
+-r--r--r-- 1 root root 4096 Aug  9 15:14 generation
+--w------- 1 root root    0 Aug  9 15:14 inblob
+-r--r--r-- 1 root root    0 Aug  9 15:14 outblob
+-r--r--r-- 1 root root 4096 Aug  9 15:14 provider
+[exit 0]
+
+$ sudo rmdir /sys/kernel/config/tsm/report/probe-1682 2>/dev/null; true
+[exit 0]
+
+===============================================================
+== Q1 candidate 2: sysfs measurement registers
+===============================================================
+measurement registers at /sys/class/misc/tdx_guest/measurements
+
+$ ls -la /sys/class/misc/tdx_guest/measurements
+total 0
+drwxr-xr-x 2 root root  0 Aug  9 15:14 .
+drwxr-xr-x 4 root root  0 Aug  9 15:14 ..
+-r--r--r-- 1 root root 48 Aug  9 15:14 mrconfigid
+-r--r--r-- 1 root root 48 Aug  9 15:14 mrowner
+-r--r--r-- 1 root root 48 Aug  9 15:14 mrownerconfig
+-r--r--r-- 1 root root 48 Aug  9 15:14 mrtd:sha384
+-rw-r--r-- 1 root root 48 Aug  9 15:14 rtmr0:sha384
+-rw-r--r-- 1 root root 48 Aug  9 15:14 rtmr1:sha384
+-rw-r--r-- 1 root root 48 Aug  9 15:14 rtmr2:sha384
+-rw-r--r-- 1 root root 48 Aug  9 15:14 rtmr3:sha384
+[exit 0]
+candidate RTMR3 attribute: /sys/class/misc/tdx_guest/measurements/rtmr3:sha384 (mode 644)
+
+===============================================================
+== Q1 candidate 3: /dev/tdx_guest ioctl
+===============================================================
+
+$ sudo apt-get install -y -q gcc >/dev/null 2>&1; gcc --version | head -1
+gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+[exit 0]
+
+$ gcc -O0 -Wall -o /home/jimschwoebel/spike/ioctl-probe /home/jimschwoebel/spike/ioctl-probe.c
+[exit 0]
+
+$ sudo /home/jimschwoebel/spike/ioctl-probe
+TDX_CMD_GET_REPORT0  _IOWR('T',1,...)  OK (tdreport[0..3] = 81 00 00 00)
+sweep done: any 'T' command not printed above returned ENOTTY (no such command in this driver)
+[exit 0]
+
+===============================================================
+== Q1 candidate 4: vTPM
+===============================================================
+
+$ ls -la /dev/tpm* 2>&1
+crw------- 1 root root  10,   224 Aug  9 15:13 /dev/tpm0
+crw------- 1 root root 252, 65536 Aug  9 15:13 /dev/tpmrm0
+[exit 0]
+
+$ sudo apt-get install -y -q tpm2-tools >/dev/null 2>&1; tpm2_pcrread --version 2>&1 | head -1
+/home/jimschwoebel/spike-rtmr.sh: line 75: tpm2_pcrread: command not found
+[exit 127]
+
+$ sudo tpm2_pcrread sha256:1,2,3 2>&1
+sudo: tpm2_pcrread: command not found
+[exit 1]
+
+===============================================================
+== Q2/Q3: quote, extend, quote, extend, quote
+===============================================================
+take_quote: wrote /home/jimschwoebel/spike/quote-before.bin (8000 bytes)
+RTMR3 before (abs offset 520) = 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+MRTD        (abs offset 184) = c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5
+bytes at absolute 472 (body offset read as absolute, for comparison) = a73b93cbb7a24f2342c5b56e97cb4a8b06a6b002f963e496fd93e62b964d1e9bbb6d521316636f387ba8ea84f4bb506a
+
+===============================================================
+== extension attempt: first extension of the spike digest
+===============================================================
+writing 48 bytes to /sys/class/misc/tdx_guest/measurements/rtmr3:sha384
+
+$ sudo dd if=/home/jimschwoebel/spike/extended-digest.bin of=/sys/class/misc/tdx_guest/measurements/rtmr3:sha384 bs=48 count=1 status=none
+[exit 0]
+RESULT: write to /sys/class/misc/tdx_guest/measurements/rtmr3:sha384 was accepted
+
+$ sudo xxd -p /sys/class/misc/tdx_guest/measurements/rtmr3:sha384 | tr -d '\n'; echo
+73f94f274f5bcfccde03b398fbfd063f2687a0568b0ef760c4db4c4f35a29eae8c6a27a10f6ebc73f61c29afaf5c90c3
+[exit 0]
+take_quote: wrote /home/jimschwoebel/spike/quote-after.bin (8000 bytes)
+RTMR3 after first extension = 73f94f274f5bcfccde03b398fbfd063f2687a0568b0ef760c4db4c4f35a29eae8c6a27a10f6ebc73f61c29afaf5c90c3
+
+===============================================================
+== extension attempt: second extension of the SAME digest, same boot
+===============================================================
+writing 48 bytes to /sys/class/misc/tdx_guest/measurements/rtmr3:sha384
+
+$ sudo dd if=/home/jimschwoebel/spike/extended-digest.bin of=/sys/class/misc/tdx_guest/measurements/rtmr3:sha384 bs=48 count=1 status=none
+[exit 0]
+RESULT: write to /sys/class/misc/tdx_guest/measurements/rtmr3:sha384 was accepted
+
+$ sudo xxd -p /sys/class/misc/tdx_guest/measurements/rtmr3:sha384 | tr -d '\n'; echo
+49780670e5b2a80eb96a196720c9a20cc4f4c4653246866e5f2d2f53c90f92f4a5cd63022d38e7eee7ae021edbb42858
+[exit 0]
+take_quote: wrote /home/jimschwoebel/spike/quote-after2.bin (8000 bytes)
+RTMR3 after second extension = 49780670e5b2a80eb96a196720c9a20cc4f4c4653246866e5f2d2f53c90f92f4a5cd63022d38e7eee7ae021edbb42858
+
+===============================================================
+== verdict
+===============================================================
+first extension attempt exit status:  0 (0 = accepted)
+second extension attempt exit status: 0 (0 = accepted)
+Q2: YES — RTMR3 changed in the quote taken after the extension.
+Q3 (hash chain): YES — a second extension of the same digest produced a
+    different RTMR3, as a hash chain must.
+Q3 (across boots) is answered by running this script on a second, freshly
+booted instance and comparing rtmr3-after.hex.
+Q4 is answered by comparing mrtd.hex between instances.
+captured at 2026-08-09T15:14:12Z
+transcript is /home/jimschwoebel/spike/transcript.txt
