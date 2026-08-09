@@ -7,7 +7,7 @@
 //! assumption are the same thing seen from two sides, and this module is where
 //! the correspondence is written down.
 //!
-//! Three things here are decisions rather than transcription, and each is
+//! Four things here are decisions rather than transcription, and each is
 //! justified at its site:
 //!
 //! 1. A degraded TCB adds assumptions instead of removing the healthy ones.
@@ -15,12 +15,23 @@
 //!    [`VerificationOutcome::is_up_to_date`]), so a trust set that ignored the
 //!    status would be identical for a patched platform and an out-of-date one.
 //! 2. The PCK platform flags add assumptions too. `QuotePolicy::strict`
-//!    rejects the committed fixture on one of them while
-//!    `is_up_to_date()` returns `true`, so the two axes disagree on a real
-//!    quote and only one of them is visible in the TCB status.
-//! 3. The PCS freshness bound is the *worse* of the collateral's measured
-//!    expiry and the operator's declared refresh interval. See
+//!    rejects the committed fixture on one of them while `is_up_to_date()`
+//!    returns `true` — asserted in `verify/chain.rs`'s
+//!    `the_committed_fixture_is_rejected_by_intels_strict_policy` — so the two
+//!    axes disagree on a real quote and only one of them is visible in the TCB
+//!    status.
+//! 3. The PCS freshness bound is the *worse* of the collateral's validity
+//!    window and the operator's declared refresh interval. See
 //!    [`pcs_detection_bound`].
+//! 4. A measurement that matches no configured reference value is a
+//!    [`Refutation`], not a member of the returned set. See [`derive`].
+//!
+//! **[`derive`] is a pure function of its two arguments and reads no clock.**
+//! That is load-bearing rather than tidy: `compare::compare` decides whether two
+//! deployments are `Equal` by set equality, and `Assumption::latency`
+//! participates in `PartialEq`, so any time-varying quantity reaching a latency
+//! field would make one deployment `Incomparable` with itself a second later.
+//! [`pcs_detection_bound`] is where that pressure lands.
 //!
 //! [`verify_quote`]: crate::verify::verify_quote
 
@@ -62,6 +73,12 @@ const HOST: &str = "urn:host:unattributed";
 /// Whoever chose the reference values the measurement was compared against.
 const REFERENCE_VALUES: &str = "urn:reference-values:configured";
 /// Stands in for the reference values that were not supplied.
+///
+/// A distinct principal from [`REFERENCE_VALUES`], not the same one with a
+/// different capability: `TrustSet::principals()` is one of the aggregate views
+/// consumers read, and "nobody was trusted for the workload's identity because
+/// nobody was asked" must not present the same list of parties as "somebody was
+/// asked and agreed".
 const NO_REFERENCE_VALUES: &str = "urn:reference-values:unconfigured";
 /// The proxy's collateral cache.
 const CACHE: &str = "urn:parallax:collateral-cache";
@@ -80,14 +97,46 @@ pub struct DeriveConfig {
     pub verifier_id: String,
     /// How long the proxy's own collateral cache may serve a stale copy.
     pub cache_ttl: Latency,
-    /// The time the derivation is made as of, in seconds since the epoch.
+}
+
+/// A check that ran and came back negative.
+///
+/// Not an assumption and not a member of any trust set: a residual trust set
+/// answers "given that this verified, whose honesty are you resting on", and
+/// there is no answer to that question for evidence that has been refuted. It
+/// is a verification failure that arrives one stage late, because the reference
+/// values live in this crate's configuration rather than in the quote.
+///
+/// Returned as an `Err` rather than reported inside the set because every
+/// aggregate view of a `TrustSet` — `len`, `principals`, `system_latency`,
+/// `compare` — would otherwise show a refuted measurement and a matching one as
+/// the same thing, leaving a capability string as the only difference and a
+/// doc comment as the only instruction to look at it.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum Refutation {
+    /// `mr_td` is none of the configured reference values.
     ///
-    /// An input for the same reason `verify_quote`'s `now_secs` is: nothing in
-    /// this crate reads the system clock. It is needed because
-    /// [`VerificationOutcome::collateral_expires_at`] is an absolute instant
-    /// and a [`Latency`] is a duration, so turning one into the other takes a
-    /// reference point. See [`pcs_detection_bound`].
-    pub now_secs: u64,
+    /// The measurement is not printed: at 48 bytes it would dominate the
+    /// message, and a caller that wants it has [`Refutation::mr_td`].
+    #[error(
+        "the attested measurement matches none of the {configured} configured \
+         reference values"
+    )]
+    Measurement {
+        /// The MRTD the quote actually carried.
+        mr_td: [u8; 48],
+        /// How many reference values it was compared against.
+        configured: usize,
+    },
+}
+
+impl Refutation {
+    /// The measurement that was refuted.
+    pub fn mr_td(&self) -> [u8; 48] {
+        match self {
+            Refutation::Measurement { mr_td, .. } => *mr_td,
+        }
+    }
 }
 
 fn a(
@@ -130,46 +179,45 @@ fn reference_check(o: &VerificationOutcome, cfg: &DeriveConfig) -> ReferenceChec
 /// How long a lapse by the collateral authority can go unnoticed.
 ///
 /// What this does: takes the join — the worse — of two durations. One is
-/// measured, `collateral_expires_at - now_secs`; the other is declared, the
-/// `collateral_refresh` the operator handed to `verify_quote`.
+/// measured, [`VerificationOutcome::collateral_validity_secs`]; the other is
+/// declared, the `collateral_refresh` the operator handed to `verify_quote`.
 ///
 /// Why both, rather than the measured one alone: they bound different things
 /// and neither implies the other.
 ///
-/// - The measured expiry is enforced. `verify_quote` rejects collateral that
+/// - The measured window is enforced. `verify_quote` rejects collateral that
 ///   has expired at the verification time — `verify/chain.rs`'s
 ///   `verification_far_in_the_future_fails_on_expired_collateral` is that
-///   assertion — so this collateral cannot be believed past that instant no
-///   matter what anyone intends. But it bounds *this* collateral only: the
-///   next fetch may carry a longer window, so it is not a bound on the
-///   deployment.
+///   assertion — so a bundle cannot be believed for longer than Intel issued it
+///   for, no matter what anyone intends.
 /// - The declared refresh interval is a promise. Nothing in this crate checks
 ///   that the operator keeps it.
 ///
-/// Taking the max means neither number can quietly make the bound look
-/// tighter than the other allows. `Latency::join_mut` is `max` on two
-/// `Bounded` values (`latency.rs:56`) and absorbing on `Never`
-/// (`latency.rs:55`), which is the same operation `TrustSet::system_latency`
-/// uses to combine members (`trust.rs:85`), so a bound built this way composes
-/// the way the rest of the crate expects.
+/// Taking the max means neither number can quietly make the bound look tighter
+/// than the other allows. `Latency::join_mut` is `max` on two `Bounded` values
+/// (`src/latency.rs:56`) and absorbing on `Never` (`src/latency.rs:55`), which is the
+/// same operation `TrustSet::system_latency` uses to combine members
+/// (`src/trust.rs:85`), so a bound built this way composes.
 ///
-/// The cost of this choice is stated plainly: when the operator really does
-/// refresh every 12h against 30-day collateral, this reports 30 days. It
-/// over-states rather than under-states, which is the direction an
-/// all-clear-adjacent number should err in.
+/// The cost is stated plainly: an operator who really does refresh every 12h
+/// against 30-day collateral is reported as 30 days. It over-states rather than
+/// under-states, which is the direction an all-clear-adjacent number should err
+/// in.
 ///
-/// `saturating_sub` rather than plain subtraction: `derive` may be called with
-/// a `now_secs` after the collateral expired — `verify_quote` and `derive` take
-/// separate clock arguments and nothing forces a caller to pass the same
-/// instant to both. Plain subtraction would panic in debug and wrap in release,
-/// and the wrapped value is on the order of 584 billion years — a number that
-/// would read as an enormous bound rather than as the bug it is. Zero is the
-/// right answer: collateral that has expired is collateral the verifier will
-/// not accept.
-fn pcs_detection_bound(o: &VerificationOutcome, cfg: &DeriveConfig) -> Latency {
-    let measured = Latency::Bounded(o.collateral_expires_at.saturating_sub(cfg.now_secs));
+/// **Why the collateral's *validity window* and not its remaining life.** The
+/// obvious measured quantity is `collateral_expires_at - now`, and it is wrong
+/// here for two reasons that took a review to see. It is not a property of the
+/// deployment — it shrinks every second, so the same quote and the same config
+/// yield sets that `compare::compare` calls `Incomparable` one second apart,
+/// because `Assumption::latency` participates in `PartialEq`. And it is not
+/// even the quantity wanted: it describes how much of one fetched bundle is
+/// left, whereas the assumption being bounded is about the collateral authority
+/// across refreshes, for which the width of the window Intel issues is the
+/// right figure. `collateral_validity_secs` is
+/// `collateral_expires_at - collateral_issued_at`, which does not move.
+fn pcs_detection_bound(o: &VerificationOutcome) -> Latency {
     let mut bound = o.collateral_refresh.clone();
-    bound.join_mut(measured);
+    bound.join_mut(Latency::Bounded(o.collateral_validity_secs()));
     bound
 }
 
@@ -214,18 +262,22 @@ fn caveat_assumption(caveat: PlatformCaveat) -> &'static str {
     }
 }
 
-/// Whether any PCK platform flag is absent from the certificate.
+/// The capabilities owed to PCK platform flags the certificate does not carry.
 ///
-/// What this does: matches each of the three flags exhaustively and reports
-/// whether any is `Undefined`.
+/// What this does: matches each of the three flags exhaustively and, for each
+/// one that is `Undefined`, yields the capability naming the property that was
+/// assumed off without evidence. One capability per flag, for the same reason
+/// [`tcb_assumption`] gives one per status: two platforms whose certificates
+/// are silent about *different* things are not in the same position, and a
+/// single shared capability would give them identical trust sets.
 ///
-/// Why it is a separate question from [`VerificationOutcome::caveats`]: that
+/// Why this is a separate question from [`VerificationOutcome::caveats`]: that
 /// method answers "which properties are on", and `Undefined` is not "off" — it
 /// is the certificate declining to say. dcap-qvl reads all three through
 /// `find_extension_optional` under the CONFIGURATION OID and comments that they
-/// are "only present in Platform CA certs" (dcap-qvl-0.6.1 `intel.rs:91`), so
-/// a Processor CA PCK certificate yields three `None`s, which reach
-/// `VerificationOutcome` as `Undefined` (`verify.rs:823`).
+/// are "only present in Platform CA certs" (dcap-qvl-0.6.1 `src/intel.rs:91`),
+/// so a Processor CA PCK certificate yields three `None`s, which reach
+/// `VerificationOutcome` as `Undefined` (dcap-qvl-0.6.1 `src/verify.rs:823`).
 ///
 /// A trust set that said nothing for such a platform would make the *less*
 /// informative certificate look cleaner than the committed fixture, which
@@ -235,15 +287,26 @@ fn caveat_assumption(caveat: PlatformCaveat) -> &'static str {
 /// Not tested against a real Processor CA quote: this repository has one
 /// fixture and it is a Platform CA quote with all three flags declared. The
 /// `Undefined` path is exercised by constructing the outcome directly, in
-/// `undeclared_flags_are_their_own_assumption`.
-fn has_undeclared_flags(o: &VerificationOutcome) -> bool {
+/// `undeclared_flags_are_their_own_assumptions`.
+fn undeclared_flag_assumptions(o: &VerificationOutcome) -> Vec<&'static str> {
     fn undeclared(flag: PckCertFlag) -> bool {
         match flag {
             PckCertFlag::Undefined => true,
             PckCertFlag::True | PckCertFlag::False => false,
         }
     }
-    undeclared(o.dynamic_platform) || undeclared(o.cached_keys) || undeclared(o.smt_enabled)
+
+    let mut capabilities = Vec::new();
+    if undeclared(o.dynamic_platform) {
+        capabilities.push("undeclared_dynamic_platform_is_off");
+    }
+    if undeclared(o.cached_keys) {
+        capabilities.push("undeclared_cached_keys_are_off");
+    }
+    if undeclared(o.smt_enabled) {
+        capabilities.push("undeclared_smt_is_off");
+    }
+    capabilities
 }
 
 /// Turn what verification established into what it assumed.
@@ -251,7 +314,26 @@ fn has_undeclared_flags(o: &VerificationOutcome) -> bool {
 /// Each step of `verify_quote` establishes a fact conditional on somebody's
 /// honesty. That party is a member of the residual trust set, and this is
 /// where the correspondence is made explicit.
-pub fn derive(o: &VerificationOutcome, cfg: &DeriveConfig) -> TrustSet {
+///
+/// `Err` means a check ran and came back negative — see [`Refutation`]. There
+/// is no trust set to return in that case, and returning one anyway is what
+/// makes a refuted attestation readable as a good one.
+///
+/// Fields of `o` this deliberately does **not** use, since the module explains
+/// every other one:
+///
+/// - `report_data` and `rt_mrs` bind a quote to a key and to a boot sequence.
+///   Neither is compared to anything here, so neither yields an assumption
+///   beyond the unconditional one below. A deployment that binds a TLS key into
+///   `report_data` has a *stronger* claim than this trust set expresses.
+/// - `attested_len` is about the buffer rather than about any party.
+/// - `tcb_eval_data_number` is trust-relevant and is dropped anyway, which is
+///   worth naming as a gap rather than passing over: a low number against
+///   Intel's current one means the appraisal used stale rules. Deriving an
+///   assumption from it needs the current number, which is not in the quote,
+///   not in the collateral, and not in `DeriveConfig`. Until something supplies
+///   it, an assumption keyed on this field would be one nobody could evaluate.
+pub fn derive(o: &VerificationOutcome, cfg: &DeriveConfig) -> Result<TrustSet, Refutation> {
     let m = VIA_ATTESTATION;
     let mut t = TrustSet::default();
     let mut push = |x: Assumption| {
@@ -286,7 +368,7 @@ pub fn derive(o: &VerificationOutcome, cfg: &DeriveConfig) -> TrustSet {
     push(a(
         PCS,
         "accurate_collateral_issuance",
-        pcs_detection_bound(o, cfg),
+        pcs_detection_bound(o),
         Impact::Revocation,
         m,
     ));
@@ -325,24 +407,29 @@ pub fn derive(o: &VerificationOutcome, cfg: &DeriveConfig) -> TrustSet {
     // platform behind on its microcode would produce a trust set identical to
     // a patched one's.
     //
-    // Attributed to the two unmerged statuses rather than to the merged
-    // `tcb_status`, because the merged value cannot say which party is behind.
-    // Nothing is lost by ignoring the merged value: it is
-    // `platform.converge_with_component(qe)` (dcap-qvl-0.6.1 `tcb_info.rs:222`),
-    // which is `max` by severity except for one arm that requires a component
-    // of `OutOfDate`, and `UpToDate` has severity 0 (`tcb_info.rs:165`) — so the
-    // merged status is `UpToDate` exactly when both parts are. That equivalence
-    // is asserted against dcap-qvl's own `merge` over all 49 pairs in
-    // `the_merged_status_is_up_to_date_only_when_both_parts_are`, so it is a
-    // checked property rather than a reading of the source.
+    // Attributed primarily to the two unmerged statuses rather than to the
+    // merged `tcb_status`, because the merged value cannot say which party is
+    // behind.
+    //
+    // What the 49-pair test
+    // `the_merged_status_is_up_to_date_only_when_both_parts_are` proves is
+    // exactly one thing: the merged status is `UpToDate` precisely when both
+    // parts are, so the healthy case cannot hide a degradation. It does **not**
+    // prove that the merged value is redundant in general, and it is not.
+    // Intel's convergence rule has an exception —
+    // `platform.converge_with_component(qe)` maps `ConfigurationNeeded` +
+    // `OutOfDate` to `OutOfDateConfigurationNeeded` (dcap-qvl-0.6.1
+    // `src/tcb_info.rs:180`) — which manufactures a verdict *neither part
+    // carries*. The merged arm below is what names it.
     //
     // One wrinkle in the attribution, recorded because it is not visible in the
     // field names: for TDX, `platform_status` has already had the *TDX module*
-    // identity's status converged into it (`verify.rs:1031`) and that module's
-    // advisories appended (`verify.rs:1034`). So a platform-side degradation
-    // here may originate in the TDX module rather than in the host's microcode.
-    // `HOST` is still the party to name — the host chooses which TDX module it
-    // loads — but the assumption is coarser than its capability string suggests.
+    // identity's status converged into it (dcap-qvl-0.6.1 `src/verify.rs:1031`)
+    // and that module's advisories appended (dcap-qvl-0.6.1 `src/verify.rs:1034`). So a
+    // platform-side degradation here may originate in the TDX module rather
+    // than in the host's microcode. `HOST` is still the party to name — the host
+    // chooses which TDX module it loads — but the assumption is coarser than its
+    // capability string suggests.
     for (principal, status) in [(HOST, &o.platform_status), (QE, &o.qe_status)] {
         if let Some(capability) = tcb_assumption(status.status) {
             push(a(
@@ -368,6 +455,44 @@ pub fn derive(o: &VerificationOutcome, cfg: &DeriveConfig) -> TrustSet {
         }
     }
 
+    // The converged verdict, when it is worse than either part on its own.
+    //
+    // Two things this closes. Intel's convergence exception produces a status
+    // neither component carries, and without this arm that verdict is named
+    // nowhere. And `derive` otherwise reads `o.tcb_status` not at all, so a
+    // hand-built `VerificationOutcome` — every field is `pub` — with
+    // `tcb_status: Revoked` and both parts `UpToDate` would yield a set equal to
+    // the healthy one. `verify_quote` cannot produce that (a `Revoked` TCB is
+    // rejected inside dcap-qvl's pipeline before any policy runs), and I have
+    // not tried to reach it through `verify_quote`; the point is that
+    // `VerificationOutcome` is a `pub` struct with `pub` fields and this
+    // function is `pub`.
+    //
+    // Attributed to `HOST` rather than to an invented "the appraisal" principal.
+    // A trust set holds parties, and the converged verdict is not one; the host
+    // is the party that can act on it, since it owns both the platform
+    // configuration and the choice of QE. The guard is `>` against *both* parts,
+    // so in the ordinary case — where the merged status simply equals the worse
+    // component — nothing is added and the degradation stays attributed to the
+    // component that caused it. `TcbStatus`'s `Ord` is by severity (dcap-qvl-0.6.1
+    // `src/tcb_info.rs:188`); this is not `TrustSet`, which has no `Ord`.
+    //
+    // What this buys, stated as the tests assert it and no wider:
+    // `a_tcb_arm_fires_whenever_the_outcome_is_not_up_to_date` sweeps all 49
+    // status pairs against all 7 forced merged values and asserts the direction
+    // that matters — `!is_up_to_date()` implies some TCB assumption is present.
+    // The converse is false and is meant to be: force `tcb_status` back to
+    // `UpToDate` over an `OutOfDate` platform and the platform arm still fires,
+    // which is `is_up_to_date()` reporting the field it was handed rather than
+    // `derive` over-reporting. On outcomes whose three status fields agree —
+    // the shape `verify_quote` produces — the relationship is exact, and that is
+    // `on_a_consistent_outcome_the_tcb_arms_fire_exactly_when_it_is_degraded`.
+    if o.tcb_status > o.platform_status.status && o.tcb_status > o.qe_status.status {
+        if let Some(capability) = tcb_assumption(o.tcb_status) {
+            push(a(HOST, capability, Latency::Never, Impact::Revocation, m));
+        }
+    }
+
     // The PCK platform flags, the axis `is_up_to_date()` does not cover.
     //
     // This matters on the only real quote this repository has: the committed
@@ -375,9 +500,15 @@ pub fn derive(o: &VerificationOutcome, cfg: &DeriveConfig) -> TrustSet {
     // `UpToDate` with no advisories, and `QuotePolicy::strict` rejects it
     // ("Dynamic platform is not allowed by policy"). A trust set built from the
     // TCB status alone would report a clean answer for a platform Intel's own
-    // default appraisal refuses. `verify/chain.rs`'s
-    // `a_healthy_tcb_can_still_carry_platform_caveats` pins both halves of that
-    // disagreement.
+    // default appraisal refuses.
+    //
+    // Both halves are asserted, in two tests in `src/verify/chain.rs`:
+    // `a_healthy_tcb_can_still_carry_platform_caveats` asserts `is_up_to_date()`
+    // together with the caveat list, and
+    // `the_committed_fixture_is_rejected_by_intels_strict_policy` asserts the
+    // rejection message. The second of those did not exist when this comment
+    // was first written, and the claim it cites had been made five times in this
+    // repository on the strength of one manual measurement.
     for caveat in o.caveats() {
         push(a(
             HOST,
@@ -387,17 +518,17 @@ pub fn derive(o: &VerificationOutcome, cfg: &DeriveConfig) -> TrustSet {
             m,
         ));
     }
-    if has_undeclared_flags(o) {
-        push(a(
-            HOST,
-            "undeclared_platform_configuration_is_benign",
-            Latency::Never,
-            Impact::Soundness,
-            m,
-        ));
+    for capability in undeclared_flag_assumptions(o) {
+        push(a(HOST, capability, Latency::Never, Impact::Soundness, m));
     }
 
     // What the measurement was compared against, if anything.
+    //
+    // The refuting arm returns rather than pushing, and the `match` is written
+    // here rather than as a guard at the top of the function so that the three
+    // outcomes of the comparison are decided in one place, exhaustively, with no
+    // arm that has to be argued unreachable. `t` is local and nothing has
+    // escaped, so returning from the middle discards a half-built set.
     match reference_check(o, cfg) {
         ReferenceCheck::Matched => push(a(
             REFERENCE_VALUES,
@@ -416,23 +547,24 @@ pub fn derive(o: &VerificationOutcome, cfg: &DeriveConfig) -> TrustSet {
             Impact::Soundness,
             m,
         )),
-        // A comparison happened and refuted the claim. `golden_value_correctness`
-        // is deliberately absent: emitting it here would state that the
-        // measurement matched a reference value when it did not.
+        // A comparison ran and refuted the claim, so there is no trust set.
         //
-        // `Bounded(0)` because this is not something anyone has to be trusted
-        // about — it has already been detected, by this function. Zero is the
-        // identity of `Latency::join` on `Bounded` values (`latency.rs:56`), so
-        // this member cannot change `TrustSet::system_latency`; it is here to
-        // be *read*, since `derive` returns a `TrustSet` and has no other way
-        // to say so. A caller must treat this as a refusal, not a caveat.
-        ReferenceCheck::NoMatch => push(a(
-            REFERENCE_VALUES,
-            "measurement_matched_no_configured_reference_value",
-            Latency::Bounded(0),
-            Impact::Soundness,
-            m,
-        )),
+        // An earlier draft made this an assumption with `Latency::Bounded(0)`,
+        // reasoning that a refutation is "already detected" and that zero is the
+        // identity of `Latency::join` so it could not distort `system_latency`.
+        // Every step of that was true and the conclusion was still wrong:
+        // `Bounded(0)` was chosen precisely *because* it moves nothing, which is
+        // the same as saying the refutation was invisible to every aggregate a
+        // consumer reads. Measured, the matched and refuted sets were both len
+        // 8, both 8 principals, both `system_latency() == Never`, with
+        // byte-identical `principals()` — one capability string apart, and not
+        // even ordinally larger.
+        ReferenceCheck::NoMatch => {
+            return Err(Refutation::Measurement {
+                mr_td: o.mr_td,
+                configured: cfg.reference_values.len(),
+            })
+        }
     }
 
     // The proxy's own contribution. A tool that enumerates everyone else's
@@ -461,20 +593,33 @@ pub fn derive(o: &VerificationOutcome, cfg: &DeriveConfig) -> TrustSet {
         p,
     ));
 
-    t
+    Ok(t)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compare::{compare, Relation};
     use crate::verify::verify_quote;
     use dcap_qvl::TcbStatusWithAdvisory;
+
+    /// Every `TcbStatus` variant, so the exhaustive matches in this module are
+    /// exhaustive in fact and not only in the compiler's opinion.
+    const ALL_STATUSES: [TcbStatus; 7] = [
+        TcbStatus::UpToDate,
+        TcbStatus::SWHardeningNeeded,
+        TcbStatus::ConfigurationNeeded,
+        TcbStatus::ConfigurationAndSWHardeningNeeded,
+        TcbStatus::OutOfDate,
+        TcbStatus::OutOfDateConfigurationNeeded,
+        TcbStatus::Revoked,
+    ];
 
     /// A healthy platform: `UpToDate` everywhere, no advisories, and every PCK
     /// flag explicitly `False`.
     ///
     /// `False` rather than `Undefined` on the flags because `Undefined` is a
-    /// caveat of its own here (see `has_undeclared_flags`), and the tests
+    /// caveat of its own here (see `undeclared_flag_assumptions`), and the tests
     /// inherited from the brief want the minimal set. The committed fixture is
     /// *not* this shape — it carries two `True` flags — which is the subject of
     /// `the_real_fixtures_caveats_reach_the_trust_set`.
@@ -491,23 +636,45 @@ mod tests {
             dynamic_platform: PckCertFlag::False,
             cached_keys: PckCertFlag::False,
             smt_enabled: PckCertFlag::False,
-            // One day of collateral left at `NOW`.
-            collateral_expires_at: NOW + 86_400,
+            // A one-day collateral bundle.
+            collateral_expires_at: 86_400,
+            collateral_issued_at: 0,
             tcb_eval_data_number: 19,
             collateral_refresh: Latency::Bounded(43_200),
             root_ca: RootCa::IntelProduction,
         }
     }
 
-    const NOW: u64 = 1_750_000_000;
+    /// An outcome whose merged `tcb_status` really is the merge of its parts.
+    ///
+    /// Setting `platform_status` by hand and leaving `tcb_status` at `UpToDate`
+    /// builds an outcome `verify_quote` could never return, and a test written
+    /// against one asserts something about nothing. This runs dcap-qvl's own
+    /// `merge` so the three fields agree the way they do in the field.
+    fn degraded(platform: TcbStatus, qe: TcbStatus) -> VerificationOutcome {
+        let platform_status = TcbStatusWithAdvisory::new(platform, Vec::new());
+        let qe_status = TcbStatusWithAdvisory::new(qe, Vec::new());
+        let merged = platform_status.clone().merge(&qe_status);
+        VerificationOutcome {
+            tcb_status: merged.status,
+            platform_status,
+            qe_status,
+            advisory_ids: merged.advisory_ids,
+            ..outcome()
+        }
+    }
 
     fn cfg(refvals: Vec<[u8; 48]>) -> DeriveConfig {
         DeriveConfig {
             reference_values: refvals,
             verifier_id: "urn:parallax:dcap-qvl:0.6.1".into(),
             cache_ttl: Latency::Bounded(43_200),
-            now_secs: NOW,
         }
+    }
+
+    /// `derive` on a matching measurement, unwrapped.
+    fn set(o: &VerificationOutcome) -> TrustSet {
+        derive(o, &cfg(vec![[0xAB; 48]])).expect("the measurement matches")
     }
 
     fn caps(t: &TrustSet) -> Vec<&str> {
@@ -522,7 +689,7 @@ mod tests {
 
     #[test]
     fn with_reference_values_the_set_names_five_attestation_parties() {
-        let t = derive(&outcome(), &cfg(vec![[0xAB; 48]]));
+        let t = set(&outcome());
         for cap in [
             "silicon_and_microcode_integrity",
             "accurate_collateral_issuance",
@@ -539,63 +706,63 @@ mod tests {
         // Nothing was compared, so nothing was assumed. This is the whole
         // practical point: you proved some code ran in a genuine TD, not
         // that it is yours.
-        let t = derive(&outcome(), &cfg(vec![]));
+        let t = derive(&outcome(), &cfg(vec![])).expect("nothing to refute");
         assert!(!has(&t, "golden_value_correctness"));
         // And the hole is named rather than silent.
         assert!(has(&t, "workload_identity_was_never_compared"));
     }
 
-    /// A configured reference value that does not match is not a match.
-    ///
-    /// The failure this guards against is the one where `derive` treats
-    /// "reference values were supplied" as "the measurement was checked and
-    /// passed", and reports `golden_value_correctness` for a quote measuring
-    /// something else entirely.
-    #[test]
-    fn a_measurement_matching_no_reference_value_is_not_golden() {
-        let t = derive(&outcome(), &cfg(vec![[0x01; 48], [0x02; 48]]));
-        assert!(!has(&t, "golden_value_correctness"));
-        assert!(!has(&t, "workload_identity_was_never_compared"));
-        assert!(has(&t, "measurement_matched_no_configured_reference_value"));
-    }
-
     #[test]
     fn one_matching_value_among_several_is_a_match() {
-        let t = derive(&outcome(), &cfg(vec![[0x01; 48], [0xAB; 48], [0x02; 48]]));
+        let t = derive(&outcome(), &cfg(vec![[0x01; 48], [0xAB; 48], [0x02; 48]]))
+            .expect("one of the three matches");
         assert!(has(&t, "golden_value_correctness"));
-        assert!(!has(
-            &t,
-            "measurement_matched_no_configured_reference_value"
-        ));
     }
 
-    /// A refutation must not make the system's detection bound look better.
-    #[test]
-    fn the_refutation_does_not_move_the_system_latency() {
-        let matched = derive(&outcome(), &cfg(vec![[0xAB; 48]]));
-        let refuted = derive(&outcome(), &cfg(vec![[0x01; 48]]));
-        assert_eq!(matched.system_latency(), refuted.system_latency());
-    }
-
+    /// Exactly two assumptions carry a detection bound, whatever the platform.
+    ///
+    /// The brief's version checked one healthy outcome, which made this a sample
+    /// rather than the invariant its name claims — and a draft that put a
+    /// refutation in the set with `Latency::Bounded(0)` added a third bounded
+    /// entry without this test noticing. Swept over every TCB pair and every
+    /// combination of two flags, so it now asserts what it is called after.
     #[test]
     fn only_the_collateral_authority_is_detectable() {
-        let t = derive(&outcome(), &cfg(vec![[0xAB; 48]]));
-        let bounded: Vec<&str> =
-            t.0.iter()
-                .filter(|a| a.latency != Latency::Never)
-                .map(|a| a.capability.as_str())
-                .collect();
-        assert_eq!(
-            bounded,
-            vec!["accurate_collateral_issuance", "serves_current_collateral"]
-        );
+        let flags = [
+            PckCertFlag::True,
+            PckCertFlag::False,
+            PckCertFlag::Undefined,
+        ];
+        for platform in ALL_STATUSES {
+            for qe in ALL_STATUSES {
+                for dynamic in flags {
+                    for smt in flags {
+                        let mut o = degraded(platform, qe);
+                        o.dynamic_platform = dynamic;
+                        o.smt_enabled = smt;
+                        let t = set(&o);
+                        let bounded: Vec<&str> =
+                            t.0.iter()
+                                .filter(|a| a.latency != Latency::Never)
+                                .map(|a| a.capability.as_str())
+                                .collect();
+                        assert_eq!(
+                            bounded,
+                            vec!["accurate_collateral_issuance", "serves_current_collateral"],
+                            "platform {platform:?} + qe {qe:?}, \
+                             dynamic {dynamic:?}, smt {smt:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
     fn the_proxy_declares_its_own_contribution() {
         // A tool that enumerates everyone else's assumptions and omits its
         // own is committing the overclaim this project exists to attack.
-        let t = derive(&outcome(), &cfg(vec![[0xAB; 48]]));
+        let t = set(&outcome());
         assert!(has(&t, "sound_quote_verification"));
         assert!(has(&t, "forwards_only_what_it_verified"));
     }
@@ -609,9 +776,76 @@ mod tests {
         let pem = "did:web:test-root.example";
         let mut o = outcome();
         o.root_ca = RootCa::Custom(pem.into());
-        let t = derive(&o, &cfg(vec![[0xAB; 48]]));
+        let t = set(&o);
         assert!(t.0.iter().any(|x| x.principal == pem));
         assert!(!t.0.iter().any(|x| x.principal == INTEL));
+    }
+
+    // ---- a refutation is not a trust set ----------------------------------
+
+    /// A measurement matching no configured reference value is an `Err`.
+    ///
+    /// The failure this guards against is the one where `derive` treats
+    /// "reference values were supplied" as "the measurement was checked and
+    /// passed", and reports `golden_value_correctness` for a quote measuring
+    /// something else entirely.
+    #[test]
+    fn a_measurement_matching_no_reference_value_is_a_refutation() {
+        let err = derive(&outcome(), &cfg(vec![[0x01; 48], [0x02; 48]]))
+            .expect_err("a refuted measurement has no trust set");
+        assert_eq!(
+            err,
+            Refutation::Measurement {
+                mr_td: [0xAB; 48],
+                configured: 2
+            }
+        );
+        assert_eq!(err.mr_td(), [0xAB; 48]);
+        // Printed with `{e}`, never `{e:#}`.
+        assert_eq!(
+            format!("{err}"),
+            "the attested measurement matches none of the 2 configured reference values"
+        );
+    }
+
+    /// The refutation is unreachable through the value a caller receives.
+    ///
+    /// This is the assertion the previous design could not make. When the
+    /// refutation lived inside the returned `TrustSet` as an assumption with
+    /// `Latency::Bounded(0)`, the matched and refuted sets had equal `len`,
+    /// equal `principals`, equal `system_latency`, and `compare` called them
+    /// `Incomparable` — they differed in one capability string and in nothing a
+    /// consumer of the aggregate views would ever see. The type now makes that
+    /// impossible: there is no `TrustSet` on this path to compare with.
+    #[test]
+    fn a_refutation_cannot_be_received_as_a_trust_set() {
+        let matched = derive(&outcome(), &cfg(vec![[0xAB; 48]]));
+        let refuted = derive(&outcome(), &cfg(vec![[0x01; 48]]));
+        assert!(matched.is_ok());
+        assert!(refuted.is_err());
+        // Not "a different set" — no set at all. A caller cannot reach any
+        // aggregate view without handling the `Err` first.
+        assert_ne!(matched, refuted);
+    }
+
+    /// Every aggregate view separates "never compared" from "compared and
+    /// agreed".
+    ///
+    /// The third case is an `Err` and cannot be confused with either, but these
+    /// two are both trust sets and must still be told apart by a consumer that
+    /// reads only principals — which is the mistake the refutation design made.
+    #[test]
+    fn an_unconfigured_check_is_visible_in_every_aggregate() {
+        let matched = set(&outcome());
+        let unconfigured = derive(&outcome(), &cfg(vec![])).expect("nothing to refute");
+        assert_ne!(matched.principals(), unconfigured.principals());
+        assert_ne!(compare(&matched, &unconfigured), Relation::Equal);
+        assert!(
+            unconfigured.principals().contains(NO_REFERENCE_VALUES),
+            "{:?}",
+            unconfigured.principals()
+        );
+        assert!(!unconfigured.principals().contains(REFERENCE_VALUES));
     }
 
     // ---- Ok does not mean healthy -----------------------------------------
@@ -625,30 +859,24 @@ mod tests {
     #[test]
     fn every_degraded_tcb_state_is_a_distinct_and_larger_trust_set() {
         use std::cmp::Ordering;
-        let healthy = derive(&outcome(), &cfg(vec![[0xAB; 48]]));
+        let healthy = set(&outcome());
         // A `Vec`, not a set: `TrustSet` deliberately has no `Ord` (its only
         // order is the subset partial order in `trust.rs`), so distinctness is
         // checked with `PartialEq` rather than by inserting into a `BTreeSet`.
         let mut seen: Vec<TrustSet> = Vec::new();
-        for degraded in [
-            TcbStatus::SWHardeningNeeded,
-            TcbStatus::ConfigurationNeeded,
-            TcbStatus::ConfigurationAndSWHardeningNeeded,
-            TcbStatus::OutOfDate,
-            TcbStatus::OutOfDateConfigurationNeeded,
-            TcbStatus::Revoked,
-        ] {
-            let mut o = outcome();
-            o.platform_status = TcbStatusWithAdvisory::new(degraded, Vec::new());
-            let t = derive(&o, &cfg(vec![[0xAB; 48]]));
+        for status in ALL_STATUSES {
+            if status == TcbStatus::UpToDate {
+                continue;
+            }
+            let t = set(&degraded(status, TcbStatus::UpToDate));
             assert_eq!(
                 t.partial_cmp(&healthy),
                 Some(Ordering::Greater),
-                "{degraded:?} must add an assumption, not replace one"
+                "{status:?} must add an assumption, not replace one"
             );
             assert!(
                 !seen.contains(&t),
-                "{degraded:?} produced a trust set already seen for another status"
+                "{status:?} produced a trust set already seen for another status"
             );
             seen.push(t);
         }
@@ -658,31 +886,32 @@ mod tests {
     /// The degraded party is named, not merely the degradation.
     #[test]
     fn a_degraded_qe_and_a_degraded_platform_are_different_parties() {
-        let mut platform = outcome();
-        platform.platform_status = TcbStatusWithAdvisory::new(TcbStatus::OutOfDate, Vec::new());
-        let mut qe = outcome();
-        qe.qe_status = TcbStatusWithAdvisory::new(TcbStatus::OutOfDate, Vec::new());
-
         let cap = "out_of_date_tcb_is_not_exploited";
         let blamed = |o: &VerificationOutcome| -> Vec<String> {
-            derive(o, &cfg(vec![[0xAB; 48]]))
+            set(o)
                 .0
                 .iter()
                 .filter(|x| x.capability == cap)
                 .map(|x| x.principal.clone())
                 .collect()
         };
-        assert_eq!(blamed(&platform), vec![HOST.to_string()]);
-        assert_eq!(blamed(&qe), vec![QE.to_string()]);
+        assert_eq!(
+            blamed(&degraded(TcbStatus::OutOfDate, TcbStatus::UpToDate)),
+            vec![HOST.to_string()]
+        );
+        assert_eq!(
+            blamed(&degraded(TcbStatus::UpToDate, TcbStatus::OutOfDate)),
+            vec![QE.to_string()]
+        );
     }
 
     /// Both parties degraded means both are named.
     #[test]
     fn two_degraded_parties_are_two_assumptions() {
-        let mut o = outcome();
-        o.platform_status = TcbStatusWithAdvisory::new(TcbStatus::OutOfDate, Vec::new());
-        o.qe_status = TcbStatusWithAdvisory::new(TcbStatus::SWHardeningNeeded, Vec::new());
-        let t = derive(&o, &cfg(vec![[0xAB; 48]]));
+        let t = set(&degraded(
+            TcbStatus::OutOfDate,
+            TcbStatus::SWHardeningNeeded,
+        ));
         assert!(has(&t, "out_of_date_tcb_is_not_exploited"));
         assert!(has(&t, "required_software_hardening_is_applied"));
     }
@@ -698,32 +927,23 @@ mod tests {
         o.platform_status =
             TcbStatusWithAdvisory::new(TcbStatus::UpToDate, vec!["INTEL-SA-00615".to_string()]);
         o.advisory_ids = vec!["INTEL-SA-00615".to_string()];
-        let t = derive(&o, &cfg(vec![[0xAB; 48]]));
+        let t = set(&o);
         assert!(has(&t, "published_advisories_are_not_exploitable"));
         // ...and the TCB itself is not accused of being behind.
         assert!(!has(&t, "out_of_date_tcb_is_not_exploited"));
     }
 
-    /// The merged status carries no degradation the two parts do not.
+    /// The merged status is `UpToDate` exactly when both parts are.
     ///
-    /// `derive` reads `platform_status` and `qe_status` and ignores the merged
-    /// `tcb_status`, which is only sound if the merge cannot manufacture a
-    /// degradation out of two healthy parts. Checked against dcap-qvl's own
-    /// `merge` over all 49 pairs rather than argued from the severity table, so
-    /// a change to Intel's convergence rule upstream fails here.
+    /// This is the *only* thing the property proves, and the comment in `derive`
+    /// says so: it secures the healthy boundary, not the general claim that the
+    /// merged value is redundant. Checked against dcap-qvl's own `merge` over
+    /// all 49 pairs rather than argued from the severity table, so a change to
+    /// Intel's convergence rule upstream fails here.
     #[test]
     fn the_merged_status_is_up_to_date_only_when_both_parts_are() {
-        const ALL: [TcbStatus; 7] = [
-            TcbStatus::UpToDate,
-            TcbStatus::SWHardeningNeeded,
-            TcbStatus::ConfigurationNeeded,
-            TcbStatus::ConfigurationAndSWHardeningNeeded,
-            TcbStatus::OutOfDate,
-            TcbStatus::OutOfDateConfigurationNeeded,
-            TcbStatus::Revoked,
-        ];
-        for platform in ALL {
-            for qe in ALL {
+        for platform in ALL_STATUSES {
+            for qe in ALL_STATUSES {
                 let merged = TcbStatusWithAdvisory::new(platform, Vec::new())
                     .merge(&TcbStatusWithAdvisory::new(qe, Vec::new()));
                 let both_clean = platform == TcbStatus::UpToDate && qe == TcbStatus::UpToDate;
@@ -737,6 +957,133 @@ mod tests {
         }
     }
 
+    /// Intel's convergence exception produces a verdict neither part carries,
+    /// and it is named.
+    ///
+    /// `ConfigurationNeeded` platform + `OutOfDate` QE converge to
+    /// `OutOfDateConfigurationNeeded`. Deriving from the two parts alone would
+    /// name "configuration" and "out of date" separately and never name the
+    /// combined verdict Intel actually reaches — which is the value
+    /// `is_up_to_date()` reads.
+    #[test]
+    fn the_converged_verdict_is_named_when_it_exceeds_both_parts() {
+        let o = degraded(TcbStatus::ConfigurationNeeded, TcbStatus::OutOfDate);
+        assert_eq!(o.tcb_status, TcbStatus::OutOfDateConfigurationNeeded);
+        let t = set(&o);
+        assert!(has(&t, "required_configuration_is_applied"), "the platform");
+        assert!(has(&t, "out_of_date_tcb_is_not_exploited"), "the QE");
+        assert!(
+            has(&t, "out_of_date_and_misconfigured_tcb_is_not_exploited"),
+            "the converged verdict: {:?}",
+            caps(&t)
+        );
+    }
+
+    /// The ordinary case adds no converged row.
+    ///
+    /// When the merged status just equals the worse component, naming it again
+    /// would be one party assumed twice for the same thing under two names.
+    #[test]
+    fn a_merged_status_equal_to_a_component_adds_nothing() {
+        let o = degraded(TcbStatus::OutOfDate, TcbStatus::UpToDate);
+        assert_eq!(o.tcb_status, TcbStatus::OutOfDate);
+        let t = set(&o);
+        let hits = caps(&t)
+            .into_iter()
+            .filter(|c| *c == "out_of_date_tcb_is_not_exploited")
+            .count();
+        assert_eq!(hits, 1, "named once, on the party responsible");
+    }
+
+    /// A TCB arm fires whenever the outcome is not up to date.
+    ///
+    /// `is_up_to_date()` reads the merged `tcb_status`, which the per-party arms
+    /// never look at — and `VerificationOutcome` has public fields, so a caller
+    /// can build one whose merged status is degraded while both parts are clean.
+    /// That is not reachable through `verify_quote` (a `Revoked` TCB is refused
+    /// inside dcap-qvl before any policy runs, and the other merged states are
+    /// computed from the parts), and I have not tried to reach it that way; the
+    /// exposure is the `pub` struct, not the verifier.
+    ///
+    /// **One direction only, on purpose.** The converse — "an arm fires only if
+    /// the outcome is not up to date" — is false for hand-built outcomes and
+    /// should be: set `platform_status` to `OutOfDate` and force `tcb_status`
+    /// back to `UpToDate`, and the platform arm fires while `is_up_to_date()`
+    /// returns `true`. That is `is_up_to_date()` reporting the field it was
+    /// given, not `derive` over-reporting, and the arm is the honest half. An
+    /// earlier draft of this test asserted the full iff and failed here; the
+    /// assertion was wrong, not the code.
+    ///
+    /// The iff *does* hold for internally consistent outcomes, which is the
+    /// shape `verify_quote` produces, and that is asserted separately below.
+    #[test]
+    fn a_tcb_arm_fires_whenever_the_outcome_is_not_up_to_date() {
+        for platform in ALL_STATUSES {
+            for qe in ALL_STATUSES {
+                let consistent = degraded(platform, qe);
+                for forced in ALL_STATUSES {
+                    let o = VerificationOutcome {
+                        tcb_status: forced,
+                        ..consistent.clone()
+                    };
+                    if !o.is_up_to_date() {
+                        assert!(
+                            tcb_arm_fires(&o),
+                            "forced {forced:?} over platform {platform:?} + qe {qe:?} \
+                             reported no TCB assumption"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// On an internally consistent outcome the relationship is exact.
+    #[test]
+    fn on_a_consistent_outcome_the_tcb_arms_fire_exactly_when_it_is_degraded() {
+        for platform in ALL_STATUSES {
+            for qe in ALL_STATUSES {
+                let o = degraded(platform, qe);
+                assert_eq!(
+                    tcb_arm_fires(&o),
+                    !o.is_up_to_date(),
+                    "platform {platform:?} + qe {qe:?}"
+                );
+            }
+        }
+    }
+
+    /// Whether any TCB-degradation assumption is present.
+    fn tcb_arm_fires(o: &VerificationOutcome) -> bool {
+        const TCB_CAPABILITIES: [&str; 6] = [
+            "required_software_hardening_is_applied",
+            "required_configuration_is_applied",
+            "required_configuration_and_software_hardening_are_applied",
+            "out_of_date_tcb_is_not_exploited",
+            "out_of_date_and_misconfigured_tcb_is_not_exploited",
+            "revoked_tcb_is_not_exploited",
+        ];
+        caps(&set(o)).iter().any(|c| TCB_CAPABILITIES.contains(c))
+    }
+
+    /// The specific hole: `Revoked` merged, both parts clean.
+    ///
+    /// Called out separately from the sweep above because it is the case the
+    /// review named, and a sweep that stopped covering it would still pass its
+    /// own assertion vacuously.
+    #[test]
+    fn a_revoked_merged_status_with_clean_parts_is_not_the_healthy_set() {
+        let o = VerificationOutcome {
+            tcb_status: TcbStatus::Revoked,
+            ..outcome()
+        };
+        assert!(!o.is_up_to_date());
+        let t = set(&o);
+        assert!(has(&t, "revoked_tcb_is_not_exploited"));
+        assert_ne!(t, set(&outcome()));
+        assert_ne!(compare(&t, &set(&outcome())), Relation::Equal);
+    }
+
     // ---- the platform flags are the other axis ----------------------------
 
     /// Only `True` flags become caveats, and each is its own assumption.
@@ -745,40 +1092,46 @@ mod tests {
         let mut o = outcome();
         o.dynamic_platform = PckCertFlag::True;
         o.smt_enabled = PckCertFlag::True;
-        let t = derive(&o, &cfg(vec![[0xAB; 48]]));
+        let t = set(&o);
         assert!(has(&t, "attested_tcb_is_the_running_tcb"));
         assert!(has(&t, "sibling_threads_do_not_leak_td_state"));
-        // cached_keys is False, so it is not a caveat.
+        // cached_keys is False, so it is neither a caveat nor undeclared.
         assert!(!has(&t, "cached_provisioning_keys_are_not_extractable"));
-        assert!(!has(&t, "undeclared_platform_configuration_is_benign"));
+        assert!(!has(&t, "undeclared_cached_keys_are_off"));
     }
 
     /// A caveat makes the trust set strictly larger, never smaller.
     #[test]
     fn a_caveat_is_an_extra_assumption_on_an_up_to_date_platform() {
         use std::cmp::Ordering;
-        let clean = derive(&outcome(), &cfg(vec![[0xAB; 48]]));
+        let clean = set(&outcome());
         let mut o = outcome();
         o.smt_enabled = PckCertFlag::True;
         assert!(o.is_up_to_date(), "the TCB is untouched by this test");
-        let caveated = derive(&o, &cfg(vec![[0xAB; 48]]));
-        assert_eq!(caveated.partial_cmp(&clean), Some(Ordering::Greater));
+        assert_eq!(set(&o).partial_cmp(&clean), Some(Ordering::Greater));
     }
 
-    /// `Undefined` is "the certificate does not say", and that is its own
-    /// assumption rather than silence.
+    /// `Undefined` is "the certificate does not say", and each silent flag is
+    /// its own assumption.
     ///
     /// A Processor CA PCK certificate carries none of the three flags. Without
-    /// this arm such a platform would produce a *smaller* trust set than the
+    /// these arms such a platform would produce a *smaller* trust set than the
     /// committed fixture while less is known about it.
     #[test]
-    fn undeclared_flags_are_their_own_assumption() {
+    fn undeclared_flags_are_their_own_assumptions() {
         let mut o = outcome();
         o.dynamic_platform = PckCertFlag::Undefined;
         o.cached_keys = PckCertFlag::Undefined;
         o.smt_enabled = PckCertFlag::Undefined;
-        let t = derive(&o, &cfg(vec![[0xAB; 48]]));
-        assert!(has(&t, "undeclared_platform_configuration_is_benign"));
+        let t = set(&o);
+        for cap in [
+            "undeclared_dynamic_platform_is_off",
+            "undeclared_cached_keys_are_off",
+            "undeclared_smt_is_off",
+        ] {
+            assert!(has(&t, cap), "missing {cap}");
+        }
+        // And nothing is inferred to be *on*.
         for cap in [
             "attested_tcb_is_the_running_tcb",
             "cached_provisioning_keys_are_not_extractable",
@@ -788,24 +1141,41 @@ mod tests {
         }
     }
 
+    /// Platforms silent about different flags are in different positions.
+    ///
+    /// The one-capability-per-status principle applied to the other axis: a
+    /// single shared "something was undeclared" assumption would give these
+    /// three platforms identical trust sets.
     #[test]
-    fn one_undeclared_flag_among_three_is_enough() {
-        let mut o = outcome();
-        o.cached_keys = PckCertFlag::Undefined;
-        let t = derive(&o, &cfg(vec![[0xAB; 48]]));
-        assert!(has(&t, "undeclared_platform_configuration_is_benign"));
+    fn silence_about_different_flags_gives_different_trust_sets() {
+        let build = |which: usize| {
+            let mut o = outcome();
+            match which {
+                0 => o.dynamic_platform = PckCertFlag::Undefined,
+                1 => o.cached_keys = PckCertFlag::Undefined,
+                _ => o.smt_enabled = PckCertFlag::Undefined,
+            }
+            set(&o)
+        };
+        let (a, b, c) = (build(0), build(1), build(2));
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_ne!(a, c);
+        assert_eq!(compare(&a, &b), Relation::Incomparable);
     }
 
     // ---- the collateral bound ---------------------------------------------
 
-    /// The PCS bound is the worse of the measured window and the declared one.
+    /// The PCS bound is the worse of the collateral's window and the declared
+    /// interval.
     #[test]
-    fn the_pcs_bound_is_the_worse_of_measured_expiry_and_declared_refresh() {
-        let bound = |expires_in: u64, declared: Latency| -> Latency {
+    fn the_pcs_bound_is_the_worse_of_the_collateral_window_and_the_declared_refresh() {
+        let bound = |validity: u64, declared: Latency| -> Latency {
             let mut o = outcome();
-            o.collateral_expires_at = NOW + expires_in;
+            o.collateral_issued_at = 0;
+            o.collateral_expires_at = validity;
             o.collateral_refresh = declared;
-            derive(&o, &cfg(vec![[0xAB; 48]]))
+            set(&o)
                 .0
                 .iter()
                 .find(|x| x.capability == "accurate_collateral_issuance")
@@ -813,14 +1183,14 @@ mod tests {
                 .latency
                 .clone()
         };
-        // Measured window longer than the declared promise: the promise is
+        // Collateral window longer than the declared promise: the promise is
         // unverified, so it does not buy a tighter bound.
         assert_eq!(
             bound(30 * 86_400, Latency::Bounded(43_200)),
             Latency::Bounded(30 * 86_400)
         );
-        // Declared interval longer than the measured window: the window bounds
-        // this collateral, but a later fetch may carry a longer one.
+        // Declared interval longer than the window: Intel's window bounds the
+        // bundle, but nothing forces a refresh sooner than the operator says.
         assert_eq!(
             bound(3_600, Latency::Bounded(30 * 86_400)),
             Latency::Bounded(30 * 86_400)
@@ -829,23 +1199,54 @@ mod tests {
         assert_eq!(bound(3_600, Latency::Never), Latency::Never);
     }
 
-    /// Deriving after the collateral expired saturates rather than wrapping.
+    /// `derive` is a pure function of the outcome and the config.
     ///
-    /// `verify_quote` and `derive` take separate `now` arguments and nothing
-    /// forces them to agree, so this is reachable by a caller that verifies a
-    /// stored quote and derives later. A wrapping subtraction here would report
-    /// roughly 584 billion years of slack as a tight bound.
+    /// The defect this pins: the bound was once
+    /// `collateral_expires_at - now_secs`, which meant the same quote and the
+    /// same configuration produced sets that `compare` called `Incomparable`
+    /// one second apart, because `Assumption::latency` participates in
+    /// `PartialEq`. `DeriveConfig` no longer has a clock field at all, so the
+    /// only way to reconstruct the defect is to reintroduce one — but a
+    /// collateral bundle *shifted* in time, with the same width, must still give
+    /// the same answer, and that is what is asserted here.
     #[test]
-    fn a_collateral_window_that_has_already_closed_is_zero() {
+    fn shifting_the_collateral_window_in_time_does_not_change_the_trust_set() {
+        let width = 30 * 86_400;
+        let at = |issued: u64| {
+            let mut o = outcome();
+            o.collateral_issued_at = issued;
+            o.collateral_expires_at = issued + width;
+            set(&o)
+        };
+        let early = at(1_600_000_000);
+        let late = at(1_900_000_000);
+        assert_eq!(early, late);
+        assert_eq!(compare(&early, &late), Relation::Equal);
+        assert_eq!(early.system_latency(), late.system_latency());
+    }
+
+    /// An inverted window saturates rather than wrapping.
+    ///
+    /// Reachable only through a hand-built outcome — `verify_quote` rejects
+    /// collateral whose issue date is in the future — but both fields are `pub`.
+    /// A plain subtraction would panic in debug and wrap in release, and the
+    /// wrapped value is on the order of 584 billion years, which would read as
+    /// an enormous bound rather than as the bug it is.
+    #[test]
+    fn an_inverted_collateral_window_is_zero_not_a_wrap() {
         let mut o = outcome();
-        o.collateral_expires_at = NOW - 1;
+        o.collateral_issued_at = 1_000;
+        o.collateral_expires_at = 999;
         o.collateral_refresh = Latency::Bounded(0);
-        let t = derive(&o, &cfg(vec![[0xAB; 48]]));
-        let pcs =
-            t.0.iter()
-                .find(|x| x.capability == "accurate_collateral_issuance")
-                .expect("present");
-        assert_eq!(pcs.latency, Latency::Bounded(0));
+        assert_eq!(o.collateral_validity_secs(), 0);
+        let pcs = set(&o)
+            .0
+            .iter()
+            .find(|x| x.capability == "accurate_collateral_issuance")
+            .expect("present")
+            .latency
+            .clone();
+        assert_eq!(pcs, Latency::Bounded(0));
     }
 
     // ---- the real quote ----------------------------------------------------
@@ -867,17 +1268,7 @@ mod tests {
         (quote, collateral, now)
     }
 
-    /// The only real quote this repository has is a degraded platform by
-    /// Intel's own strict standard, and the trust set says so.
-    ///
-    /// The fixture is `dynamic_platform = True`, `smt_enabled = True`,
-    /// `UpToDate` and advisory-free. Running `QuotePolicy::strict` against it
-    /// at its capture time returns `Err("Dynamic platform is not allowed by
-    /// policy")` — measured while writing this test, not quoted from the
-    /// design. Both caveats appear here; if they did not, this tool would
-    /// report a clean answer for a platform Intel's default appraisal refuses.
-    #[test]
-    fn the_real_fixtures_caveats_reach_the_trust_set() {
+    fn verified_fixture() -> (VerificationOutcome, u64) {
         let (q, c, now) = fixture();
         let out = verify_quote(
             &q,
@@ -887,15 +1278,24 @@ mod tests {
             Latency::Bounded(43_200),
         )
         .expect("the committed fixture verifies");
+        (out, now)
+    }
+
+    /// The only real quote this repository has is a degraded platform by
+    /// Intel's own strict standard, and the trust set says so.
+    ///
+    /// The fixture is `dynamic_platform = True`, `smt_enabled = True`,
+    /// `UpToDate` and advisory-free, and `QuotePolicy::strict` refuses it —
+    /// asserted in `verify/chain.rs`'s
+    /// `the_committed_fixture_is_rejected_by_intels_strict_policy`, not quoted.
+    /// Both caveats appear here; if they did not, this tool would report a clean
+    /// answer for a platform Intel's default appraisal rejects.
+    #[test]
+    fn the_real_fixtures_caveats_reach_the_trust_set() {
+        let (out, _) = verified_fixture();
         assert!(out.is_up_to_date(), "its TCB really is up to date");
 
-        let cfg = DeriveConfig {
-            reference_values: vec![out.mr_td],
-            verifier_id: "urn:parallax:dcap-qvl:0.6.1".into(),
-            cache_ttl: Latency::Bounded(43_200),
-            now_secs: now,
-        };
-        let t = derive(&out, &cfg);
+        let t = derive(&out, &cfg(vec![out.mr_td])).expect("the measurement matches");
         assert!(
             has(&t, "attested_tcb_is_the_running_tcb"),
             "dynamic_platform = True must be visible: {:?}",
@@ -908,31 +1308,24 @@ mod tests {
         );
         assert!(has(&t, "golden_value_correctness"));
         // cached_keys is `False` on this fixture — declared and cleared — so
-        // neither the caveat nor the "not declared" assumption applies.
+        // neither the caveat nor the "undeclared" assumption applies.
         assert!(!has(&t, "cached_provisioning_keys_are_not_extractable"));
-        assert!(!has(&t, "undeclared_platform_configuration_is_benign"));
+        assert!(!has(&t, "undeclared_cached_keys_are_off"));
         // Nothing here is degraded on the TCB axis.
         assert!(!has(&t, "out_of_date_tcb_is_not_exploited"));
         assert!(!has(&t, "published_advisories_are_not_exploitable"));
 
-        // The measured window is what bounds the PCS assumption here, and it is
-        // nearly sixty times the 12h refresh the caller declared: this
-        // collateral runs 2_581_970 seconds — a shade under 30 days — past the
-        // quote's capture time. That is the concrete case for
-        // `pcs_detection_bound` taking the join. Had the declared interval been
-        // used alone, this deployment's collateral-freshness bound would have
-        // been reported as 12h on the strength of a promise, while the
-        // collateral actually in hand was good for a month.
+        // The collateral's own window is what bounds the PCS assumption, and it
+        // is sixty times the 12h refresh the caller declared: Intel issued this
+        // bundle for 2_590_799 seconds, a shade under 30 days. Had the declared
+        // interval been used alone, this deployment's collateral-freshness
+        // bound would have read 12h on the strength of a promise.
         let pcs =
             t.0.iter()
                 .find(|x| x.capability == "accurate_collateral_issuance")
                 .expect("present");
-        let window = out
-            .collateral_expires_at
-            .checked_sub(now)
-            .expect("the fixture's collateral is unexpired at its capture time");
-        assert_eq!(window, 2_581_970, "the fixture's collateral window changed");
-        assert_eq!(pcs.latency, Latency::Bounded(window));
+        assert_eq!(out.collateral_validity_secs(), 2_590_799);
+        assert_eq!(pcs.latency, Latency::Bounded(2_590_799));
         assert_ne!(
             pcs.latency,
             Latency::Bounded(43_200),
@@ -940,27 +1333,41 @@ mod tests {
         );
     }
 
+    /// Deriving the real quote's trust set does not depend on when it is asked.
+    ///
+    /// The end-to-end form of `shifting_the_collateral_window_in_time_...`, on a
+    /// real quote: `verify_quote` at the capture time, then `derive`, gives the
+    /// same set whenever the derivation happens, because `derive` takes no time
+    /// argument at all.
+    #[test]
+    fn the_real_fixtures_trust_set_is_stable_over_time() {
+        let (out, now) = verified_fixture();
+        let first = derive(&out, &cfg(vec![out.mr_td])).expect("matches");
+        let second = derive(&out, &cfg(vec![out.mr_td])).expect("matches");
+        assert_eq!(compare(&first, &second), Relation::Equal);
+        // The quantity that used to make this drift is still available on the
+        // outcome, and is still a different number from the one used.
+        assert_ne!(
+            out.collateral_expires_at - now,
+            out.collateral_validity_secs()
+        );
+    }
+
     /// Verifying the real quote without reference values proves less.
     #[test]
     fn the_real_fixture_without_reference_values_names_the_hole() {
-        let (q, c, now) = fixture();
-        let out = verify_quote(
-            &q,
-            &c,
-            now,
-            &RootCa::IntelProduction,
-            Latency::Bounded(43_200),
-        )
-        .expect("verifies");
-        let cfg = DeriveConfig {
-            reference_values: Vec::new(),
-            verifier_id: "urn:parallax:dcap-qvl:0.6.1".into(),
-            cache_ttl: Latency::Bounded(43_200),
-            now_secs: now,
-        };
-        let t = derive(&out, &cfg);
+        let (out, _) = verified_fixture();
+        let t = derive(&out, &cfg(Vec::new())).expect("nothing to refute");
         assert!(!has(&t, "golden_value_correctness"));
         assert!(has(&t, "workload_identity_was_never_compared"));
+    }
+
+    /// The real quote against somebody else's reference value is refused.
+    #[test]
+    fn the_real_fixture_against_a_foreign_reference_value_is_refuted() {
+        let (out, _) = verified_fixture();
+        let err = derive(&out, &cfg(vec![[0x00; 48]])).expect_err("that is not this workload");
+        assert_eq!(err.mr_td(), out.mr_td);
     }
 
     // ---- shape -------------------------------------------------------------
@@ -968,7 +1375,7 @@ mod tests {
     /// Every assumption carries a mechanism tag, and only two are used.
     #[test]
     fn every_assumption_names_the_mechanism_that_introduced_it() {
-        let t = derive(&outcome(), &cfg(vec![[0xAB; 48]]));
+        let t = set(&outcome());
         for x in &t.0 {
             assert!(
                 x.mechanism == VIA_ATTESTATION || x.mechanism == VIA_PROXY,
@@ -986,27 +1393,31 @@ mod tests {
     /// party assumed twice for the same thing.
     #[test]
     fn no_principal_capability_pair_appears_twice() {
-        let mut o = outcome();
-        o.platform_status =
-            TcbStatusWithAdvisory::new(TcbStatus::OutOfDate, vec!["INTEL-SA-00615".to_string()]);
-        o.qe_status = TcbStatusWithAdvisory::new(
-            TcbStatus::SWHardeningNeeded,
-            vec!["INTEL-SA-00615".to_string()],
-        );
-        o.dynamic_platform = PckCertFlag::True;
-        o.cached_keys = PckCertFlag::True;
-        o.smt_enabled = PckCertFlag::Undefined;
-        let t = derive(&o, &cfg(vec![[0x01; 48]]));
-        let mut pairs = std::collections::BTreeSet::new();
-        for x in &t.0 {
-            assert!(
-                pairs.insert((x.principal.clone(), x.capability.clone())),
-                "{} / {} appears twice",
-                x.principal,
-                x.capability
-            );
+        // Swept rather than spot-checked, because the converged-verdict arm is
+        // the one that can push a second capability onto a principal that
+        // already has one.
+        for platform in ALL_STATUSES {
+            for qe in ALL_STATUSES {
+                let mut o = degraded(platform, qe);
+                o.platform_status =
+                    TcbStatusWithAdvisory::new(platform, vec!["INTEL-SA-00615".to_string()]);
+                o.qe_status = TcbStatusWithAdvisory::new(qe, vec!["INTEL-SA-00615".to_string()]);
+                o.dynamic_platform = PckCertFlag::True;
+                o.cached_keys = PckCertFlag::True;
+                o.smt_enabled = PckCertFlag::Undefined;
+                let t = set(&o);
+                let mut pairs = std::collections::BTreeSet::new();
+                for x in &t.0 {
+                    assert!(
+                        pairs.insert((x.principal.clone(), x.capability.clone())),
+                        "{} / {} appears twice for platform {platform:?} + qe {qe:?}",
+                        x.principal,
+                        x.capability
+                    );
+                }
+                assert_eq!(pairs.len(), t.len());
+            }
         }
-        assert_eq!(pairs.len(), t.len());
     }
 
     /// The healthy set has a fixed membership, spelled out.
@@ -1017,7 +1428,7 @@ mod tests {
     /// `Assumption`'s derived `Ord` compares `principal` first.
     #[test]
     fn the_healthy_set_is_exactly_these_eight_assumptions() {
-        let t = derive(&outcome(), &cfg(vec![[0xAB; 48]]));
+        let t = set(&outcome());
         assert_eq!(
             caps(&t),
             vec![

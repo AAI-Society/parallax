@@ -126,6 +126,24 @@ pub struct VerificationOutcome {
     ///
     /// [`collateral_refresh`]: Self::collateral_refresh
     pub collateral_expires_at: u64,
+    /// When the collateral became usable: the *latest*
+    /// `thisUpdate`/`issueDate`/`notBefore` across the same eight sources.
+    ///
+    /// The latest rather than the earliest, because all eight must be valid at
+    /// once, so the bundle is only usable once the last of them has come into
+    /// force (dcap-qvl-0.6.1 `src/verify.rs:1442`).
+    ///
+    /// Paired with [`collateral_expires_at`] this gives
+    /// [`collateral_validity_secs`], which is a property of the collateral
+    /// alone. That matters to any consumer that has to be a *stable* function
+    /// of a deployment: `collateral_expires_at` on its own can only be turned
+    /// into a duration by subtracting some "now", and the result then shrinks
+    /// as that "now" advances, so the same collateral describes a different
+    /// deployment every second.
+    ///
+    /// [`collateral_expires_at`]: Self::collateral_expires_at
+    /// [`collateral_validity_secs`]: Self::collateral_validity_secs
+    pub collateral_issued_at: u64,
     /// Intel's TCB evaluation data number, the lower of TCBInfo's and
     /// QEIdentity's. Rises when Intel republishes; a low number against a
     /// current one means the appraisal used stale rules.
@@ -224,6 +242,25 @@ impl VerificationOutcome {
     /// what a single `is_ok()` looks like it means. Neither half is enough.
     pub fn has_platform_caveats(&self) -> bool {
         !self.caveats().is_empty()
+    }
+
+    /// How long this collateral bundle is usable for, in seconds.
+    ///
+    /// `collateral_expires_at - collateral_issued_at`: the width of the window
+    /// in which all eight sources are simultaneously in force. A property of
+    /// the collateral, with no reference to any current time — which is what
+    /// makes it usable by a caller that must produce the same answer for the
+    /// same deployment whenever it is asked.
+    ///
+    /// `saturating_sub` because both fields are `pub` on a `pub` struct and
+    /// nothing here re-checks their order. Through `verify_quote` the window is
+    /// positive on any collateral that verified, since dcap-qvl rejects a
+    /// bundle whose issue date is in the future or whose expiry has passed at
+    /// the verification time; a hand-built outcome has no such guarantee, and 0
+    /// is the safe reading of an inverted window.
+    pub fn collateral_validity_secs(&self) -> u64 {
+        self.collateral_expires_at
+            .saturating_sub(self.collateral_issued_at)
     }
 }
 
@@ -326,6 +363,7 @@ pub fn verify_quote(
         cached_keys: claims.platform.pck.cached_keys,
         smt_enabled: claims.platform.pck.smt_enabled,
         collateral_expires_at: claims.earliest_expiration_date,
+        collateral_issued_at: claims.latest_issue_date,
         tcb_eval_data_number: claims.tcb.eval_data_number,
         collateral_refresh,
         root_ca: root.clone(),
@@ -653,6 +691,41 @@ mod tests {
         assert!(out.tcb_eval_data_number > 0);
     }
 
+    /// The collateral's validity window is a property of the collateral.
+    ///
+    /// Two different quantities, and the difference is the point:
+    /// `collateral_expires_at - now` is how much of *this* bundle's life is
+    /// left at one instant and shrinks every second, while
+    /// `collateral_validity_secs()` is how long the bundle was good for and
+    /// does not move. A caller deriving a detection bound wants the second, or
+    /// the same deployment describes itself differently every time it is asked.
+    #[test]
+    fn the_collateral_validity_window_does_not_depend_on_the_current_time() {
+        let (q, c, now) = fixture();
+        let out = verify_quote(&q, &c, now, &RootCa::IntelProduction, refresh()).expect("verifies");
+
+        assert!(
+            out.collateral_issued_at <= now,
+            "collateral cannot be in force before it was issued: {} > {now}",
+            out.collateral_issued_at
+        );
+        assert_eq!(
+            out.collateral_validity_secs(),
+            out.collateral_expires_at - out.collateral_issued_at
+        );
+        // 2_590_799s — a shade under 30 days, which is Intel's usual TCBInfo
+        // cadence, minus the spread between the eight sources' dates. Pinned
+        // exactly so that a change to the fixture, or to how dcap-qvl folds
+        // those eight sources, is visible rather than absorbed.
+        assert_eq!(out.collateral_validity_secs(), 2_590_799);
+
+        // The remaining-life figure at capture time is a different, smaller
+        // number — the bundle was already about 2.5 hours old when the quote
+        // was taken — and it is the one that would drift with the clock.
+        assert_eq!(out.collateral_expires_at - now, 2_581_970);
+        assert!(out.collateral_validity_secs() > out.collateral_expires_at - now);
+    }
+
     #[test]
     fn qe_and_platform_status_are_reported_separately() {
         // The whole per-party attribution rests on these being distinct
@@ -691,6 +764,35 @@ mod tests {
         assert_eq!(out.dynamic_platform, PckCertFlag::True);
         assert_eq!(out.cached_keys, PckCertFlag::False);
         assert_eq!(out.smt_enabled, PckCertFlag::True);
+    }
+
+    /// Intel's own strict appraisal **rejects** the committed fixture.
+    ///
+    /// This assertion is the foundation of the reporting-not-appraising design,
+    /// and it went five citations without existing. `verify_quote`'s choice of
+    /// `claims_only`, the `PlatformCaveat` type, and `derive`'s decision to put
+    /// caveats in the trust set are all justified by the claim that a real,
+    /// correctly-signed, `UpToDate`, advisory-free quote is refused by
+    /// `QuotePolicy::strict`. Until now that claim was measured once by hand and
+    /// then quoted; nothing in the repository ran `strict` at all.
+    ///
+    /// The message is asserted, not just the variant, so the test cannot pass
+    /// because the fixture failed for some unrelated reason — an expired CRL,
+    /// say, would also produce `Err`.
+    #[test]
+    fn the_committed_fixture_is_rejected_by_intels_strict_policy() {
+        let (q, c, now) = fixture();
+        let verifier = QuoteVerifier::new_prod();
+        let err = verifier
+            .verify_with_policy(&q, &c, now, &QuotePolicy::strict(now))
+            .expect_err("strict must refuse this platform");
+        assert_eq!(flatten(&err), "Dynamic platform is not allowed by policy");
+
+        // And the same quote, same collateral, same instant, verifies under the
+        // policy this crate actually uses. Without this half the test above is
+        // consistent with a fixture that simply does not verify.
+        verify_quote(&q, &c, now, &RootCa::IntelProduction, refresh())
+            .expect("claims_only accepts what strict refuses");
     }
 
     /// The two health questions disagree on the committed fixture.
@@ -1368,6 +1470,7 @@ mod tests {
             cached_keys: PckCertFlag::Undefined,
             smt_enabled: PckCertFlag::Undefined,
             collateral_expires_at: 0,
+            collateral_issued_at: 0,
             tcb_eval_data_number: 0,
             collateral_refresh: Latency::Never,
             root_ca: RootCa::IntelProduction,

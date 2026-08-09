@@ -14,7 +14,7 @@ pub mod trust;
 pub mod verify;
 
 pub use deployment::Deployment;
-pub use derive::{derive, DeriveConfig};
+pub use derive::{derive, DeriveConfig, Refutation};
 pub use latency::Latency;
 pub use solve::solve;
 pub use trust::{Assumption, Impact, TrustSet};
