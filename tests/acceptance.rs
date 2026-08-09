@@ -101,18 +101,50 @@ fn tdx_and_zk_trust_sets_are_incomparable() {
     }
 }
 
-/// Every shipped example must load, validate, solve, and produce an actual
-/// (non-empty) trust set — a `solve` that silently returned nothing for
-/// every file would otherwise pass this test.
+/// Every shipped example deployment must load, validate, solve, and produce
+/// an actual (non-empty) trust set — a `solve` that silently returned nothing
+/// for every file would otherwise pass this test.
+///
+/// The doc comment said "every shipped example" while the list held four of
+/// the seven, which is the failure mode this repository keeps finding: a
+/// sentence that claims more than the code beneath it does. Carried as a known
+/// defect since the examples directory grew past the original four; fixed by
+/// reading the directory rather than by extending the list, so that a new
+/// example cannot be added without either being covered here or being declared
+/// below as not a deployment.
 #[test]
 fn all_examples_solve() {
-    for name in [
-        "sigma1-software",
-        "sigma2-tdx",
-        "sigma3-quorum",
-        "sigma4-zk",
-    ] {
-        let p = format!("examples/{name}.toml");
+    // Files in `examples/` that are configuration rather than deployment
+    // descriptions. Listed explicitly: a new file that is neither covered nor
+    // declared here fails the directory check below, which is the point.
+    const NOT_DEPLOYMENTS: [&str; 3] = ["policy-proxy.toml", "policy-strict.toml", "proxy.toml"];
+
+    let mut names: Vec<String> = std::fs::read_dir("examples")
+        .expect("the examples directory is committed")
+        .map(|e| e.expect("readable entry").file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".toml") && !NOT_DEPLOYMENTS.contains(&n.as_str()))
+        .collect();
+    names.sort();
+    let found: Vec<&str> = names.iter().map(String::as_str).collect();
+
+    assert_eq!(
+        found,
+        [
+            "sigma1-software.toml",
+            "sigma2-tdx.toml",
+            "sigma3-quorum.toml",
+            "sigma4-zk.toml",
+            "sigma5-hybrid-independent-pipelines.toml",
+            "sigma5-hybrid.toml",
+            "verified-tdx.toml",
+        ],
+        "the examples directory has changed: add the new file here, or to \
+         NOT_DEPLOYMENTS if it is not a deployment description"
+    );
+
+    for name in &found {
+        let p = format!("examples/{name}");
         let d = Deployment::load(Path::new(&p)).unwrap_or_else(|e| panic!("{p}: {e}"));
         let t = solve(&d).unwrap_or_else(|e| panic!("{p}: {e}"));
         assert!(!t.is_empty(), "{p} solved to an empty trust set");
