@@ -17,7 +17,7 @@
 //! there is nothing to report. `Ok` means the cryptography checked out and
 //! hands back a [`VerificationOutcome`] carrying the *typed* TCB verdict, so
 //! the caller that decides what to trust has to look at it.
-
+//!
 //! A second distinction, and the one [`binding`] exists for: a quote that
 //! verifies is evidence that *a* trust domain produced it, not that the peer
 //! on the other end of the connection is that trust domain. Quotes are public.

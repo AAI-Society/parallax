@@ -16,11 +16,35 @@
 //!
 //! [`verify_quote`]: super::verify_quote
 
+use sha2::digest::typenum::Unsigned;
+use sha2::digest::OutputSizeUser;
 use sha2::{Digest, Sha256};
 use x509_cert::der::{Decode, Encode};
 
 /// Bytes of `report_data` carrying the digest. SHA-256, so 32 of the 64.
 const DIGEST_LEN: usize = 32;
+
+/// Ties [`DIGEST_LEN`] to the hash actually used.
+///
+/// Everything below — the `skip(DIGEST_LEN)` that starts the zero-tail scan,
+/// and the `zip` that compares only the digest — is correct exactly when this
+/// constant is the hash's output size. Swapping [`Sha256`] for a hash with a
+/// different output would otherwise leave a silent gap: with SHA-224 the four
+/// bytes at 28..32 would be checked by neither the comparison nor the tail
+/// scan, and with SHA-512 the comparison would run off the end of the tail
+/// scan's territory. This makes that a build failure.
+const _: () = assert!(
+    DIGEST_LEN == <<Sha256 as OutputSizeUser>::OutputSize as Unsigned>::USIZE,
+    "DIGEST_LEN must equal the digest's output size, or the tail scan and the \
+     comparison do not meet"
+);
+
+/// The layout [`check_binding`] enforces, named in the errors it returns.
+///
+/// A convention, not a law — see [`check_binding`] for why it is nonetheless
+/// applied rather than made a parameter.
+const LAYOUT: &str = "the Gramine/Intel layout, SHA-256(SPKI) in report_data \
+                      bytes 0..32 with the remainder zero";
 
 #[derive(Debug, thiserror::Error)]
 pub enum BindingError {
@@ -37,17 +61,26 @@ pub enum BindingError {
          so it is evidence that a trust domain exists and not that this is it"
     )]
     Unbound,
-    /// A non-zero byte at or after offset 32. See [`check_binding`] for why the
-    /// tail is required to be zero rather than ignored.
+    /// A non-zero byte at or after offset 32.
+    ///
+    /// The message names the layout, because the likeliest cause is not a
+    /// misbehaving attester but a *different convention*: some DCAP stacks put
+    /// SHA-512 across all 64 bytes, or SHA-384 zero-padded to 64. Those peers
+    /// are refused here, and the operator reading the error needs to be able to
+    /// tell "the attester filled a field it should not have" from "this peer
+    /// speaks a layout parallax does not". See [`check_binding`].
     #[error(
-        "report_data byte {offset} is 0x{value:02x}, but bytes 32..64 must be zero; \
-         a digest is 32 bytes and the remainder is not free space for the attester"
+        "report_data byte {offset} is 0x{value:02x}, but this verifier expects {}; \
+         a peer using a different report_data convention is refused here rather \
+         than guessed at",
+        LAYOUT
     )]
     TrailingBytes { offset: usize, value: u8 },
     #[error(
-        "quote is not bound to this certificate's key; \
+        "quote is not bound to this certificate's key under {}; \
          a valid quote in front of the wrong key proves only that some trust \
-         domain exists, not that it is the peer you are talking to"
+         domain exists, not that it is the peer you are talking to",
+        LAYOUT
     )]
     Mismatch,
 }
@@ -66,26 +99,58 @@ pub enum BindingError {
 /// by asserting that the key-bits digest is rejected.
 ///
 /// **What the other 32 bytes must be: zero.** A SHA-256 digest is 32 bytes and
-/// `report_data` is 64, and the choice for the remainder is between ignoring
-/// it and requiring it. Ignoring it hands the attester 32 bytes of free space
-/// inside a field the verifier has just declared "bound", covered by the
-/// attestation signature and therefore carrying the same authority as the
-/// digest beside it — a side channel out of the TD, and a place for two
-/// otherwise-identical quotes to differ so that a caller comparing
-/// `report_data` for equality sees two bindings where there is one. Requiring
-/// zero costs an attester nothing — `report_data` is a fixed 64-byte buffer the
-/// attester fills, so leaving the tail alone is the do-nothing option, and the
-/// committed fixture's 64 zeroes are what doing nothing produces — and it makes
-/// all 64 bytes a function of the key. A future scheme that wants those bytes
-/// will have to say what they mean, which is the point.
+/// `report_data` is 64, and the choice for the remainder is between ignoring it
+/// and requiring it. This function requires it, and the reason is interop
+/// conservatism rather than anything stronger:
+///
+/// - It costs a conforming attester nothing. `report_data` is a fixed 64-byte
+///   buffer the attester fills, so leaving the tail alone is the do-nothing
+///   option, and the committed fixture's 64 zeroes are what doing nothing
+///   produces.
+/// - It makes all 64 bytes a function of the key, so there is one encoding of
+///   a given binding rather than 2^256 of them.
+/// - A future scheme that wants those bytes has to say what they mean. Nothing
+///   is lost by starting strict; a rule relaxed later breaks no deployment,
+///   whereas a rule tightened later breaks every attester that took the space.
+///
+/// **What is *not* a reason, and was written here in an earlier draft: closing
+/// a side channel out of the trust domain.** It does not close one. RTMR2 and
+/// RTMR3 are extendable at runtime by the guest through `TDG.MR.RTMR.EXTEND`,
+/// and they reach the caller as two of the four 48-byte values in
+/// [`VerificationOutcome::rt_mrs`], under the same attestation signature and
+/// with contents the guest chooses by choosing what it extends them with. That
+/// is 96 signed bytes against the 32 this rule zeroes, and any workload able to
+/// request a quote is generally also able to extend an RTMR — so the door was
+/// already open and wider. The rule survives on the three grounds above; it
+/// does not survive on that one.
+///
+/// **This layout is a policy, and the errors name it.** `SHA-256(SPKI)` in
+/// bytes 0..32 with a zero tail is the convention of the stacks that use
+/// [`DEFAULT_QUOTE_OID`] — Gramine's and Intel's. It is not universal: other
+/// DCAP stacks put SHA-512 across all 64 bytes, or SHA-384 zero-padded. Such a
+/// peer is refused here, as [`BindingError::TrailingBytes`] or
+/// [`BindingError::Mismatch`], and both messages state the layout that was
+/// expected so the operator can tell a different convention from a broken
+/// attester. Note the asymmetry with [`quote_from_cert`], where the OID *is* a
+/// parameter on this same reasoning: the layout is fixed here because failing
+/// loudly on an unknown convention is safer than accepting several, whereas an
+/// unmatched OID yields no evidence at all. If parallax ever has to talk to a
+/// second convention, this is the function that grows a policy argument.
 ///
 /// **What this does not check:** that the certificate is signed by anyone, that
-/// the peer holds the private key, or that the quote itself verified. The
-/// first two are TLS's job — the handshake proves possession of the key in
-/// this certificate — and the third is [`verify_quote`]'s. This function is
-/// the join between them, and it is worthless without both.
+/// the peer holds the private key, or that the quote itself verified. The first
+/// two are TLS's job, and only for the right certificate: `cert_der` must be
+/// the **end-entity certificate that authenticated the session** — the leaf the
+/// peer proved possession of the private key for during the handshake. Handing
+/// this an intermediate or a root from the same chain, or a leaf from a
+/// different connection, produces a binding check that passes while proving
+/// nothing about this peer. The third is [`verify_quote`]'s. This function is
+/// the join between the two, and it is worthless without both.
 ///
 /// [`verify_quote`]: super::verify_quote
+/// [`VerificationOutcome::rt_mrs`]: super::VerificationOutcome::rt_mrs
+/// [`DEFAULT_QUOTE_OID`]: super::DEFAULT_QUOTE_OID
+/// [`quote_from_cert`]: super::quote_from_cert
 pub fn check_binding(report_data: &[u8; 64], cert_der: &[u8]) -> Result<(), BindingError> {
     if report_data.iter().all(|byte| *byte == 0) {
         return Err(BindingError::Unbound);

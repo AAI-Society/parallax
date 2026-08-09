@@ -51,8 +51,10 @@ to something outside itself — normally a digest of the key being attested — 
 zeroing it here is deliberate: this fixture exists to exercise signature
 checking and TCB evaluation, which do not depend on what is in that field.
 
-**This fixture cannot demonstrate a *successful* key binding.** Parallax does
-now check bindings — `check_binding` in `src/verify/binding.rs` — but a zeroed
+**This fixture cannot demonstrate a *successful* key binding.** Parallax now
+has a binding check — `check_binding` in `src/verify/binding.rs` — but nothing
+shipped calls it yet: the only callers are that module's own tests, and the
+proxy that will use it in a handshake is still to be written. A zeroed
 `report_data` is exactly what an unbound quote looks like, and the check
 refuses it: `the_real_fixtures_report_data_is_unbound` verifies this quote and
 then rejects the binding as `BindingError::Unbound`. What this fixture is

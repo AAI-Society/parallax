@@ -49,13 +49,32 @@ pub enum QuoteExtractError {
          attestation is then a matter of parser order"
     )]
     RepeatedQuoteExtension { oid: String, count: usize },
+    /// The extension is present but its `extnValue` is empty.
+    ///
+    /// Rejected rather than returned as `Ok(vec![])`, so that a successful
+    /// return really does mean bytes were present — which is what this module's
+    /// documentation says it means. Returning the empty vector would be safe
+    /// (`verify_quote` refuses an empty quote; see
+    /// `an_empty_quote_errors_and_does_not_panic` in `chain.rs`) but it would
+    /// push the complaint one stage downstream, where it becomes "quote
+    /// verification failed" and no longer says that the certificate carried an
+    /// empty extension.
+    #[error(
+        "extension {oid} is present but empty; \
+         an RA-TLS certificate that carries no quote under its quote OID is not \
+         a certificate that failed to verify, it is one that attested nothing"
+    )]
+    EmptyQuoteExtension { oid: String },
 }
 
 /// The bytes of the `oid` extension in the DER certificate `cert_der`.
 ///
 /// Returns the extension's `extnValue` *contents* — the payload inside the
 /// OCTET STRING wrapper, which for the Gramine layout is the raw quote as
-/// `configfs-tsm` produced it, ready to hand to [`verify_quote`].
+/// `configfs-tsm` produced it, ready to hand to [`verify_quote`]. Never an
+/// empty vector: an extension present but empty is
+/// [`QuoteExtractError::EmptyQuoteExtension`], so a successful return always
+/// means bytes were there.
 ///
 /// This performs no cryptography. In particular a successful return does not
 /// mean the certificate is signed by anything, that the quote verifies, or
@@ -97,6 +116,9 @@ pub fn quote_from_cert(cert_der: &[u8], oid: &str) -> Result<Vec<u8>, QuoteExtra
     }
 
     match (first, count) {
+        (Some([]), 1) => Err(QuoteExtractError::EmptyQuoteExtension {
+            oid: oid.to_string(),
+        }),
         (Some(value), 1) => Ok(value.to_vec()),
         (Some(_), count) => Err(QuoteExtractError::RepeatedQuoteExtension {
             oid: oid.to_string(),
@@ -122,9 +144,13 @@ mod tests {
     /// and distinctive bytes make "the right extension came back" checkable.
     const PAYLOAD: &[u8] = b"these exact bytes are not a quote";
 
-    /// A self-signed certificate carrying `payload` under `arcs`, or under no
+    /// A self-signed certificate carrying [`PAYLOAD`] under `arcs`, or under no
     /// extension at all when `arcs` is `None`.
     fn cert_with_extension(arcs: Option<&[u64]>) -> Vec<u8> {
+        cert_carrying(arcs, PAYLOAD)
+    }
+
+    fn cert_carrying(arcs: Option<&[u64]>, payload: &[u8]) -> Vec<u8> {
         let key = rcgen::KeyPair::generate().expect("keypair");
         let mut params = rcgen::CertificateParams::new(vec!["localhost".into()]).expect("params");
         params.distinguished_name = rcgen::DistinguishedName::new();
@@ -133,7 +159,7 @@ mod tests {
                 .custom_extensions
                 .push(rcgen::CustomExtension::from_oid_content(
                     arcs,
-                    PAYLOAD.to_vec(),
+                    payload.to_vec(),
                 ));
         }
         params
@@ -199,6 +225,34 @@ mod tests {
             "{err}"
         );
         assert!(err.to_string().contains(other), "{err}");
+    }
+
+    /// An extension that is there but empty is not a quote.
+    ///
+    /// The boundary between `Ok(vec![])` and an error. Returning the empty
+    /// vector would be safe — `verify_quote` refuses an empty quote — but the
+    /// complaint would then arrive as "quote verification failed", which is
+    /// what a *corrupt* quote produces, and the operator would be looking at
+    /// the wrong problem.
+    #[test]
+    fn an_empty_extension_is_not_a_quote() {
+        let cert = cert_carrying(Some(DEFAULT_QUOTE_OID_ARCS), &[]);
+        let err = quote_from_cert(&cert, DEFAULT_QUOTE_OID).expect_err("no bytes is no quote");
+        assert!(
+            matches!(&err, QuoteExtractError::EmptyQuoteExtension { oid } if oid == DEFAULT_QUOTE_OID),
+            "{err}"
+        );
+
+        // And one byte is enough to be a payload, so the guard is on emptiness
+        // and not on some minimum size this function has no business enforcing.
+        assert_eq!(
+            quote_from_cert(
+                &cert_carrying(Some(DEFAULT_QUOTE_OID_ARCS), &[0x00]),
+                DEFAULT_QUOTE_OID
+            )
+            .expect("one byte is a payload"),
+            [0x00]
+        );
     }
 
     /// Two extensions under one OID is an error, not a coin flip.
