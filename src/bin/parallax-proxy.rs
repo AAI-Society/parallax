@@ -54,7 +54,7 @@ struct Cli {
 ///
 /// It lives in the binary rather than in the library so that nothing a test can
 /// reach reads the wall clock: `parallax::proxy::serve` takes a
-/// [`Clock`](parallax::proxy::Clock), the tests pass
+/// [`parallax::proxy::Clock`], the tests pass
 /// `FixedClock`, and this is what production passes instead.
 #[derive(Debug)]
 struct SystemClock;

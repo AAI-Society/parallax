@@ -22,16 +22,16 @@
 //!    status.
 //! 3. The PCS freshness bound is the *worse* of the collateral's validity
 //!    window and the operator's declared refresh interval. See
-//!    [`pcs_detection_bound`].
+//!    `pcs_detection_bound`, which is private; read it in `src/derive.rs`.
 //! 4. A measurement that matches no configured reference value is a
-//!    [`Refutation`], not a member of the returned set. See [`derive`].
+//!    [`Refutation`], not a member of the returned set. See [`derive`](fn@derive).
 //!
-//! **[`derive`] is a pure function of its two arguments and reads no clock.**
+//! **[`derive`](fn@derive) is a pure function of its two arguments and reads no clock.**
 //! That is load-bearing rather than tidy: `compare::compare` decides whether two
 //! deployments are `Equal` by set equality, and `Assumption::latency`
 //! participates in `PartialEq`, so any time-varying quantity reaching a latency
 //! field would make one deployment `Incomparable` with itself a second later.
-//! [`pcs_detection_bound`] is where that pressure lands.
+//! `pcs_detection_bound` is where that pressure lands.
 //!
 //! [`verify_quote`]: crate::verify::verify_quote
 
@@ -94,7 +94,7 @@ pub struct DeriveConfig {
     /// Accepted MRTD values. **Empty means the measurement was never compared
     /// to anything**, so no publisher is trusted — nothing was checked — and
     /// what the operator proved is weaker than they think: *some* code ran in
-    /// a genuine trust domain, not theirs. See [`reference_check`].
+    /// a genuine trust domain, not theirs. See `reference_check`, private below.
     pub reference_values: Vec<[u8; 48]>,
     /// Identifies the verifier implementation, which is itself trusted.
     pub verifier_id: String,
@@ -105,7 +105,7 @@ pub struct DeriveConfig {
     /// **Read, not decorative.** [`collateral_principal`] turns it into the
     /// principal that carries `accurate_collateral_issuance`, so a deployment
     /// pointing at its own PCCS names its own PCCS rather than Intel. Before
-    /// this field existed the principal was the constant [`PCS`] regardless,
+    /// this field existed the principal was the constant `PCS` regardless,
     /// and two deployments differing only in which party chose their collateral
     /// produced byte-identical trust sets — while `Impact::Revocation`, the
     /// impact that entry carries, is *exactly* the thing a PCCS decides by
@@ -119,7 +119,8 @@ pub struct DeriveConfig {
 
 /// The party that served the collateral this appraisal rested on.
 ///
-/// [`PCS`] when — and only when — `source` is Intel's own service. Anything
+/// `PCS` — `did:web:pcs.intel.com` — when, and only when, `source` is
+/// Intel's own service. Anything
 /// else gets a principal built from the host it names, because that host is a
 /// different party: it cannot forge Intel's signatures, but it chooses *which*
 /// still-valid bundle to hand over, and choosing to serve the bundle from

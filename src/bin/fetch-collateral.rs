@@ -18,7 +18,7 @@
 //! # It goes through the crate's own front door, both ways
 //!
 //! Fetching is [`CollateralSource`], and appraising is
-//! [`verify_quote`](parallax::verify::verify_quote) — not
+//! [`parallax::verify::verify_quote`] — not
 //! `dcap_qvl::verify::verify`, which this program used to call directly. That
 //! was the one place in the tree that reached past the guards Task 2 built, and
 //! it was the *worst* place to do it: the collateral it hands over arrives from

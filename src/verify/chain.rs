@@ -15,7 +15,7 @@ use dcap_qvl::{PckCertFlag, QuoteCollateralV3, QuotePolicy, TcbStatus, TcbStatus
 /// A custom root must satisfy two conditions beyond being a valid certificate,
 /// both enforced one crate down rather than here:
 ///
-/// 1. **It must be self-issued.** See [`require_self_issued`].
+/// 1. **It must be self-issued.** See `require_self_issued`, private below.
 /// 2. **It must be covered by an unexpired CRL in the collateral.**
 ///    `dcap_qvl` opens by calling `check_single_cert_crl` on the anchor with
 ///    `UnknownStatusPolicy::Deny`, so a root that no CRL in

@@ -9,8 +9,14 @@
 //!
 //! The stages above it, [`quote_of`] and [`evaluate_peer`], are pure too: they
 //! take the certificate and the collateral as bytes. Only fetching the
-//! collateral needs a network, and that happens in [`serve`](super::serve),
-//! which is the only part of the proxy a test cannot run offline.
+//! collateral needs a network, and that happens in `proxy::serve`, which is
+//! the only part of the proxy a test cannot run offline.
+//!
+//! `serve` is written without a doc link on purpose, here and everywhere else
+//! it is named outside itself: the module is behind the `fetch-collateral`
+//! feature, so in a default build there is no item for the link to resolve to,
+//! and rustdoc reports the dangling link rather than the missing module. A
+//! plain name reads the same in both builds.
 //!
 //! # Fail closed
 //!
@@ -88,7 +94,7 @@ impl GateConfig {
     ///
     /// **Not a declared deployment.** [`manifest`] reads exactly two fields of
     /// a [`Deployment`] — `name` and `claim` — and the residual trust set comes
-    /// from [`derive`] over a real attestation, not from `solve` over declared
+    /// from [`derive`](fn@derive) over a real attestation, not from `solve` over declared
     /// mechanisms. The three empty vectors are therefore not an incomplete
     /// deployment description; there is no deployment file here to describe.
     /// `Deployment::validate` would reject this value (it refuses a deployment
@@ -225,7 +231,7 @@ pub fn quote_of(cert_der: &[u8], cfg: &GateConfig) -> Result<Vec<u8>, Decision> 
 ///    be [`quote_of`]'s return value for the same certificate. The two are
 ///    separate parameters only so that the caller can fetch collateral for the
 ///    quote in between, which needs a network and so cannot happen here.
-///    `Proxy::evaluate` in [`serve`](super::serve) is the one caller, and it
+///    `Proxy::evaluate` in `proxy::serve` is the one caller, and it
 ///    passes both from the same handshake.
 pub fn evaluate_peer(
     quote: &[u8],

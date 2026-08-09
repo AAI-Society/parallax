@@ -23,7 +23,7 @@
 //! a [`gate::Decision`]. It opens no socket, reads no clock and touches no
 //! file, so every interesting case — a refuted measurement, a forbidden
 //! principal, an undetectable assumption, a missing reference value — is a unit
-//! test rather than a fixture and a port number. [`serve`] holds everything
+//! test rather than a fixture and a port number. `serve` holds everything
 //! that does touch a socket, and it is a thin wrapper: between
 //! [`gate::Decision::Allow`] and the bidirectional copy there is nothing but
 //! the copy.
@@ -96,7 +96,7 @@
 //! defect — rustls skips `CertificateVerify` on resumption and refills
 //! `peer_certificates()` from its cache, so the attestation would have been
 //! about an earlier connection — was invisible to the whole test suite. It is
-//! fixed in [`serve`] (resumption disabled, plus a run-time check that every
+//! fixed in `serve` (resumption disabled, plus a run-time check that every
 //! handshake is full) and pinned by
 //! `resumption_is_disabled_so_every_handshake_is_full`, which reads a byte per
 //! connection precisely so that it takes the path the real allow path takes.

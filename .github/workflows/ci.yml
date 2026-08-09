@@ -27,6 +27,23 @@ jobs:
       # union is everything. Making them match would silently drop one side.
       - run: cargo clippy --all-targets --features fetch-collateral -- -D warnings
       - run: cargo test --features fetch-collateral
+      # Nothing in CI ever built the documentation, and a ledger entry recorded
+      # six intra-doc failures as "pre-existing, none new" — which was false in
+      # both halves. `ea864b3` documents cleanly under `-D warnings`, and both
+      # files the entry cited were created on the branch that recorded it, so
+      # nothing in them could be pre-existing. HEAD at the time produced seven
+      # link errors plus three `derive`-is-both-a-function-and-an-attribute
+      # ambiguities, and `--all-features` added five more and a
+      # redundant-link-target error.
+      #
+      # `--all-features` and not the default build, because two of those errors
+      # existed *only* in the default build: `proxy::serve` is behind
+      # `fetch-collateral`, so the default docs linked into a module that is not
+      # there. That class is invisible to an all-features run, so the links to
+      # `serve` are written as plain code rather than as doc links and read the
+      # same in both builds — see `proxy::gate`'s module docs, which say so.
+      - name: the documentation builds with no broken links
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
       # The default build must link no HTTP client. `fetch-collateral` is
       # additive and optional precisely so that `parallax solve` stays offline,
       # and a transitive dependency that pulled `reqwest` into the default

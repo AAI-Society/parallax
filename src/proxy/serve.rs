@@ -1,13 +1,14 @@
 //! Everything that touches a socket.
 //!
 //! This module is deliberately thin. The whole of the decision lives in
-//! [`gate`](super::gate), which is pure; what is here is the TLS handshake that
+//! [`gate`] — which is pure — while what is here is the TLS handshake that
 //! obtains the peer's certificate, the collateral fetch, and — on
 //! [`Decision::Allow`] and only then — the bidirectional copy.
 //!
 //! # Why the peer's certificate is not checked against a PKI
 //!
-//! [`AttestedPeer`] accepts every certificate chain. That is not a hole in the
+//! `AttestedPeer`, the private certificate verifier below, accepts every
+//! certificate chain. That is not a hole in the
 //! verification, it is where the verification moves to: an RA-TLS peer presents
 //! a self-signed, ephemeral certificate that no public CA has ever seen, and
 //! what makes it trustworthy is the quote inside it, not a signature from
@@ -19,8 +20,8 @@
 //! a trust domain" means.
 //!
 //! The two halves of that are separately load-bearing, so
-//! [`AttestedPeer::verify_tls12_signature`] and
-//! [`AttestedPeer::verify_tls13_signature`] delegate to rustls' real
+//! `AttestedPeer::verify_tls12_signature` and
+//! `AttestedPeer::verify_tls13_signature` delegate to rustls' real
 //! implementations rather than asserting like `verify_server_cert` does. If
 //! they asserted too, the peer would not need the private key at all and the
 //! binding would prove nothing.
@@ -31,7 +32,7 @@
 //! `SystemClock` that does lives in `src/bin/parallax-proxy.rs`, so the
 //! verification time is injected everywhere a test can reach. rustls has its own
 //! notion of "now" for certificate validity, and it is not used here for
-//! anything — [`AttestedPeer::verify_server_cert`] ignores the `UnixTime` it is
+//! anything — `AttestedPeer::verify_server_cert` ignores the `UnixTime` it is
 //! handed, because an RA-TLS certificate's `notAfter` is not what makes it
 //! good.
 
@@ -242,7 +243,7 @@ impl Proxy {
     /// The permit is taken *before* the accept, so one is reserved while the
     /// listener is idle. That costs one slot out of `max_connections` and
     /// buys the ordering above. Note also that a refused connection holds its
-    /// permit across [`DRAIN_DEADLINE`], so `max_connections` slow-drip
+    /// permit across `DRAIN_DEADLINE`, so `max_connections` slow-drip
     /// clients can stall accepts for up to that long — bounded, and the
     /// intended trade: the alternative is releasing the permit before the
     /// refusal is delivered, which is the work the permit exists to bound.
