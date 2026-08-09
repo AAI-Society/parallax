@@ -16,35 +16,10 @@
 //!
 //! [`verify_quote`]: super::verify_quote
 
-use sha2::digest::typenum::Unsigned;
-use sha2::digest::OutputSizeUser;
 use sha2::{Digest, Sha256};
 use x509_cert::der::{Decode, Encode};
 
-/// Bytes of `report_data` carrying the digest. SHA-256, so 32 of the 64.
-const DIGEST_LEN: usize = 32;
-
-/// Ties [`DIGEST_LEN`] to the hash actually used.
-///
-/// Everything below — the `skip(DIGEST_LEN)` that starts the zero-tail scan,
-/// and the `zip` that compares only the digest — is correct exactly when this
-/// constant is the hash's output size. Swapping [`Sha256`] for a hash with a
-/// different output would otherwise leave a silent gap: with SHA-224 the four
-/// bytes at 28..32 would be checked by neither the comparison nor the tail
-/// scan, and with SHA-512 the comparison would run off the end of the tail
-/// scan's territory. This makes that a build failure.
-const _: () = assert!(
-    DIGEST_LEN == <<Sha256 as OutputSizeUser>::OutputSize as Unsigned>::USIZE,
-    "DIGEST_LEN must equal the digest's output size, or the tail scan and the \
-     comparison do not meet"
-);
-
-/// The layout [`check_binding`] enforces, named in the errors it returns.
-///
-/// A convention, not a law — see [`check_binding`] for why it is nonetheless
-/// applied rather than made a parameter.
-const LAYOUT: &str = "the Gramine/Intel layout, SHA-256(SPKI) in report_data \
-                      bytes 0..32 with the remainder zero";
+use crate::ratls::{DIGEST_LEN, LAYOUT};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BindingError {

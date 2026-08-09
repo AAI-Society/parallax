@@ -21,7 +21,7 @@ use x509_cert::der::Decode;
 /// [`QuoteExtractError::NoQuoteExtension`] naming what was looked for. Without
 /// the name in the message, "this peer is not doing RA-TLS" and "this peer is
 /// doing RA-TLS under an OID we did not ask for" are the same line of output.
-pub const DEFAULT_QUOTE_OID: &str = "1.2.840.113741.1337.6";
+pub use crate::ratls::QUOTE_OID as DEFAULT_QUOTE_OID;
 
 #[derive(Debug, thiserror::Error)]
 pub enum QuoteExtractError {
