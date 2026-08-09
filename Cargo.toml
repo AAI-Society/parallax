@@ -15,6 +15,13 @@ path = "src/lib.rs"
 name = "parallax"
 path = "src/bin/parallax.rs"
 
+# A one-off tool, not part of the shipped CLI: it is how the test fixture in
+# `tests/fixtures/` was produced, and it is committed so that the fixture can
+# be reproduced rather than merely trusted.
+[[bin]]
+name = "fetch-collateral"
+path = "src/bin/fetch-collateral.rs"
+
 [dependencies]
 ascent = "0.8"
 serde = { version = "1", features = ["derive"] }
@@ -24,6 +31,15 @@ clap = { version = "4", features = ["derive"] }
 thiserror = "2"
 anyhow = "1"
 humantime = "2"
+
+# The DCAP quote verifier. Default features carry `report` (the async PCCS
+# collateral client, used only by `fetch-collateral`) and `default-x509`,
+# which is what gates the `verify::verify` entry point everything else uses.
+dcap-qvl = "0.6"
+# Only `fetch-collateral` needs an async runtime: `CollateralClient::fetch` is
+# the crate's sole async surface. `rt-multi-thread` rather than `rt` because
+# reqwest's connection pool expects to be driven by more than one worker.
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 # Used only to restore the default SIGPIPE disposition in `src/bin/parallax.rs`
 # before any output is written (see `reset_sigpipe`). Unix-only: Windows has

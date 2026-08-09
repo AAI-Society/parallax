@@ -1,0 +1,82 @@
+//! The fixture in `tests/fixtures/gcp-c3-tdx/` must actually verify.
+//!
+//! This is deliberately the narrowest possible test: it asserts nothing about
+//! parallax's own code. It asserts that the three committed files — a real TDX
+//! quote, the Intel collateral that was current when it was taken, and the
+//! timestamp of the taking — still satisfy `dcap_qvl::verify::verify`. Every
+//! later piece of verification logic in this repository is tested against that
+//! bundle, so if the bundle itself is wrong, those tests are asserting against
+//! nothing and would report success while doing so.
+//!
+//! It also catches a specific, quiet failure: `QuoteCollateralV3` serialises
+//! its DER and signature fields through `serde_bytes`, and a fixture that
+//! verified in memory at capture time but does not survive the round trip
+//! through `collateral.json` would be broken in exactly the form nobody looks
+//! at. This reads the committed JSON, not the object that produced it.
+
+use std::path::PathBuf;
+
+fn fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gcp-c3-tdx")
+}
+
+/// The capture time, as seconds since the epoch.
+///
+/// The clock is pinned here rather than read from `SystemTime::now()` because
+/// CRLs and TCB info carry validity windows. Judged against the wall clock,
+/// this fixture would stop verifying a few weeks after capture and CI would go
+/// red for a reason with no connection to any change in this repository. See
+/// `tests/fixtures/gcp-c3-tdx/PROVENANCE.md`.
+fn captured_at_secs() -> u64 {
+    let raw = std::fs::read_to_string(fixture_dir().join("captured-at"))
+        .expect("fixture is missing captured-at");
+    humantime::parse_rfc3339(raw.trim())
+        .expect("captured-at is not RFC 3339")
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("captured-at predates the Unix epoch")
+        .as_secs()
+}
+
+#[test]
+fn committed_fixture_verifies_at_its_capture_time() {
+    let dir = fixture_dir();
+    let quote = std::fs::read(dir.join("quote.bin")).expect("fixture is missing quote.bin");
+    let collateral: dcap_qvl::QuoteCollateralV3 = serde_json::from_slice(
+        &std::fs::read(dir.join("collateral.json")).expect("fixture is missing collateral.json"),
+    )
+    .expect("collateral.json does not deserialise as QuoteCollateralV3");
+
+    let report = dcap_qvl::verify::verify(&quote, &collateral, captured_at_secs())
+        .expect("the committed fixture does not verify");
+
+    // `UpToDate` is asserted, not merely observed. dcap-qvl returns Ok for
+    // degraded states too — `SWHardeningNeeded`, `OutOfDate` and friends are
+    // successful verifications of a platform behind on its TCB. A fixture that
+    // silently drifted into one of those would still pass an `is_ok()` check
+    // while quietly weakening every test that leans on it.
+    assert_eq!(report.status, "UpToDate", "fixture TCB status changed");
+    assert!(
+        report.advisory_ids.is_empty(),
+        "fixture picked up advisories: {:?}",
+        report.advisory_ids
+    );
+}
+
+/// The report_data is 64 zero bytes, as `PROVENANCE.md` says it is.
+///
+/// Worth asserting because the capture script could plausibly have written 64
+/// ASCII `'0'` characters instead — an earlier draft of it did — and the
+/// difference is invisible in a hex dump unless you are looking for it. Task 4
+/// tests the real key binding; this only pins down what the placeholder is, so
+/// that a test which one day expects zeroes is not quietly reading `0x30`s.
+#[test]
+fn fixture_report_data_is_the_documented_placeholder() {
+    let quote = std::fs::read(fixture_dir().join("quote.bin")).expect("missing quote.bin");
+    // 48-byte DCAP header, then the TD report body; report_data is the last 64
+    // bytes of that body, at offset 520 within it.
+    let start = 48 + 520;
+    let report_data = quote
+        .get(start..start + 64)
+        .expect("quote is too short to contain a TD report body");
+    assert_eq!(report_data, [0u8; 64], "report_data is not 64 zero bytes");
+}
