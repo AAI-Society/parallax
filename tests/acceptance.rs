@@ -119,6 +119,12 @@ fn all_examples_solve() {
     // declared here fails the directory check below, which is the point.
     const NOT_DEPLOYMENTS: [&str; 3] = ["policy-proxy.toml", "policy-strict.toml", "proxy.toml"];
 
+    // The filter is `.ends_with(".toml")`, so an example shipped in another
+    // serialisation would be skipped silently rather than caught by the
+    // directory check. Immaterial today — `Deployment::load` reads TOML and
+    // nothing else, so a non-TOML example could not load anyway — but if the
+    // loader ever grows a second format, widen this filter in the same commit.
+
     let mut names: Vec<String> = std::fs::read_dir("examples")
         .expect("the examples directory is committed")
         .map(|e| e.expect("readable entry").file_name())

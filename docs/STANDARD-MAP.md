@@ -5,9 +5,10 @@ what it supports, and what it contradicts.
 
 Requirement IDs below link into `0.1/en/`. Three of these are **corrections**:
 parallax computes something the standard currently asserts, and the computed
-answer disagrees. A fourth entry is a **finding** rather than a correction —
-the standard's text does not say the wrong thing, it does not yet say anything,
-and building a verifier is what surfaced the gap.
+answer disagrees. A fourth entry is a **finding** rather than a correction: the
+requirement it concerns already exists, in C6 and C1, and what is missing is
+the link from there into the tier an operator claims (C8) and the disclosure a
+relying party reads (C10.2). It is a seam between domains, not an omission.
 
 ---
 
@@ -19,11 +20,12 @@ and building a verifier is what surfaced the gap.
 | [**C8.1** Tier Placement](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C08-Verifiability-Tiers.md#c81-tier-placement) | Deployments sit on an ordered four-rung ladder | Two deployments' trust sets can be **incomparable**; all four candidate orderings fail | ⚠️ **contradicts** |
 | [**C10.2** Trust-Assumption Disclosure](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure) | *`[WG-INPUT NEEDED]` — the standardized disclosure format itself is not yet defined* | Emits a machine-readable disclosure, **generated rather than written** | ✅ **proposes a format** |
 | [**C10.2.1**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure) | Each residual trust assumption, *"matched one-to-one against the mechanisms in the claim register"* | `introduced_by` carries the exact mechanism that produced each assumption — the one-to-one match is computed, not asserted | ✅ **implements** (described deployments) |
-| [**C10.2.1**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure), live | The same requirement, for a deployment that is running rather than described | `parallax-proxy` emits a Residual Trust Manifest **per connection**, derived from the attestation it just verified — the auditor evidence C10.2.1 asks for, for the connection it is actually about | ✅ **implements** (live) |
+| [**C10.2.1**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure), live | The same requirement, for a deployment that is running rather than described | `parallax-proxy` emits a Residual Trust Manifest **per connection**, derived from the attestation it just verified — a per-connection disclosure that would satisfy 10.2.1's reconciliation for the connection it is actually about. (C10.2.1 asks for a disclosure, not a per-connection one; the continuous-operation evidence lives in C10.3) | ✅ **implements** (live) |
 | [**C10.2.2**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure) | Assumptions tagged with categories so disclosures are *"machine-comparable"* | `failure_impact` is that tag — and `parallax compare` is the machine comparison | ✅ **implements** |
 | [**C10.2** worked example](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c102-trust-assumption-disclosure) | A ZK-STARK deployment has the *"narrowest trust base"* | The TDX and ZK trust sets are **disjoint** — neither is narrower | ⚠️ **contradicts** |
-| [**C10.3.3**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c103-continuously-monitored-operation) | An automated validator checks each evidence record against its claimed Tier | `parallax check` is that validator offline — exits non-zero, runs in CI — and `parallax-proxy` is it in line, refusing the connection rather than reporting after the fact. See [below](#c1033-the-validator-now-exists-in-both-places) | ✅ **implements** |
-| [**C8** Tier 3, in practice](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C08-Verifiability-Tiers.md) | Verifying an attestation is what places a deployment at Tier 3 | A verifier that checks a quote without comparing the measurement to a reference value satisfies **less** of Tier 3 than its operator believes: it has authenticated the silicon, not the software. See [below](#a-fourth-finding-verifying-a-quote-is-not-comparing-a-measurement) | 🔎 **finding** |
+| [**C10.3.3**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c103-continuously-monitored-operation) | *"an automated validator checks each evidence record against its claimed Tier's requirements **within the defined validation window**, and that **validator results are themselves logged**"* | `parallax check` offline and `parallax-proxy` in line are both that validator — and the proxy's window is the connection itself. But it evaluates against a **local policy**, not a "claimed Tier", deliberately; and the result log is stdout, not a durable store. See [below](#c1033-the-validator-now-exists-in-both-places) | ✅ **implements, partially** |
+| [**C7.2.4**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C07-Evidence-Generation-and-Properties.md#c72-the-contemporaneous-property) | The attestation must cryptographically bind the evidence signing key: *"the key's digest appears in the attested report body (TDX `REPORTDATA`…)"* | `check_binding` is exactly this check, and the proxy runs it on every connection between verifying the quote and deriving the trust set. The committed fixture's 64 zero bytes of `report_data` is a **C7.2.4 failure**, and the check refuses it | ✅ **implements** |
+| [**C8**/**C10.2** vs [**C6.2.2**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C06-Security.md#c62-isolation-and-confidential-execution) and [**C1.3.2**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C01-Provenance.md#c13-compute-substrate-provenance)](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C08-Verifiability-Tiers.md) | C6 and C1 require attestation to be validated *"against published reference values"*. C8's tier table and C10.2's disclosure schema never mention reference values, and have no subject or category for whoever publishes them | The reference-value provider is in the computed trust set — undetectable — whether or not the disclosure schema has a slot for it. A disclosure can pass 10.2.1's one-to-one reconciliation without naming it. See [below](#a-fourth-finding-the-reference-value-seam) | 🔎 **finding** |
 | [**C10.3.4**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C10-Conformance-and-Disclosure.md#c103-continuously-monitored-operation) | Failures raise alerts *"within the bounded window defined in the claim"* | Detection latency is a first-class computed value, per assumption and composed | ✅ **supplies the bound** |
 | [**C7.4** The Transparent Property](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C07-Evidence-Generation-and-Properties.md#c74-the-transparent-property) | C10.2 *"operationalizes"* it | The manifest is the operationalization | ✅ **implements** |
 | [**C7.3** Tamper-Evident](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C07-Evidence-Generation-and-Properties.md#c73-the-tamper-evident-property) | Anchoring makes a log tamper-evident | Anchoring converts log-operator trust into a bounded window **and ingests a settlement-layer assumption** | ⚡ **refines** |
@@ -100,30 +102,81 @@ implies an ordering the sets do not admit.
 
 ---
 
-## A fourth finding: verifying a quote is not comparing a measurement
+## A fourth finding: the reference-value seam
 
-This is not a correction — the standard does not say the wrong thing here. It
-is what building a verifier surfaced, and it is the kind of gap a conformance
-regime should close before it is depended on.
+**The standard already requires reference-value comparison. It requires it in
+C6 and C1, and does not carry it into C8's tier definition or C10.2's
+disclosure schema.** That seam is the finding. An earlier draft of this section
+claimed the standard said nothing about reference values at all, which was
+wrong — it says so in three places, and the correction is recorded here rather
+than quietly edited out, because the mistake was the same kind this document
+exists to catch: a confident claim about a text nobody had grepped.
 
-An operator who stands up a TDX attestation verifier reports that they are at
-Tier 3. The quote verifies: the signature chains to Intel's root, the
-collateral is in date, the TCB status is `UpToDate`, the quoting enclave's
-report is well formed. Every cryptographic check passes.
+### Where the standard already says it
+
+- [**C6.1.3**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C06-Security.md#c61-execution-environment-integrity)
+  (Level 2) — attestation reports *"are automatically compared against
+  maintained golden reference values, with mismatches alerting and recorded"*,
+  with auditor evidence *"the golden-value register and its change history, and
+  one recorded mismatch alert (test it)."*
+- [**C6.2.2**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C06-Security.md#c62-isolation-and-confidential-execution)
+  (Level 3) — sensitive workloads run in confidential-compute environments
+  *"whose attestation an external party can validate against published
+  reference values."*
+- [**C1.3.2**](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C01-Provenance.md#c13-compute-substrate-provenance)
+  (Level 3) — substrate identity is backed by an attestation report *"that a
+  party outside the organization can validate against published reference
+  values"*, with auditor evidence to do exactly that *"without operator
+  assistance."*
+
+C6.2.2 and C1.3.2 are the verifier side of the scenario below, at the level a
+Tier 3 claim sits at. An operator who works through C1 and C6 is told to
+publish reference values and to have them compared. Nothing here is missing.
+
+### What is missing, and where
+
+**Neither `0x10-C08` nor `0x10-C10` contains the words "reference value" or
+"golden" anywhere.** Those two documents are the tier an operator claims and
+the disclosure a relying party reads. Three consequences:
+
+1. **C8's Tier 3 row does not mention the comparison.** What the reader gets is
+   *"The trusted party is removed"*; under *Who you must trust*, *"The
+   cryptographic mechanism (mathematical or distributed assumptions)"*; and
+   under *How it is verified*, *"Anyone can verify, no privileged access"*.
+   C8.1.5 does require that *"an external party can obtain the evidence and complete
+   verification using only published materials"* — but "complete verification"
+   is not defined, and the step that separates *some code ran in a TEE* from
+   *your code ran in a TEE* is precisely the one a reader is most likely to
+   assume is included in the word "verification" when it is not.
+2. **The reference-value publisher is not a disclosable subject.** C10.2.1 asks
+   for each assumption's subject as *"named vendor, hardware element,
+   mathematical assumption, or ceremony"*. Whoever chooses your `MRTD` is none
+   of those: not the silicon vendor (Intel does not know what your workload
+   should measure to), not a hardware element, not a mathematical assumption,
+   not a ceremony. C10.2.2's draft category set — Hardware, Mathematical,
+   Ceremony, Vendor, Implementation, Distributed — has the same shape. So a
+   disclosure can pass 10.2.1's one-to-one reconciliation against the mechanism
+   list, with no finding, and never name the party whose dishonesty makes the
+   whole attestation attest the wrong workload. C8.1.7 comes closest, requiring
+   *"the vendor trust assumption on the disclosure"* for vendor-rooted
+   attestation — but that names Intel, not the reference-value publisher.
+3. **The requirement that would catch it is two domains away.** C6.1.3 is Level
+   2 and C6.2.2 is Level 3; both live in Security, and nothing in C8 or C10
+   points at either. An operator can read C8, place a claim at Tier 3, write a
+   C10.2 disclosure, pass 10.2.1, and have built a verifier that compares
+   nothing.
+
+### What that looks like in practice
+
+The quote verifies: the signature chains to Intel's root, the collateral is in
+date, the TCB status is `UpToDate`, the quoting enclave's report is well
+formed. Every cryptographic check passes.
 
 What has been established is that **some** code ran in a genuine Intel TDX
-trust domain on a platform Intel will vouch for. Whether it was *their* code is
-a different question, and it is answered by comparing the attested measurement
-(`MRTD`, and the RTMRs) against a reference value the operator supplies. A
-verifier configured with no reference values never asks it. Nothing fails.
-There is no error, no warning in the protocol, and no field in the quote that
-is left empty — the measurement is right there, correctly signed, compared to
-nothing.
-
-So the operator holds a valid attestation of an unknown workload and believes
-they hold a valid attestation of their workload. The distance between those two
-sentences is the whole of C8's Tier 3, and no part of the verification
-transcript reveals which one you have.
+trust domain on a platform Intel will vouch for. A verifier configured with no
+reference values never asks the other question. Nothing fails. There is no
+error, no warning in the protocol, and no field in the quote left empty — the
+measurement is right there, correctly signed, compared to nothing.
 
 parallax refuses to let that be silent, in three places:
 
@@ -142,44 +195,79 @@ parallax refuses to let that be silent, in three places:
    set. A refuted measurement is a verification failure, not a deployment with
    an extra assumption in it.
 
-> **Suggested revision.** A Tier 3 conformance claim should have to state its
-> reference values and who chose them, as a required field rather than an
-> implicit one. The party that publishes the golden values is already in the
-> trust set — `did:web:rvp.example.org` in the worked example above, undetectable
-> — and a claim that omits them is not a stronger claim with a shorter list; it
-> is a weaker claim whose weakest link has no name. C10.2's disclosure format is
-> the natural place to require it.
+That is a trust-set answer to a disclosure-schema gap. The computed set names
+the reference-value provider — `did:web:rvp.example.org` in the worked example
+above, undetectable — because the composition rules put it there, not because
+C10.2 has a field for it.
+
+> **Suggested revision**, aimed at C8 and C10.2 rather than at C6 or C1, which
+> already say the substantive thing:
+>
+> 1. **C10.2.1** — add *reference-value publisher* to the list of assumption
+>    subjects (and a matching category to C10.2.2's draft set), so that a
+>    measurement-based disclosure that omits it is a finding in the same way a
+>    mechanism without a disclosure line already is.
+> 2. **C8.1.5** — say that for a measurement-based attestation, *"complete
+>    verification using only published materials"* includes comparing the
+>    attested measurement against a published reference value. That is already
+>    C6.2.2's and C1.3.2's requirement; C8 is where the operator reads what
+>    their tier means.
+> 3. **C8's Tier 3 row and C6.2.2** should cross-reference each other. The
+>    failure mode is not that the standard omits the requirement; it is that
+>    the requirement and the tier claim live in different documents, and only
+>    one of them is quoted in a procurement conversation.
 
 ---
 
 ## C10.3.3: the validator now exists in both places
 
-C10.3.3 asks for an automated validator that checks each evidence record
-against its claimed Tier. parallax has two, and they differ in when they run
-rather than in what they check — both call `policy::evaluate` on a manifest.
+C10.3.3 (Level 4) reads, in full:
+
+> **Verify that** an automated validator checks each evidence record against
+> its claimed Tier's requirements **within the defined validation window**, and
+> that **validator results are themselves logged**.
+
+Three obligations, not one, and they are worth separating because parallax
+meets them unevenly.
+
+parallax has two validators. They differ in when they run rather than in what
+they check — both call `policy::evaluate` on a manifest.
 
 | | `parallax check` | `parallax-proxy` |
 | :-- | :-- | :-- |
 | Input | a manifest on disk | the peer's attestation, verified on the spot |
 | When | in CI, before deployment | per connection, in line |
+| Validation window | whenever CI runs | the connection itself — the tightest window there is |
 | On failure | exit 1, violations on stderr | `502 Bad Gateway`, the violated assumption in the body |
-| Output | `OK` or the violation list | a Residual Trust Manifest per decision (C10.2.1) |
+| Result log | `OK` or the violation list, on stdout/stderr | a Residual Trust Manifest per decision, on stdout |
 
-The in-line one is the stronger reading of the requirement, because a validator
-that runs after the fact reports a violation to somebody who has already
-trusted the answer. This one refuses the traffic.
+**"Within the defined validation window"** is the clause that makes the in-line
+validator the stronger reading. A validator that runs after the fact reports a
+violation to somebody who has already trusted the answer; its window is however
+long the evidence sat before anyone looked. The proxy's window is the
+connection it is deciding about, and the decision precedes the traffic. There
+is no shorter window available for a per-connection claim.
 
-Two honest qualifications, so that "implemented" is not read as more than it is:
+**"Validator results are themselves logged"** is a second obligation, and the
+honest answer is *partially*. Both tools emit their result for every decision —
+the proxy emits a full manifest, not merely a verdict — but they emit it to
+**stdout**, leaving durability, retention and tamper-evidence to whatever the
+operator pipes it into. C10.3.3 sits at Level 4 alongside C10.3.4's alerting;
+a deployment claiming it needs a result store, and parallax does not ship one.
 
+Three qualifications, so that "implemented" is not read as more than it is:
+
+- The validator checks a manifest against a **local policy**, not against a
+  "claimed Tier". That is deliberate, and it is the same argument as the three
+  corrections above: a claimed Tier is not a thing a validator can check,
+  because the ordering the tier presupposes does not exist. A relying party's
+  policy is what remains once you accept that. So this is an implementation of
+  the requirement's *shape* with its subject replaced, not a drop-in.
+- The result log is stdout, per the paragraph above.
 - The proxy's **allow half is not tested over a socket** — the committed quote
   is unbound, so every socket test refuses at the binding. `src/proxy/mod.rs`
   enumerates what that leaves uncovered, and is explicit that the list is what
   reading finds rather than a proof of exhaustiveness. Read it there.
-- The validator checks a manifest against a **local policy**, not against a
-  "claimed Tier". That is deliberate: the three corrections above are the
-  argument that a claimed Tier is not a thing a validator can check, because
-  the ordering the tier presupposes does not exist. A relying party's policy is
-  what remains once you accept that.
 
 ---
 
@@ -231,14 +319,24 @@ useful and they are not substitutes.
 ## What this does not cover
 
 Most of the standard. parallax speaks to C8, C10.2, C10.3 and the parts of C7
-that bear on trust disclosure. It says nothing about
-[C1 Provenance](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C01-Provenance.md),
+that bear on trust disclosure and key binding. It says nothing about
 [C2 Privacy](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C02-Privacy.md),
 [C3 Portability](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C03-Portability.md),
 [C4 Authorization](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C04-Authorization.md),
-[C5 Identity](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C05-Identity.md),
-[C6 Security](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C06-Security.md)
+[C5 Identity](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C05-Identity.md)
 or [C9 System Surface](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C09-System-Surface-MAESTRO.md).
+
+**[C1 Provenance](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C01-Provenance.md)
+and [C6 Security](https://github.com/AAI-Society/ov-poc-standard/blob/master/0.1/en/0x10-C06-Security.md)
+are cited but not mapped**, and the distinction is worth stating rather than
+leaving as an inconsistency. C1.3.2, C6.1.3 and C6.2.2 are load-bearing for the
+fourth finding above — they are the requirements that already say what C8 and
+C10.2 do not — but parallax implements no part of either domain. It does not
+maintain a golden-value register, does not alert on a mismatch, and does not
+record a control-to-evidence mapping. It consumes a reference value the
+operator hands it and reports what trusting that value costs. An earlier
+version of this section listed both domains under "says nothing about" while
+the document filed a finding one of them answers; that is fixed here.
 
 Two sibling tools cover other corrections in the same programme —
 **transit** (C4 / C7, message-to-effect binding) and **occultation** (C5,

@@ -218,9 +218,19 @@ to pass.
    a *successful* key binding — the fixture's `report_data` is a placeholder,
    so the accepting path is exercised only against certificates the tests
    generate. Do not write "validated against real hardware" without the words
-   "one quote" nearby. `README.md`'s "What is real, and what is not" and
-   `docs/STANDARD-MAP.md` state the full boundary; keep any paper sentence
-   inside it.
+   "one quote" nearby. `README.md`'s "What is real, and what is not" states the
+   full boundary; keep any paper sentence inside it.
+
+   **And do not treat `docs/STANDARD-MAP.md` as an authority on the standard's
+   text.** It is our reading, and its first version of the reference-value
+   finding asserted the standard "does not yet say anything" about reference
+   values when C6.1.3, C6.2.2 and C1.3.2 all require the comparison — nobody
+   had grepped. It is corrected, and the correction is recorded in the section
+   itself rather than tidied away. Before any paper sentence characterises what
+   the standard says, requires, or omits, read the requirement in
+   `ov-poc-standard/0.1/en/` and quote it. A claim about somebody else's
+   document is exactly as checkable as a count, and this project has now been
+   wrong about one in the same shape it was wrong about the other.
 
    Statements (g) and (h) are there because prose contradicted the artifact
    five times over this paper's life. Both families of count are now

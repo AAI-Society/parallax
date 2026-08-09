@@ -129,9 +129,12 @@ https://api.trustedservices.intel.com/tdx/certification/v4, cache TTL 43200s)
 ```
 
 A verifier that checks a quote without comparing the measurement to a reference
-value has authenticated the silicon and not the software. That is the
-[reference-value gap](docs/STANDARD-MAP.md#a-fourth-finding-verifying-a-quote-is-not-comparing-a-measurement),
-and it is a finding against the standard, not only against this tool.
+value has authenticated the silicon and not the software. The standard already
+requires that comparison — in C6.1.3, C6.2.2 and C1.3.2 — but C8's tier table
+and C10.2's disclosure schema never mention reference values, so a deployment
+can claim Tier 3 and publish a conforming disclosure that never names whoever
+chose them. That seam is the
+[reference-value finding](docs/STANDARD-MAP.md#a-fourth-finding-the-reference-value-seam).
 
 ---
 
@@ -353,7 +356,7 @@ same author wrote, which is a weaker thing.
 **The evidence base for the verifying mode is one quote.** One capture, from
 one machine — a GCP `c3-standard-4` in `us-central1-a` — in one platform
 configuration: FMSPC `00806F050000`, appraising `UpToDate` with no advisory IDs
-(and, on the other axis, two PCK platform caveats, which is why
+(and, on the other axis, two PCK platform caveats, one of which is why
 `QuotePolicy::strict` rejects it). Everything the verifier claims about real
 hardware rests on that single sample. Two specific consequences:
 
@@ -370,7 +373,8 @@ hardware rests on that single sample. Two specific consequences:
 
 A single sample can falsify, and this one did — which is why the hardware was
 worth it. It appraises `UpToDate` and `QuotePolicy::strict` still rejects it, on
-a PCK platform flag, so the two health axes disagree on real hardware and a
+one of its two PCK platform flags, so the two health axes disagree on real
+hardware and a
 verifier that reads only the TCB status reaches the opposite conclusion from
 Intel's own default appraisal. And it arrives zero-padded from `configfs-tsm`
 — 4935 bytes of quote in an 8000-byte buffer — which is what any parser we ship
@@ -384,7 +388,7 @@ guessed. Falsifying is all one sample can do; it cannot generalise.
 parallax is a research tool for the
 [**Proof-of-Control Standard**](https://github.com/AAI-Society/ov-poc-standard).
 It implements several of its requirements, contradicts three of its claims, and
-records one finding the standard's text does not yet anticipate:
+records one finding about a seam between two of its domains:
 
 | | Standard | |
 | :-- | :-- | :-- |
@@ -392,9 +396,10 @@ records one finding the standard's text does not yet anticipate:
 | ⚠️ | **C8.1** — deployments sit on an ordered ladder | two deployments can be incomparable |
 | ⚠️ | **C10.2 example** — a ZK deployment has the *"narrowest trust base"* | the sets are disjoint; neither is narrower |
 | ✅ | **C10.2** — *`[WG-INPUT NEEDED]`: the disclosure format is not yet defined* | emits one, generated rather than written |
-| ✅ | **C10.2.1** — assumptions *"matched one-to-one against the mechanisms"* | `introduced_by` computes the match; and `parallax-proxy` emits a manifest **per connection**, which is the auditor evidence in the live case |
-| ✅ | **C10.3.3** — an automated validator checks each record against its claimed Tier | `parallax check` as a CI gate, and `parallax-proxy` as an in-line one, refusing traffic rather than reporting after the fact |
-| 🔎 | **C8, Tier 3 in practice** — verifying an attestation | a verifier that checks a quote without comparing the measurement to a reference value satisfies **less** of Tier 3 than its operator believes; it has authenticated the silicon, not the software |
+| ✅ | **C10.2.1** — assumptions *"matched one-to-one against the mechanisms"* | `introduced_by` computes the match; and `parallax-proxy` emits a manifest **per connection**, which would satisfy the reconciliation for that connection |
+| ✅ | **C7.2.4** — the attestation must bind the evidence signing key's digest into `REPORTDATA` | `check_binding`, run on every connection. The committed fixture's zeroed `report_data` is a C7.2.4 failure, and it is refused |
+| ⚠️✅ | **C10.3.3** — an automated validator, *"within the defined validation window"*, whose *"results are themselves logged"* | `parallax check` in CI and `parallax-proxy` in line; the proxy's window is the connection itself. **Partial:** it validates against a *local policy*, not a "claimed Tier" — deliberately, per the contradictions above — and its result log is stdout, not a store |
+| 🔎 | **C6.2.2 / C1.3.2 vs C8 / C10.2** | C6 and C1 already require attestation to be validated *"against published reference values"*. C8's tier table and C10.2's disclosure schema never mention them, and have no subject or category for whoever publishes them — so a disclosure can pass C10.2.1 without naming the party whose dishonesty makes the attestation attest the wrong workload |
 
 **[→ Full mapping, with the suggested revisions](docs/STANDARD-MAP.md)**
 
@@ -415,6 +420,12 @@ four.
 implementation settled, and the five defects found along the way. Every one was
 correct code implementing a subtly wrong specification, producing a confident
 wrong answer rather than an error.
+
+**That document is a snapshot, not a current description.** It was written at
+the twelve-task whole-branch review on 2026-08-08, when the tool was 144 tests
+and 28 commits, and it describes the calculus alone. Everything on this page
+about real quote verification, RA-TLS key binding, collateral fetch and
+`parallax-proxy` came after it, and none of it is reflected there.
 
 ## Licence
 

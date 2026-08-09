@@ -1,12 +1,21 @@
 # What building `parallax` established, and what P01 must change
 
 **Date:** 2026-08-08 · **Tool:** [Task-force-for-AI-agents-in-Healthcare/parallax](https://github.com/Task-force-for-AI-agents-in-Healthcare/parallax) ·
-144 tests · 28 commits · final whole-branch review clean
+144 tests · 28 commits at the whole-branch review — the state described below
 
 This records what the implementation settled, what it forced us to correct, and
 what [P01](../papers/P01-trust-calculus.md) needs to say differently as a result.
 It exists because the working notes live in git-ignored scratch, and these
 conclusions should not.
+
+> **This is a snapshot of the trust calculus alone.** The counts above are the
+> repository as it stood at the twelve-task whole-branch review, and they are
+> correct for it; they are not current. Work that landed afterwards — real
+> Intel TDX quote verification, RA-TLS key binding, collateral fetch and cache,
+> and `parallax-proxy` — is not described here and did not exist when this was
+> written. For what the tool does now, and for current figures, read the
+> repository `README.md` and `docs/STANDARD-MAP.md`. Nothing below has been
+> revised in the light of that work.
 
 ---
 
