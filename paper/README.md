@@ -69,7 +69,7 @@ same commit or do not add the sentence. For the headline count, prefer the
 macro: `\SigmaTwoUndetectable{}`, `\SigmaTwoParties{}`,
 `\SigmaTwoBounded{}`, `\SigmaTwoAssumptions{}` are defined and expand to
 words, so a new sentence can state the count without typing it.
-`the_headline_count_is_never_typed_into_the_paper` fails if one of the four
+`the_headline_count_is_never_typed_into_the_paper` fails if one of the five
 existing sites goes back to a typed word, and if you deliberately reword one
 of those sentences it will fail too — update the anchor in the test, in the
 same commit, after checking the macro is still there.

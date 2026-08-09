@@ -455,17 +455,43 @@ on them. Section~\ref{sec:termination} explains why we did not need it.
 \section{Writing It Down Precisely}
 \label{sec:formal}
 
-Sentences like ``you still have to trust the vendor'' are fine until two
-people disagree about what they cover, so here it is in symbols. Everything
-in this section is what the code does; the composition rules below are
+Go back to the argument in Section~\ref{sec:intro} that does not end. The
+reviewer says you are still trusting the build pipeline; the vendor says the
+attestation covers it. Both are sincere, and neither has said what ``you are
+still trusting the build pipeline'' would have to mean before anybody could
+check whether it is true.
+
+So try to write the sentence down and see what it forces on you. Not symbols
+for their own sake --- take the thing you actually want to say about a
+deployment, ask what it needs in order to be sayable at all, and keep what
+survives. Everything below is what the code does: the composition rules are
 transcribed from \texttt{src/mechanism.rs} and \texttt{src/solve.rs} in the
 artifact, not drafted for the paper.
 
 \subsection{The judgment}
 
-Let $\mathcal{P}$ be a finite set of named principals and $\mathcal{C}$ a
-finite set of capability names --- ``signs quotes honestly,'' ``publishes
-correct reference values,'' and so on. A \emph{detection latency} is either a
+Here is the sentence. \emph{This party has to be honest about this particular
+thing, and if they were not, you would find out within this long.} What does
+that have to be made of?
+
+It needs a name --- which party. It needs the thing they are being honest
+about, kept apart from the name, and it is worth seeing why they have to be
+kept apart. ``Intel is trustworthy'' is not a proposition anyone can check.
+Intel is being trusted to make silicon that behaves as documented; it is not
+being trusted to publish your reference values. Run the two together and you
+will not notice the day a party who was fine for one job starts doing
+another. So: let $\mathcal{P}$ be a finite set of named principals and
+$\mathcal{C}$ a finite set of capability names --- ``signs quotes honestly,''
+``publishes correct reference values,'' and so on.
+
+Now the third part, and this is where the shape of everything else gets
+decided. How long until you find out? Ask it of the quoting enclave. Suppose
+its signing key leaks tonight. How long before somebody notices? Not a long
+time --- never. The quotes it forges verify, and they verify tomorrow, and
+they verify next year, and nothing anywhere in the system ever produces the
+contradiction that would give it away. Write that down as some enormous
+number of seconds and you have told a specific lie: that patience is
+eventually rewarded. It is not. So a \emph{detection latency} is either a
 finite bound or nothing at all:
 \begin{equation}
 \Delta \in \mathcal{L} = \{\,\mathrm{Bounded}(t) : t \in \mathbb{N}\,\}
@@ -476,7 +502,16 @@ the violation is silent forever. Keeping it as a distinct symbol rather than
 a big integer is deliberate: it is the difference this paper exists to make
 visible.
 
-An \emph{assumption} is a four-tuple plus a provenance tag,
+Is a name, a capability and a latency enough? Write a few of them out side by
+side and you find two things missing. First: when this party lies,
+what does the lie buy? Forging a claim outright is not the same failure as
+withholding evidence, and a reader who cannot tell them apart cannot tell
+which row of the table to be frightened of. Second, and easier to overlook:
+why is this assumption here at all --- which part of the system dragged it
+in? Leave that out and you have a list of parties with no way to ask what
+would happen if a layer were removed, or whether two layers are leaning on
+the same shoulder. So an \emph{assumption} is a four-tuple plus a provenance
+tag,
 \begin{equation}
 a = (p,\ c,\ \Delta,\ \iota,\ m)
   \in \mathcal{P} \times \mathcal{C} \times \mathcal{L}
@@ -491,7 +526,9 @@ over \textsc{Soundness} (a false claim can be made to verify),
 evidence), and \textsc{Availability} (evidence can be withheld, not forged).
 A \emph{residual trust set} $T$ is a finite set of assumptions.
 
-The judgment is
+That is one assumption. What we wanted was a statement about a whole
+deployment --- this claim holds, and here is everybody you are still relying
+on for it --- which is the same shape with a set in the middle:
 \begin{equation}
 \Gamma \vdash P : T,\ \Delta
 \end{equation}
@@ -504,9 +541,22 @@ $T$, not carried alongside it: $\Delta = \bigsqcup_{a \in T} \Delta_a$.
 
 \subsection{The two lattices}
 
-\paragraph{Latency.} $\mathcal{L}$ is ordered with every bound below $\Never$
-and finite bounds ordered by magnitude. Join takes the worse case and $\Never$
-absorbs:
+A deployment usually has more than one mechanism: a TEE, and a log, and an
+anchor over the log, each supporting the same claim and each with its own
+answer to the question above. So you are holding several answers and you need
+one. What do you do with them?
+
+\paragraph{Latency.} Detection first, because here the wrong answer is the
+tempting one. Suppose one layer would report misbehaviour within the hour and
+another would never report it at all. What is the detection latency of the
+two together? The generous reading says the good layer helps --- there is a
+mechanism now, and something is better than nothing. But ask the question the
+way an adversary asks it. He is under no obligation to attack the layer that
+is watched. He attacks the one that is not, nothing reports anything ever,
+and the hourly report goes on arriving punctually about the wrong thing. So
+join has to take the worse case and $\Never$ has to absorb rather than
+average out. Order $\mathcal{L}$ with every bound below $\Never$ and finite
+bounds ordered by magnitude:
 \begin{equation}
 \Delta_1 \sqcup \Delta_2 =
 \begin{cases}
@@ -525,19 +575,34 @@ lattice the solver iterates in is the trust-set lattice, whose height is
 finite. Confusing the two would make the termination argument false, so it is
 worth stating which one carries it.
 
-The reading of join is that a system is only as detectable as its least
-detectable part.
-Whether that is the right reading is an open question and
-Section~\ref{sec:open} returns to it. The empty trust set has
-$\Delta = \mathrm{Bounded}(0)$: nothing to detect.
+Read back in words, the join says a system is only as detectable as its least
+detectable part. That is a strong claim about the world and we are not
+certain of it --- a relying party might reasonably care that \emph{most} of
+its exposure is watched, and the max throws that away. Whether it is the
+right reading is an open question and Section~\ref{sec:open} returns to it.
+The empty trust set has $\Delta = \mathrm{Bounded}(0)$: nothing to detect.
 
-\paragraph{Trust sets.} $(\mathcal{T}, \subseteq)$ is the powerset of the
-assumptions derivable from a deployment, ordered by inclusion, with join
-$=$ union and meet $=$ intersection. This is a \emph{partial} order and that
-is the load-bearing fact of the paper: two trust sets can be
-\emph{incomparable}, each containing an assumption the other lacks. When that
-happens neither deployment is ``more verifiable'' than the other, and no
-ordinal tier can rank them.
+\paragraph{Trust sets.} Now the sets themselves, where the join is the one
+nobody argues with: believing a conclusion that rested on two layers means
+believing everything either layer needed, so combining is union. The question
+that takes work is the other one. Two deployments, two trust sets --- when is
+one of them more verifiable than the other?
+
+There is an answer that does not require inventing anything. One deployment
+is better if it asks you to believe strictly less: everything in its trust
+set is also in the other's, and the other has more besides. That is
+containment. So $(\mathcal{T}, \subseteq)$ is the powerset of the assumptions
+derivable from a deployment, ordered by inclusion, with join $=$ union and
+meet $=$ intersection.
+
+Now notice what you have just agreed to. Inclusion is a \emph{partial} order,
+and that is the load-bearing fact of the paper: two trust sets can be
+\emph{incomparable}, each containing an assumption the other lacks. Nothing
+in the definition promises that any two deployments can be ranked, and it
+would be a mistake to add something that did. When two sets come out
+incomparable, neither deployment is ``more verifiable'' than the other, and
+no ordinal tier can rank them. Whether that case is rare or usual is an
+empirical question, and Section~\ref{sec:eval} goes and looks.
 
 We wrote the order by hand rather than deriving it, and the reason is worth
 recording because it is a trap. Rust's derived ordering on an ordered set
@@ -548,9 +613,13 @@ rather than a crash.
 
 \subsection{The composition rules}
 
-Each mechanism contributes the assumptions a verifier must accept in order to
-believe a claim that mechanism supports. Write $\mathcal{A}(m)$ for that
-contribution. All latencies below are the mechanism's declared parameters,
+That is the frame, and by itself it says nothing about any real system. The
+content is in one question, asked once per mechanism: \emph{if I believe a
+claim because of this, who am I believing, and would I ever find out I was
+wrong?} Write $\mathcal{A}(m)$ for the answer --- the assumptions a verifier
+must accept in order to believe a claim that mechanism supports.
+Table~\ref{tab:rules} is what came back when we asked it of every mechanism the
+standard admits. All latencies below are the mechanism's declared parameters,
 parsed as durations; \texttt{never} is accepted and means $\Never$.
 
 \begin{table}[h]
@@ -624,13 +693,16 @@ hand-derived result: the deployment file declares five principal identifiers,
 a refresh interval and a mechanism kind, and the five-party set --- with each
 party's capability, detection bound and impact --- falls out of the rule.
 
-\emph{\texttt{anchoring} is a trade, not a gain.} It converts the log
-operator's assumption from unbounded to bounded --- the intended win, and the
-transparency-systems result of Section~\ref{sec:related} made mechanical. But
-if a settlement layer is declared, the rule \emph{adds} an assumption about
-that layer's execution fidelity. A deep reorganization rolls back published
-attestation evidence. Anchoring is usually described as pure gain; in this
-calculus it visibly is not.
+\emph{\texttt{anchoring} is a trade, not a gain.} Everyone knows what
+anchoring buys: it converts the log operator's assumption from unbounded to
+bounded, which is the transparency-systems result of
+Section~\ref{sec:related} made mechanical, and it is a real win. The question
+worth asking is what it cost, and you can read the answer off the rule. If a
+settlement layer is declared, the rule \emph{adds} an assumption about that
+layer's execution fidelity --- a deep reorganization rolls back published
+attestation evidence. So the row you were converting is not the only row that
+moved. Anchoring is usually described as pure gain; in this calculus it
+visibly is not.
 
 \emph{\texttt{witness\_quorum} names every witness, not $k$ of them.} The
 capability is \texttt{non\_collusion\_$k$\_of\_$n$} and it is attributed to
@@ -654,9 +726,13 @@ Section~\ref{sec:open}'s principal-independence problem bites hardest.
 
 \subsection{Delegation, and why it is a fixpoint}
 
-Mechanisms name principals directly. Deployments also contain delegation: $q$
-\textsf{speaks-for} $r$ means that believing $r$ commits you to trusting $q$.
-Four rules close the set:
+Mechanisms name principals directly, and if that were all a deployment
+contained you could read the trust set off the file with a highlighter. It is
+not all. Deployments delegate: $q$ \textsf{speaks-for} $r$ means that
+believing $r$ commits you to trusting $q$. Which means the party you were
+relying on can hand your reliance to somebody you have never heard of, who
+can hand it on again --- so the set is not something you read off, it is
+something you have to close. Four rules close it:
 
 \begin{enumerate}[itemsep=1pt,topsep=2pt]
 \item A principal named by a mechanism supporting claim $P$ is load-bearing
@@ -683,12 +759,15 @@ disappeared from the output.
 \subsection{Provenance, and why the comparison is order-independent}
 \label{sec:orderindep}
 
-The fifth component of an assumption, the mechanism tag $m$, exists so that
-shared-dependency analysis can tell ``two independent layers happen to name
-the same party'' from ``one layer named twice.'' Without it, the same
-principal appearing under a TEE and under a ZK circuit would deduplicate into
-a single assumption and the most interesting finding in
-Section~\ref{sec:eval} would be invisible.
+The fifth component of an assumption, the mechanism tag $m$, is the one that
+has not yet paid for itself. Here is what it is for. Suppose a party turns up
+twice in the same trust set. Two quite different things could have happened:
+two independent layers each happened to name that party, which is a finding
+about the deployment, or one layer named it twice, which is nothing at all.
+Strip the tag and those two cases become the same case --- the assumptions
+deduplicate into one, the second name vanishes, and the most interesting
+result in Section~\ref{sec:eval}, a TEE and a ZK circuit resting on one
+compromise, is invisible. The tag is what keeps them apart.
 
 Because $m$ participates in assumption identity, it also participates in
 comparison --- and that is where we got it wrong. Tags were originally
@@ -859,11 +938,35 @@ examples are the entire evidence base for every number in this section.
 \label{sec:tdxrepro}
 
 The first success criterion, from the original design, is that the tool
-produces the five parties of Table~\ref{tab:tdx} from the $\Sigma_2$
-description alone. It does. Table~\ref{tab:sigma2} is what \parallax{}
-prints, read into this document from the file the tool wrote. Set it beside
-Table~\ref{tab:tdx}, which was derived by hand before the tool existed: the
-same five parties, the same five capabilities, the same one bounded row.
+produces the parties of Table~\ref{tab:tdx} from the $\Sigma_2$ description
+alone. Before running anything, do it yourself; it takes a minute and it is
+the only way to know what the tool is contributing.
+
+Open \texttt{examples/sigma2-tdx.toml}. It declares \SigmaTwoMechanisms{}
+mechanism, of kind \texttt{tee\ub attestation}, and besides the kind that
+stanza names six things: Intel
+endorses the platform, a quoting enclave signs the report, Intel's
+certification service supplies the collateral, somebody publishes the
+reference values, a cloud operator runs the host --- and the collateral gets
+refreshed every twelve hours.
+
+Now apply the rule. To believe the measurement you must believe the silicon
+behaves, the enclave signs honestly, the collateral is authentic, the golden
+values are right, and the host did not swap the firmware at boot. That is \SigmaTwoAssumptions{} assumptions, one
+per name. The refresh interval is not a party; it is a number.
+
+Then ask of each one: how would I find out if it were false? Intel's silicon
+is subverted --- the quote still verifies. The reference values are wrong ---
+the measurement still matches. The enclave leaks its key --- everything
+checks out. Nothing anywhere contradicts any of it. Only the collateral has a
+schedule, and only because somebody has to fetch it again.
+
+Count them up: \SigmaTwoParties{} parties, \SigmaTwoUndetectable{} of them
+silent. That is what we wrote on a whiteboard before the tool existed, and it
+is
+Table~\ref{tab:tdx}. Now run the tool. Table~\ref{tab:sigma2} is what
+\parallax{} prints, read into this document from the file the tool wrote:
+the same parties, the same capabilities, the same one bounded row.
 
 \begin{table}[h]
 \centering\small
@@ -880,15 +983,16 @@ refresh interval, which is the bound in the one row that has one.}
 \input{../results/sigma2-trust-set.tex}
 \end{table}
 
-It is worth being exact about what that does
-and does not demonstrate, because the criterion as originally worded --- that
-the five emerge ``without those parties being named in the encoding'' --- is
-not what happens.
+If the derivation above felt like a cheat, it was, and the cheat is the
+result. The criterion as originally worded --- that the parties emerge
+``without those parties being named in the encoding'' --- is not what
+happened. We read the names straight out of the file in the first step. So
+does the tool.
 
-The five parties \emph{are} named individually in
-\texttt{examples/sigma2-tdx.toml}, as the endorser, quoting enclave,
-collateral authority, reference-value provider and host fields of a single
-\texttt{tee\ub attestation} stanza. What the deployment file does not contain
+They are named individually in \texttt{examples/sigma2-tdx.toml}, as the
+endorser, quoting enclave, collateral authority, reference-value provider and
+host fields of a single \texttt{tee\ub attestation} stanza. What the
+deployment file does not contain
 is any statement that those five constitute a trust set, or what each of them
 must be trusted \emph{for}. That is what the rule supplies: each party's
 capability, its detection bound, its failure impact, and --- the part that is
@@ -906,7 +1010,43 @@ criterion.
 
 \subsection{The comparison matrix}
 
-Table~\ref{tab:matrix} is assembled by \texttt{scripts/\allowbreak regen-results.sh}. The
+Take the two deployments somebody might actually be choosing between:
+$\Sigma_2$, the TDX box, and $\Sigma_4$, the Groth16 rollup with its verifier
+on chain. Both attest \texttt{execution\ub valid}. That matters --- it is the
+same proposition, so the question ``which of these is more verifiable'' is at
+least meaningful --- and Section~\ref{sec:formal} says the answer is
+containment: one is better exactly when everything in its trust set is also
+in the other's. Two sets, one question. Do it by hand.
+
+$\Sigma_2$ we already have: Intel's silicon behaves, the enclave signs
+honestly, the collateral is authentic, the golden values are right, the host
+does not inject a measurement. Now $\Sigma_4$. Its file declares
+\SigmaFourMechanisms{} mechanisms --- a \texttt{zk\ub proof} naming a
+ceremony, a compiler and an
+auditor, and an \texttt{anchoring} naming a log operator who posts every ten
+minutes to a settlement layer with twelve-second finality. Carry those to
+Table~\ref{tab:rules} and the assumptions fall out: the ceremony destroyed
+its toxic waste, the compiler arithmetized the circuit soundly, the auditor's
+constraints are complete, the log operator does not equivocate --- bounded,
+at the posting interval --- and the chain executes consensus faithfully,
+bounded at finality. That is \SigmaFourAssumptions{} assumptions.
+
+So: is $\Sigma_2$'s set inside $\Sigma_4$'s? Look for Intel's silicon in that
+list. It is not there, and it could not be --- a Groth16 verifier does not
+care which CPU produced the proof. Then the other direction, which is the one
+people forget to check: is $\Sigma_4$'s set inside $\Sigma_2$'s? Look for the
+trusted setup ceremony. A TDX deployment does not have one.
+
+Neither set contains the other. Neither deployment is more verifiable than
+the other. There is no answer to the question, and that is not the tool being
+coy --- it is what the two designs are. They moved their trust to different
+places and there is no vantage point from which one of them is above the
+other. Run \texttt{parallax compare} on the pair and it prints
+\textsc{Incomparable}, which by now should be an anticlimax.
+
+That was one pair, worked by hand. Table~\ref{tab:matrix} is all of them, and
+the first thing to notice about it is how few pairs the question can even be
+asked of. It is assembled by \texttt{scripts/\allowbreak regen-results.sh}. The
 four \textsc{Incomparable} cells are the tool's own output, from
 \texttt{parallax compare}. The eight N/A cells are not: the script reads the
 \texttt{claim} field out of each deployment file, sees that the two differ,
@@ -937,13 +1077,39 @@ publish a trust set rather than a tier.
 \subsection{The shared dependency}
 \label{sec:shared}
 
-The second success criterion is a non-obvious finding. $\Sigma_5$ layers a
-hardware TEE under a zero-knowledge proof and is the shape of design that gets
-described as defence in depth. The tool reports that both layers rest on the
-same build pipeline: it supplies the reference values the TEE measurement is
-compared against \emph{and} compiles the circuit whose constraints the proof
-relies on. One build-pipeline compromise corrupts both simultaneously. The
-two layers are not independent.
+The second success criterion is a non-obvious finding, so here is the
+deployment first and the finding second.
+
+Suppose you are worried about exactly the thing this paper is about. You have
+a TDX box, you have read Table~\ref{tab:tdx}, and you do not want your
+execution claim resting on Intel's good behaviour alone. So you put a second
+layer underneath it that has nothing to do with the first: a zero-knowledge
+proof of the state transition. Different mathematics, different suppliers,
+no CPU in it anywhere. If the silicon is subverted, the proof still has to
+check out. That is $\Sigma_5$, and it is the shape of design that gets sold
+as defence in depth.
+
+Write down who you are trusting, layer by layer, straight off the file. From
+the TEE stanza: Intel for the silicon, the quoting enclave for the signature,
+Intel's certification service for the collateral, the cloud operator for the
+host, and \texttt{did:web:buildco.example}, which is the identifier in the
+reference-value field. From the ZK stanza: the ceremony for its toxic waste,
+the auditor for constraint completeness, and
+\texttt{did:web:buildco.example}, which is the identifier in the compiler
+field.
+
+Read the two lists again.
+
+The build pipeline is in both. It supplies the golden values the TDX
+measurement is compared against, \emph{and} it compiles the circuit whose
+constraints the proof relies on. Compromise it once and both layers certify
+the same lie --- and the second layer was the entire point of the design.
+That is \SigmaFiveAssumptions{} assumptions over \SigmaFiveParties{}
+parties, and the gap between those two numbers is where the finding hides.
+
+Nothing in the file remarks on this. Both stanzas name the party in the
+ordinary way, in fields that mean unrelated things, and somebody reading top
+to bottom has no particular reason to notice that one string occurs twice.
 
 Figure~\ref{fig:shared} is the run, verbatim. The block at the bottom is the
 finding: one principal, reached under two different mechanism tags, with the
@@ -974,6 +1140,22 @@ Whether it finds such things in deployments nobody constructed is untested.
 \subsection{Detection latency and policy}
 \label{sec:latencyeval}
 
+Of everything you could ask about a deployment, the number a relying party
+would actually want is the composed $\Delta$: how long until I would know.
+Guess it for $\Sigma_3$ before looking anything up. $\Sigma_3$ is the witness
+quorum --- five of seven witnesses over a transparency log, the log anchored
+every fifteen minutes, gossip propagating between peers in fifteen seconds.
+It is the one design in this set built specifically to make misbehaviour
+visible. So: minutes. A quarter of an hour, say.
+
+Now compose it the way Section~\ref{sec:formal} said we must. $\Delta$ is a
+join over the whole trust set and the join takes the worse case. The
+anchoring interval is a real bound on a real party; so is the gossip delay.
+But underneath them sit the seven witnesses, whose capability is that no five
+of them collude, and nothing in the system ever reports collusion. One member
+at $\Never$ takes the whole system to $\Never$. The fifteen minutes are still
+true. They simply do not survive the composition.
+
 Table~\ref{tab:summary} is all five deployments at a glance: how many
 assumptions each rests on, how many distinct parties those assumptions name,
 how many of them nothing would ever report a violation of, and the composed
@@ -990,27 +1172,30 @@ Section~\ref{sec:shared} showing up as a number.}
 \input{../results/deployment-summary.tex}
 \end{table}
 
-The last column is the same for every row, and that is the finding rather
-than a defect in the table. $\Delta$ composes as a join over the whole trust
-set (Section~\ref{sec:formal}), so one member with no detection mechanism
-takes the entire system to $\Never$, and the \emph{Undetectable} column is
-nonzero in every row. That includes $\Sigma_3$, the witness quorum with an
-anchored log and gossip --- the design in this set that exists specifically
-to make misbehaviour visible. Its anchoring interval and its gossip
-propagation delay are real bounds on real parties, and they are invisible in
-the composed figure because the seven witnesses sitting underneath them are
-not detectable at all. Whether the max is the right composition is
+The last column is the same for every row, and what happened to $\Sigma_3$
+happened to all of them: the \emph{Undetectable} column is nonzero in every
+row, and one nonzero entry is all it takes. That is the finding rather than a
+defect in the table. Whether the max is the right composition is
 Section~\ref{sec:open}'s question; what the column shows is that under the
 composition we implemented, no deployment we encoded reaches a finite bound.
 
-That is also what makes a strict policy useless as a filter here.
-Table~\ref{tab:policy} checks each manifest against
-\texttt{examples/policy-strict.toml}, a relying party that will not accept
-any undetectable assumption and wants everything else detectable inside a
-day. Every deployment fails, and the violation count is just the
-\emph{Undetectable} column of Table~\ref{tab:summary} again --- the 24-hour
-bound never binds, because the only assumptions with finite bounds at all
-are well inside it.
+Now sit in the relying party's chair, because that is who the whole exercise
+is for. You are going to write a policy --- a rule you can run in CI before
+you accept anybody's attestation --- and you get to say what you will not
+carry. What is the first clause? Almost everyone writes the same one: I will
+not accept a failure mode that is silent. In this notation, no assumption
+with $\Delta = \Never$. Then a second clause so the first is not doing all
+the work: whatever is left has to be detectable inside a day.
+
+Those two clauses are \texttt{examples/policy-strict.toml}. Run it against the
+five manifests and you get Table~\ref{tab:policy}.
+
+Every one of them fails, and it is worth seeing which clause did it. The
+violation counts are the \emph{Undetectable} column of
+Table~\ref{tab:summary} over again, entry for entry, so the second clause
+never rejected anything: the 24-hour bound does not bind, because the only
+assumptions with finite bounds at all are well inside a day. The first clause
+did all of it.
 
 \begin{table}[h]
 \centering\small

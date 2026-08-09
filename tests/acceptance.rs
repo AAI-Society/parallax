@@ -1202,11 +1202,16 @@ fn the_headline_count_is_never_typed_into_the_paper() {
     // must precede it). Two families are covered: how many of Sigma_2's
     // parties are undetectable, and how many mechanisms a deployment
     // declares. Both were typed into the prose and both were wrong.
-    let sites: [(&str, &str); 9] = [
+    let sites: [(&str, &str); 10] = [
         (
             " of the \\SigmaTwoParties{} have no detection",
             "\\SigmaTwoUndetectable{}",
         ),
+        // Section 5.1 now derives the trust set in front of the reader before
+        // running the tool, and states the count at the end of the
+        // derivation. That is the same claim as the abstract's, in the place
+        // a reader is most likely to believe it, so it gets the same guard.
+        (" of them silent", "\\SigmaTwoUndetectable{}"),
         (
             " of those \\SigmaTwoParties{}, there is no detection",
             "\\SigmaTwoUndetectable{}",
