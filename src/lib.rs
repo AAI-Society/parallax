@@ -1,3 +1,5 @@
+#[cfg(feature = "attest")]
+pub mod attest;
 pub mod collateral;
 pub mod compare;
 pub mod deployment;
