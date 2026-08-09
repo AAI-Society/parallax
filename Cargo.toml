@@ -45,6 +45,18 @@ thiserror = "2"
 anyhow = "1"
 humantime = "2"
 
+# PEM decoding for `RootCa::Custom`, whose payload is a certificate an
+# operator pasted in. Already in the tree as a non-optional dependency of
+# dcap-qvl, so naming it here adds no package to the lockfile; it is named
+# rather than reached through dcap-qvl because dcap-qvl does not re-export it.
+pem = "3"
+# Used for exactly one check: that a custom root CA is self-issued. That is a
+# precondition of the CRL check inside dcap-qvl's webpki fork, which asserts on
+# it rather than returning an error — see `require_self_issued` in
+# `src/verify/chain.rs`. Version and `default-features = false` match what
+# dcap-qvl already resolves, so this adds no package to the lockfile.
+x509-cert = { version = "0.3", default-features = false }
+
 # The DCAP quote verifier. `default-features = false` plus these four
 # reproduces the crate's default set *minus* `report`, which is what drags in
 # reqwest, rustls, hickory-dns and an async runtime. `default-x509` is the one

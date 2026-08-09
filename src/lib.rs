@@ -10,6 +10,7 @@ pub mod solve;
 pub mod tex;
 pub mod tiers;
 pub mod trust;
+pub mod verify;
 
 pub use deployment::Deployment;
 pub use latency::Latency;

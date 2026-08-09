@@ -1844,11 +1844,13 @@ dependencies = [
  "dcap-qvl",
  "humantime",
  "libc",
+ "pem",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
  "toml",
+ "x509-cert",
 ]
 
 [[package]]
