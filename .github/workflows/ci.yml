@@ -20,6 +20,11 @@ jobs:
       #
       # `live_pcs` stays `#[ignore]`d here and is not un-ignored: it talks to
       # Intel, and a merge must not depend on somebody else's uptime.
+      #
+      # The `--all-targets` asymmetry with the run above is deliberate, not an
+      # oversight: `--all-targets` adds examples and benches but *excludes*
+      # doctests, so the two invocations cover different target sets and the
+      # union is everything. Making them match would silently drop one side.
       - run: cargo clippy --all-targets --features fetch-collateral -- -D warnings
       - run: cargo test --features fetch-collateral
       # The default build must link no HTTP client. `fetch-collateral` is

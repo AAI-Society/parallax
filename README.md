@@ -392,9 +392,9 @@ records one finding about a seam between two of its domains:
 
 | | Standard | |
 | :-- | :-- | :-- |
-| ⚠️ | **C8, Tier 3** — *"the trusted party is removed"* | five parties remain, four undetectable |
+| ⚠️ | **C8, Tier 3** — *"The trusted party is removed"* | five parties remain, four undetectable |
 | ⚠️ | **C8.1** — deployments sit on an ordered ladder | two deployments can be incomparable |
-| ⚠️ | **C10.2 example** — a ZK deployment has the *"narrowest trust base"* | the sets are disjoint; neither is narrower |
+| ⚠️ | **C10.2 example** — a ZK deployment has the *"Narrowest trust base"* | the sets are disjoint; neither is narrower |
 | ✅ | **C10.2** — *`[WG-INPUT NEEDED]`: the disclosure format is not yet defined* | emits one, generated rather than written |
 | ✅ | **C10.2.1** — assumptions *"matched one-to-one against the mechanisms"* | `introduced_by` computes the match; and `parallax-proxy` emits a manifest **per connection**, which would satisfy the reconciliation for that connection |
 | ✅ | **C7.2.4** — the attestation must bind the evidence signing key's digest into `REPORTDATA` | `check_binding`, run on every connection. The committed fixture's zeroed `report_data` is a C7.2.4 failure, and it is refused |
