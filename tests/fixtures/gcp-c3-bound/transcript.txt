@@ -4,6 +4,14 @@ output. No command here was run on the VM itself — everything is a network
 client of the sidecar's already-running TLS listener, so none of it mutates
 the deployment or spends RTMR3's one extension.
 
+ONE SUBSTITUTION, made after capture: the VM's actual external address has
+been replaced throughout with 203.0.113.10, which is RFC 5737 TEST-NET-3 and
+reserved for documentation. The instance was deleted on 2026-08-10 and its
+ephemeral address returned to Google's pool, so the original now names
+whatever machine happens to hold it next — publishing it would point readers
+at a stranger's host. Nothing else in this file was altered, and no value the
+fixture attests to passes through the address: see PROVENANCE.md.
+
 $ date -u +%Y-%m-%dT%H:%M:%SZ
 2026-08-10T20:38:54Z
   (written to captured-at)

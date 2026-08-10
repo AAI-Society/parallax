@@ -43,6 +43,23 @@ with.
 | `captured-at` | RFC 3339 capture time. The verification clock is pinned to this. |
 | `transcript.txt` | Every command that produced this fixture, with real output, including the (expected, harmless) openssl chain-verification error. |
 
+**One substitution in `transcript.txt`, made deliberately.** The VM's actual
+external address was replaced throughout with `203.0.113.10` — RFC 5737
+TEST-NET-3, reserved for documentation — and the same substitution was applied
+to `docs/WALKTHROUGH.md` and `examples/gcp-c3.toml`. The `parallax-demo`
+instance was deleted on 2026-08-10 and its *ephemeral* address returned to
+Google's pool, so the original address now names whatever machine holds it
+next; a repository that published it would be pointing readers at a stranger's
+host and describing it as an attestation endpoint. The substitution keeps every
+file parseable — `examples/gcp-c3.toml` is loaded by
+`mrtd_and_rtmr3_match_examples_gcp_c3_toml`, so a non-address placeholder would
+have broken the suite.
+
+**No value this fixture attests to passes through the address.** `cert.der`,
+`quote.bin`, `collateral.json` and `captured-at` are byte-unchanged, and their
+hashes in the manifest below still verify. The address appears only in prose and
+in the `openssl s_client -connect` line.
+
 **A known discrepancy in `transcript.txt`, left uncorrected.** Its
 `report_data` line is 127 hex characters, one short of the 128 (64 bytes)
 `quote.bin` and `cert.der` actually carry — almost certainly a single `0`
