@@ -115,7 +115,8 @@ fn fixture_is_a_4935_byte_quote_zero_padded_to_8000() {
 ///
 /// This pins down what the placeholder *is*; it is not a binding test. Testing
 /// the real key binding needs a fixture captured with a genuine digest in
-/// `report_data`, which does not exist here yet.
+/// `report_data` — `tests/fixtures/gcp-c3-bound/`, exercised by
+/// `tests/fixture_gcp_c3_bound.rs`, not this file.
 #[test]
 fn fixture_report_data_is_the_documented_placeholder() {
     let quote = std::fs::read(fixture_dir().join("quote.bin")).expect("missing quote.bin");

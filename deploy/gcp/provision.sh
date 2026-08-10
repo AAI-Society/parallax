@@ -238,7 +238,7 @@ $IP:$TLS_PORT — confirm it does; the address is not templated — run the
 verifying proxy:
 
   cargo run --features fetch-collateral --bin parallax-proxy -- examples/gcp-c3.toml
-  curl -k https://localhost:8080/
+  curl http://localhost:8080/
 
 ---------------------------------------------------------------------------
 RESOURCES CREATED. Both bill or expose access until deleted:

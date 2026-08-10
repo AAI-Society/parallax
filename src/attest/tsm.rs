@@ -33,6 +33,13 @@ const REPORT_DATA_LEN: usize = 64;
 /// `tests/fixture.rs::fixture_is_a_4935_byte_quote_zero_padded_to_8000`.
 const AUTH_SIZE_OFFSET: usize = 48 + 584;
 
+/// Where `report_data` sits inside a parsed quote: the 48-byte header, then
+/// the TD report body, whose last 64 bytes are `report_data` — body-relative
+/// offset 520, the same one `tests/fixture.rs` uses on the unrelated
+/// `gcp-c3-tdx` fixture. Ends exactly at [`AUTH_SIZE_OFFSET`], which is the
+/// byte immediately after the body.
+const REPORT_DATA_OFFSET: usize = 48 + 520;
+
 /// Everything that can go wrong between asking for a quote and holding one.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TsmError {
@@ -72,6 +79,17 @@ pub enum TsmError {
     /// naming it is an unchecked add.
     #[error("outblob declares an auth_data_size of {auth_data_size}, which overflows a length")]
     DeclaredLengthOverflows { auth_data_size: u32 },
+    /// The quote the kernel returned does not carry the `report_data` this
+    /// call wrote to `inblob`. Fail closed, in the same shape as
+    /// [`crate::attest::rtmr::RtmrError::NotLanded`]: the kernel accepting a
+    /// write and echoing the caller's own `expected_report_data` back at
+    /// `mint_with_key` (`src/attest/cert.rs`) is not evidence the quote
+    /// itself commits to that key — only reading the quote's own bytes is.
+    #[error(
+        "the quote returned by configfs-tsm does not carry the report_data this call wrote: \
+         wrote {wrote}, quote carries {found}"
+    )]
+    ReportDataNotBound { wrote: String, found: String },
 }
 
 /// Request a TDX quote over `report_data`, from the real configfs-tsm.
@@ -99,8 +117,39 @@ pub fn request_quote_at(
     let entry = ReportEntry::create(base)?;
     entry.write_inblob(report_data)?;
     let outblob = entry.read_outblob()?;
+    let quote = parse_outblob(&outblob)?;
+    // The kernel accepting 64 bytes at `inblob` says nothing about what ended
+    // up in the quote it hands back — only reading the quote's own bytes
+    // does. `mint_with_key`'s guard (`src/attest/cert.rs`) compares the
+    // caller's `report_data` against the caller's own key, which is
+    // tautological in the happy path; this is the one place that compares it
+    // against what the kernel actually attested to.
+    check_report_data_landed(quote, report_data)?;
     // Copied out before `entry` is dropped and the report directory removed.
-    Ok(parse_outblob(&outblob)?.to_vec())
+    Ok(quote.to_vec())
+}
+
+/// Confirm the quote the kernel returned carries the `report_data` this call
+/// wrote, rather than trusting that a successful write implies it.
+///
+/// Mirrors [`crate::attest::rtmr::extend_rtmr3_at`]'s post-write readback: a
+/// syscall returning success only says the kernel accepted the bytes, not
+/// that the effect the caller cares about took place, so the effect itself is
+/// read back and compared.
+fn check_report_data_landed(quote: &[u8], written: &[u8; REPORT_DATA_LEN]) -> Result<(), TsmError> {
+    let found = quote
+        .get(REPORT_DATA_OFFSET..REPORT_DATA_OFFSET + REPORT_DATA_LEN)
+        .ok_or(TsmError::TooShort {
+            len: quote.len(),
+            needed: REPORT_DATA_OFFSET + REPORT_DATA_LEN,
+        })?;
+    if found != written.as_slice() {
+        return Err(TsmError::ReportDataNotBound {
+            wrote: crate::collateral::hex_lower(written),
+            found: crate::collateral::hex_lower(found),
+        });
+    }
+    Ok(())
 }
 
 /// Confirm the configfs-tsm report interface exists, without requesting a
@@ -384,5 +433,65 @@ mod tests {
         .expect("the trimmed quote verifies");
         assert_eq!(out.tcb_status, TcbStatus::UpToDate);
         assert_eq!(out.attested_len, trimmed.len());
+    }
+
+    // ---- the report_data readback (I3) -------------------------------------
+    //
+    // `request_quote_at` itself has no reachable success path off real
+    // hardware, for the same reason `extend_rtmr3_at` does not: there is
+    // nothing here that can fake a kernel echoing a quote back. What can be
+    // tested without a TEE is the comparison itself, `check_report_data_landed`
+    // — a private fn, in the same position `rtmr.rs::record` was in before its
+    // own test was written.
+
+    #[test]
+    fn a_quote_whose_report_data_matches_what_was_written_is_accepted() {
+        let written = [0x33u8; REPORT_DATA_LEN];
+        let mut quote = vec![0u8; AUTH_SIZE_OFFSET + 4];
+        quote[REPORT_DATA_OFFSET..REPORT_DATA_OFFSET + REPORT_DATA_LEN].copy_from_slice(&written);
+        check_report_data_landed(&quote, &written).expect("a matching report_data is accepted");
+    }
+
+    #[test]
+    fn a_quote_whose_report_data_does_not_match_what_was_written_is_refused() {
+        // The case this check exists for: the kernel took the write and
+        // returned *a* quote, but not one that commits to the key this call
+        // asked for. `mint_with_key`'s own guard cannot see this — it compares
+        // the caller's `report_data` against the caller's own key, which is
+        // tautological in the happy path.
+        let written = [0x11u8; REPORT_DATA_LEN];
+        let mut quote = vec![0u8; AUTH_SIZE_OFFSET + 4];
+        quote[REPORT_DATA_OFFSET..REPORT_DATA_OFFSET + REPORT_DATA_LEN]
+            .copy_from_slice(&[0x22u8; REPORT_DATA_LEN]);
+        let err = check_report_data_landed(&quote, &written).expect_err("must refuse");
+        assert!(
+            matches!(err, TsmError::ReportDataNotBound { .. }),
+            "got {err}"
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("1111"), "got {msg}");
+        assert!(msg.contains("2222"), "got {msg}");
+    }
+
+    #[test]
+    fn a_quote_too_short_to_carry_report_data_is_refused_not_indexed() {
+        let quote = vec![0u8; REPORT_DATA_OFFSET + 10]; // short of the full 64 bytes
+        assert!(matches!(
+            check_report_data_landed(&quote, &[0u8; REPORT_DATA_LEN]),
+            Err(TsmError::TooShort { .. })
+        ));
+    }
+
+    #[test]
+    fn the_real_fixtures_report_data_readback_matches_its_documented_placeholder() {
+        // `tests/fixtures/gcp-c3-tdx/PROVENANCE.md` says this quote's
+        // `report_data` is 64 zero bytes. The readback check is the same
+        // arithmetic `request_quote_at` runs on real hardware, so it should
+        // agree with that placeholder and disagree with anything else.
+        let real = std::fs::read("tests/fixtures/gcp-c3-tdx/quote.bin").expect("fixture");
+        let parsed = parse_outblob(&real).expect("the fixture parses");
+        check_report_data_landed(parsed, &[0u8; REPORT_DATA_LEN])
+            .expect("the documented placeholder must be accepted");
+        assert!(check_report_data_landed(parsed, &[0xffu8; REPORT_DATA_LEN]).is_err());
     }
 }

@@ -7,7 +7,7 @@ was captured. Not synthesised.
 | -------------- | ----------------------------------------------------------------------------------------------------- |
 | Captured from  | GCP `c3-standard-4`, `--confidential-compute-type=TDX`, `us-central1-a`                                 |
 | Interface      | Linux configfs-tsm (`/sys/kernel/config/tsm/report`), provider `tdx_guest`                               |
-| Guest kernel   | `6.17.0-1022-gcp`, Ubuntu 24.04 LTS — see `capture-host.txt`                                             |
+| Guest kernel   | `6.17.0-1022-gcp` — see `capture-host.txt`. Ubuntu 24.04 LTS is the GCP image family used (`ubuntu-2404-lts-amd64`), not independently captured in this directory: `capture-host.txt` carries only the kernel version and TDX guest attributes, and there is no `transcript.txt` here to back a distribution claim the way `gcp-c3-rtmr/` and `gcp-c3-bound/` each have one |
 | Captured at    | see `captured-at` (2026-08-09T03:04:16Z)                                                                 |
 | Quote          | DCAP v4, TEE type `0x81` (TDX), FMSPC `00806F050000`                                                     |
 | `report_data`  | 64 zero bytes — a deliberate placeholder (see below).                                                    |

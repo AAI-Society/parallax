@@ -8,15 +8,20 @@
 //! # What these tests cover, and what they cannot
 //!
 //! Every assertion here is on a **refusal**. That is not a choice about
-//! coverage, it is what the evidence in this repository permits: the only real
-//! quote committed is `tests/fixtures/gcp-c3-tdx/quote.bin`, whose `report_data`
-//! is 64 zero bytes (see that directory's `PROVENANCE.md`), so `check_binding`
-//! refuses it and every path past the binding is unreachable over a socket.
-//! Weakening the binding, skipping it in a test, or adding a flag to bypass it
-//! would make a forwarding test pass and make the proxy worthless, so none of
-//! those was done. The allow path is covered in `src/proxy/gate.rs`, against
-//! outcomes built field by field, including one with a binding that genuinely
-//! holds (`a_correctly_bound_quote_reaches_the_gate_and_is_allowed`).
+//! coverage, it is what this file wires up: its upstream is an `rcgen`
+//! certificate the test generates, the same as it always has been, so every
+//! quote reaching `check_binding` here is one of the zeroed placeholders in
+//! `tests/fixtures/gcp-c3-tdx/` or `tests/fixtures/gcp-c3-rtmr/` (see either
+//! directory's `PROVENANCE.md`) — `check_binding` refuses those, and every
+//! path past the binding is unreachable over a socket in this file. A quote
+//! whose binding genuinely holds now exists
+//! (`tests/fixtures/gcp-c3-bound/`), but nothing here drives it over a real
+//! connection yet. Weakening the binding, skipping it in a test, or adding a
+//! flag to bypass it would make a forwarding test pass and make the proxy
+//! worthless, so none of those was done. The allow path is covered in
+//! `src/proxy/gate.rs`, against outcomes built field by field, including one
+//! with a binding that genuinely holds
+//! (`a_correctly_bound_quote_reaches_the_gate_and_is_allowed`).
 //!
 //! What that leaves untested over a socket is **the allow half of the socket
 //! layer** — the `copy_bidirectional` call in `Proxy::handle`'s

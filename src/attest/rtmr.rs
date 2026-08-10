@@ -5,9 +5,14 @@
 //! in `docs/spike-rtmr-gcp.md`, and the three findings that shape it are:
 //!
 //! * Extension is a single 48-byte write to
-//!   `/sys/class/misc/tdx_guest/measurements/rtmr3:sha384`, as root. Neither
-//!   the `/dev/tdx_guest` ioctl nor configfs-tsm offers extension —
-//!   configfs-tsm is the quote-generation interface, in [`super::tsm`].
+//!   `/sys/class/misc/tdx_guest/measurements/rtmr3:sha384`, as root.
+//!   configfs-tsm is the quote-generation interface, in [`super::tsm`], and
+//!   offers no extension. The `/dev/tdx_guest` ioctl was swept only over
+//!   command numbers 2-8 inclusive, in four direction encodings at four
+//!   argument sizes — among those, it offers no extension command either, but
+//!   the sweep says nothing about numbers 0 or 9-255. See
+//!   `docs/spike-rtmr-gcp.md` for the exact bounds and why the narrower claim
+//!   is the one this project can stand behind.
 //! * RTMR3 is 48 zero bytes at boot on this platform, and the extension is
 //!   exactly `SHA-384(old ‖ digest)`.
 //! * Because it is a hash chain, extending twice in one boot yields a value no
@@ -53,7 +58,8 @@ pub enum RtmrError {
     #[error(
         "cannot extend RTMR3: no measurement register at {path} ({reason}). \
          That path is the only extension interface this project has measured; \
-         the /dev/tdx_guest ioctl and configfs-tsm were both tried and offer none. \
+         configfs-tsm offers none, and the /dev/tdx_guest ioctl offered none among the \
+         command numbers this project swept (2-8 inclusive). \
          See docs/spike-rtmr-gcp.md"
     )]
     Unsupported { path: String, reason: String },

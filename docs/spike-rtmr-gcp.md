@@ -216,9 +216,10 @@ exotic:
   this was measured on is **`6.17.0-1022-gcp`**; the spike did not bisect for
   the earliest version that works, so treat 6.17 as the known-good floor rather
   than as the true minimum. (A lower bar of 6.7+ for configfs-tsm *quoting*
-  alone is repeated in `scripts/capture-fixture.sh` and this repository's
-  README, but it is inherited from those files rather than measured here —
-  **unverified by this spike**, and not something to rely on without checking.)
+  alone is repeated in `scripts/capture-fixture.sh` — the README does not
+  carry this figure — but it is inherited from that script rather than
+  measured here — **unverified by this spike**, and not something to rely on
+  without checking.)
 - the writing process needs write access to
   `/sys/class/misc/tdx_guest/measurements/rtmr3:sha384`. In a container that
   means the path must be mounted in and the process must be root; `/sys` is

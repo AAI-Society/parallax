@@ -383,7 +383,18 @@ rather than the incomparability result.
   run against a production-shaped deployment: `parallax-demo` on GCP, `Task 6`'s
   confidential VM, over the real internet, with a real refusal recorded when a
   different image was deployed underneath it. One run, recorded once, not a
-  repeatable test a future change could break silently.
+  repeatable test a future change could break silently. That hardware has
+  since been torn down; the walkthrough's transcript is what remains of it.
+- **An RTMR3 reference value does not survive rebuilding its own image from
+  unchanged source.** `docs/WALKTHROUGH.md` §5 rebuilt the demo app from
+  byte-identical `app.py` and got a *third*, different RTMR3 — matching
+  neither the original reference value nor a deliberately-different one
+  demonstrated elsewhere in that document. That is a real limit on what an
+  image-digest-keyed reference value can promise across rebuilds, not a
+  defect in the attester or the verifier, and it means a reference value
+  committed today can go stale the next time its image is rebuilt with no
+  code change at all. Nothing in this repository detects or works around
+  that.
 
 **The evidence base for the describing mode is five architectures we wrote
 ourselves** (seven files — one is a negative control, and one is the TDX

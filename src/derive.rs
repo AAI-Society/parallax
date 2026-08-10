@@ -541,12 +541,19 @@ pub fn derive(o: &VerificationOutcome, cfg: &DeriveConfig) -> Result<TrustSet, R
         m,
     ));
 
-    // The RTMRs. Unconditional, and deliberately so: `derive` does not read
-    // `o.rt_mrs`, and neither does anything else in this crate yet, so this is
-    // not the residue of a check that passed — it is the assumption that stands
-    // in place of a check nobody made. The host extends the RTMRs with what it
-    // loads, and nothing in a quote distinguishes a firmware measurement the
-    // host executed from one it merely wrote.
+    // RTMR0-RTMR2. Unconditional, and deliberately so: `derive` does not
+    // compare these three to anything, and neither does anything else in this
+    // crate, so this is not the residue of a check that passed — it is the
+    // assumption that stands in place of a check nobody made. The host
+    // extends RTMR0-RTMR2 with what it loads, and nothing in a quote
+    // distinguishes a firmware measurement the host executed from one it
+    // merely wrote.
+    //
+    // RTMR3 is the one exception, and it is *not* a host-extended register:
+    // only the guest can extend it (`docs/spike-rtmr-gcp.md`), which is the
+    // whole reason `rtmr3_check`, below, can compare it to a reference value
+    // instead of resting on this same unconditional assumption. This
+    // assumption is unconditional for slots 0-2 only.
     push(a(
         HOST,
         "measurement_injection_resistance",
@@ -652,12 +659,12 @@ pub fn derive(o: &VerificationOutcome, cfg: &DeriveConfig) -> Result<TrustSet, R
 
     // The PCK platform flags, the axis `is_up_to_date()` does not cover.
     //
-    // This matters on the only real quote this repository has: the committed
-    // fixture is `dynamic_platform = True` and `smt_enabled = True`, its TCB is
-    // `UpToDate` with no advisories, and `QuotePolicy::strict` rejects it
-    // ("Dynamic platform is not allowed by policy"). A trust set built from the
-    // TCB status alone would report a clean answer for a platform Intel's own
-    // default appraisal refuses.
+    // This matters on the gcp-c3-tdx fixture, the quote the tests cited below
+    // are pinned against: `dynamic_platform = True` and `smt_enabled = True`,
+    // its TCB is `UpToDate` with no advisories, and `QuotePolicy::strict`
+    // rejects it ("Dynamic platform is not allowed by policy"). A trust set
+    // built from the TCB status alone would report a clean answer for a
+    // platform Intel's own default appraisal refuses.
     //
     // Both halves are asserted, in two tests in `src/verify/chain.rs`:
     // `a_healthy_tcb_can_still_carry_platform_caveats` asserts `is_up_to_date()`
@@ -1660,8 +1667,8 @@ mod tests {
         (out, now)
     }
 
-    /// The only real quote this repository has is a degraded platform by
-    /// Intel's own strict standard, and the trust set says so.
+    /// The gcp-c3-tdx fixture is a degraded platform by Intel's own strict
+    /// standard, and the trust set says so.
     ///
     /// The fixture is `dynamic_platform = True`, `smt_enabled = True`,
     /// `UpToDate` and advisory-free, and `QuotePolicy::strict` refuses it —

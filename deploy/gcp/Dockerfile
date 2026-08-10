@@ -29,8 +29,14 @@ WORKDIR /src
 COPY . .
 
 # `--locked`: the deployed binary must be built from the committed
-# `Cargo.lock`, not from whatever resolves today, or the image digest measured
-# into RTMR3 stops being reproducible from the source tree.
+# `Cargo.lock`, not from whatever resolves today. This is the sidecar's own
+# Dockerfile, not `deploy/gcp/app`'s — this image's digest is never measured
+# into RTMR3 (only the app image's is), so the property `--locked` buys here
+# is auditability of what code is running the attestation logic and holding
+# the RA-TLS private key, not reproducibility of a measured value. Whether
+# this image itself rebuilds byte-for-byte from source has not been tested;
+# `deploy/gcp/app/Dockerfile`'s own comment records that its three-line
+# sibling does not, for reasons that would plausibly apply here too.
 #
 # `--features attest` and nothing else — notably not `--all-features`. The
 # attester fetches no collateral itself (the verifying proxy does that), so

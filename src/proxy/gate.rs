@@ -258,8 +258,11 @@ pub fn evaluate_peer(
 ///
 /// Split out from [`evaluate_peer`] because it is the largest part of the
 /// pipeline that can be exercised against a `VerificationOutcome` built field
-/// by field — the committed fixture cannot reach a successful binding, so the
-/// branches past it are only testable this way.
+/// by field. `tests/fixtures/gcp-c3-bound/` now carries a quote whose binding
+/// genuinely holds, but nothing wires it into a socket-level test — see
+/// `tests/proxy.rs` and `src/proxy/mod.rs` for exactly what that still
+/// leaves uncovered — so the branches past the binding are still exercised
+/// here, against outcomes built by hand, rather than over a real connection.
 pub fn evaluate_verified(
     outcome: &VerificationOutcome,
     cert_der: &[u8],
@@ -294,17 +297,26 @@ pub fn evaluate_verified(
 /// Whether to forward, given what verification established.
 ///
 /// Pure: a function of its three arguments and nothing else. The order of the
-/// three refusals is deliberate.
+/// four refusals is deliberate.
 ///
-/// 1. **A refuted measurement.** `derive` returns `Err` when the attested MRTD
+/// 1. **A refuted MRTD.** `derive` returns `Err` when the attested MRTD
 ///    matches none of the configured reference values. That is a verification
 ///    failure arriving one stage late, not a larger trust set, so there is
 ///    nothing to evaluate a policy against.
-/// 2. **A policy violation.** The manifest is built and `policy::evaluate` runs
+/// 2. **A refuted RTMR3.** A second, independent comparison over a different
+///    register — see `derive::rtmr3_check` — reached only when the MRTD
+///    comparison above did not already refuse, so an MRTD refutation still
+///    takes priority and RTMR3 is never evaluated for a quote that is not
+///    even the right trust domain. This also arrives as `derive`'s `Err`, one
+///    stage late, for the same reason MRTD's does.
+/// 3. **A policy violation.** The manifest is built and `policy::evaluate` runs
 ///    against it — the same mechanical gate `parallax check` applies to a
 ///    manifest on disk, so the proxy and the auditing tool cannot drift apart.
 ///    The reason names every violated assumption.
-/// 3. **A missing reference value, when the operator required one.**
+/// 4. **A missing reference value, when the operator required one.** MRTD
+///    only: there is no `require_rtmr3` mirror of `require_reference_values`,
+///    deliberately deferred — see `docs/WALKTHROUGH.md`'s "Does not cover"
+///    section.
 ///
 /// An `Err` return means the *policy* could not be evaluated at all, which is a
 /// configuration fault rather than a verdict; callers turn it into a refusal.
@@ -359,6 +371,15 @@ const NO_REFERENCE_VALUES: &str = "urn:reference-values:unconfigured";
 /// The capability that stands in place of the check nobody made.
 const NEVER_COMPARED: &str = "workload_identity_was_never_compared";
 
+/// The RTMR3 sibling of [`NO_REFERENCE_VALUES`], for the same reason: the
+/// warning text below needs `derive`'s private constant, and this is the
+/// copy. `the_rtmr3_unconfigured_principal_is_the_one_derive_emits` asserts
+/// the copy is the same string as the one that reaches the trust set.
+const NO_RTMR3_REFERENCE_VALUES: &str = "urn:reference-values:rtmr3:unconfigured";
+
+/// The capability that stands in place of the RTMR3 check nobody made.
+const WORKLOAD_NEVER_COMPARED: &str = "workload_measurement_was_never_compared";
+
 fn no_reference_values_refusal() -> String {
     format!(
         "no reference values are configured, and this proxy is configured to require \
@@ -383,6 +404,26 @@ fn warnings(outcome: &VerificationOutcome, cfg: &GateConfig) -> Vec<String> {
              compared to nothing: this connection proves that some code ran in a genuine \
              Intel TDX trust domain, not that it is your code. The trust set records the \
              hole as {NO_REFERENCE_VALUES} ({NEVER_COMPARED})."
+        ));
+    }
+
+    // The RTMR3 mirror of the arm above, and the one that matters most: MRTD
+    // measures firmware, which is the same for every workload on a given
+    // platform, so it cannot tell one deployed image from another — RTMR3 is
+    // the only axis that can. An operator who configures `mrtd` and forgets
+    // `rtmr3` used to get no warning at all on exactly the axis that names a
+    // workload, while MRTD (which provably cannot) was both warned about and
+    // requireable. There is no `require_rtmr3` mirror of
+    // `require_reference_values` — deliberately deferred, see
+    // `docs/WALKTHROUGH.md`'s "Does not cover" section — so a warning is the
+    // only thing standing between this configuration and silence.
+    if cfg.derive.rtmr3_reference_values.is_empty() {
+        out.push(format!(
+            "no rtmr3 reference values are configured, so the workload's own measurement \
+             (RTMR3) was compared to nothing: this connection proves that some code ran in \
+             a genuine Intel TDX trust domain, not that it is the declared workload. The \
+             trust set records the hole as \
+             {NO_RTMR3_REFERENCE_VALUES} ({WORKLOAD_NEVER_COMPARED})."
         ));
     }
 
@@ -643,6 +684,7 @@ mod tests {
     ];
 
     const REFVAL: [u8; 48] = [0xAB; 48];
+    const RTMR3_REFVAL: [u8; 48] = [0xCD; 48];
 
     fn gate(reference_values: Vec<[u8; 48]>) -> GateConfig {
         GateConfig {
@@ -694,18 +736,26 @@ mod tests {
 
     #[test]
     fn a_clean_outcome_under_a_permissive_policy_is_allowed() {
-        let cfg = gate(vec![REFVAL]);
-        let d = decide(&healthy(), &cfg, &permissive()).expect("the policy is evaluable");
+        // Both axes configured and matched, or the RTMR3 "never compared"
+        // warning (see `no_rtmr3_reference_values_allows_with_a_warning...`
+        // below) would fire and this would not be the clean case it claims to
+        // be.
+        let mut cfg = gate(vec![REFVAL]);
+        cfg.derive.rtmr3_reference_values = vec![RTMR3_REFVAL];
+        let mut outcome = most_favourable_outcome(&cfg);
+        outcome.collateral_expires_at = 86_400;
+
+        let d = decide(&outcome, &cfg, &permissive()).expect("the policy is evaluable");
         assert!(d.is_allow(), "{:?}", d.reason());
         assert!(
             allowed(&d).is_empty(),
-            "a matched measurement on a clean platform warns about nothing: {:?}",
+            "a measurement matched on both axes warns about nothing: {:?}",
             allowed(&d)
         );
         // And the trust set is the one `derive` produces, not a reconstruction.
         assert_eq!(
             d.trust_set(),
-            Some(&derive(&healthy(), &cfg.derive).expect("matches"))
+            Some(&derive(&outcome, &cfg.derive).expect("matches"))
         );
     }
 
@@ -732,7 +782,13 @@ mod tests {
 
     #[test]
     fn no_reference_values_allows_with_a_warning_that_says_what_was_not_proved() {
-        let d = decide(&healthy(), &gate(Vec::new()), &permissive()).expect("evaluable");
+        let mut cfg = gate(Vec::new());
+        // Isolate the MRTD axis under test: `healthy()`'s rt_mrs[3] is all
+        // zero (built from `gate(vec![REFVAL])`, whose rtmr3_reference_values
+        // is empty), so matching it here means the RTMR3 arm stays silent and
+        // only the MRTD warning below is exercised.
+        cfg.derive.rtmr3_reference_values = vec![[0u8; 48]];
+        let d = decide(&healthy(), &cfg, &permissive()).expect("evaluable");
         assert!(d.is_allow(), "{:?}", d.reason());
         let warnings = allowed(&d);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
@@ -743,6 +799,46 @@ mod tests {
             "the warning must say what was not proved: {w}"
         );
         assert!(w.contains(NO_REFERENCE_VALUES), "{w}");
+    }
+
+    /// The RTMR3 mirror of the test above, and the one that closes I4: until
+    /// this warning existed, an operator who configured `mrtd` and forgot
+    /// `rtmr3` — exactly `gate(vec![REFVAL])`'s default, since most tests in
+    /// this file exercise the MRTD axis and leave RTMR3 unconfigured — got no
+    /// warning at all on the one axis that can actually name a workload.
+    #[test]
+    fn no_rtmr3_reference_values_allows_with_a_warning_that_says_what_was_not_proved() {
+        // `gate(vec![REFVAL])` already leaves `rtmr3_reference_values` empty,
+        // and `healthy()`'s MRTD matches `REFVAL`, so the MRTD arm stays
+        // silent and only the RTMR3 warning is exercised.
+        let cfg = gate(vec![REFVAL]);
+        let d = decide(&healthy(), &cfg, &permissive()).expect("evaluable");
+        assert!(d.is_allow(), "{:?}", d.reason());
+        let warnings = allowed(&d);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        let w = warnings.first().expect("one warning");
+        assert!(
+            w.contains("no rtmr3 reference values are configured"),
+            "{w}"
+        );
+        assert!(
+            w.contains("not that it is the declared workload"),
+            "the warning must say what was not proved: {w}"
+        );
+        assert!(w.contains(NO_RTMR3_REFERENCE_VALUES), "{w}");
+    }
+
+    /// The copy of `derive`'s private RTMR3-unconfigured constant is the same
+    /// string, the RTMR3 mirror of
+    /// `the_unconfigured_principal_is_the_one_derive_emits`.
+    #[test]
+    fn the_rtmr3_unconfigured_principal_is_the_one_derive_emits() {
+        let t = derive(&healthy(), &gate(vec![REFVAL]).derive).expect("nothing to refute");
+        assert!(
+            t.principals().contains(NO_RTMR3_REFERENCE_VALUES),
+            "{:?}",
+            t.principals()
+        );
     }
 
     #[test]
@@ -1217,7 +1313,6 @@ mod tests {
     /// it is pinned directly rather than left to the general floor sweep.
     #[test]
     fn the_floor_accounts_for_a_configured_rtmr3_reference_value() {
-        const RTMR3_REFVAL: [u8; 48] = [0x42; 48];
         let mut cfg = gate(vec![REFVAL]);
         cfg.derive.rtmr3_reference_values = vec![RTMR3_REFVAL];
 

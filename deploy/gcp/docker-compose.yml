@@ -58,19 +58,22 @@ services:
     # us-central1-a), not inferred from Task 1's spike, which explicitly did
     # not test a container: `docs/spike-rtmr-gcp.md` says "Nothing about
     # containers ... The /sys bind-mount constraint above is inferred ...
-    # Task 6 must verify it." Full commands and output are in
-    # `task-6-report.md`; the summary that explains every line below:
+    # Task 6 must verify it." The full commands and their output were run
+    # during that provisioning session and are not committed to this
+    # repository beyond what is summarised here; the summary that explains
+    # every line below is the complete shipped record of the measurement:
     #
     #   1. Mounting only the `tsm` subdirectory
     #      (`/sys/kernel/config/tsm:/sys/kernel/config/tsm`) FAILS at
-    #      container start: `/sys/kernel/config` inside a container's own
-    #      sysfs is a read-only, empty stand-in directory (present in every
-    #      container, even --privileged — it is sysfs's permanent kobject,
-    #      not the host's separate configfs mount), so runc cannot create a
-    #      new "tsm" mountpoint under it. Bind-mounting the whole
-    #      `/sys/kernel/config` directory works, because that replaces the
-    #      existing (read-only) mountpoint rather than creating a child under
-    #      it.
+    #      container start: `/sys/kernel/config` inside this container's own
+    #      sysfs is a read-only, empty stand-in directory — it is sysfs's
+    #      permanent kobject, not the host's separate configfs mount — so runc
+    #      cannot create a new "tsm" mountpoint under it. Bind-mounting the
+    #      whole `/sys/kernel/config` directory works, because that replaces
+    #      the existing (read-only) mountpoint rather than creating a child
+    #      under it. `--privileged` was not tried against this specific
+    #      mount-only configuration (point 3 below is the flag actually
+    #      tried), so this finding does not claim to hold under it too.
     #   2. With that fixed and both mounts below in place, but no
     #      `security_opt` and not `privileged`: opening
     #      `rtmr3:sha384` for writing (zero bytes actually written — a probe
@@ -78,13 +81,16 @@ services:
     #      which only fires on a real `write()`, so it costs nothing even on
     #      a real TDX guest) fails with `Permission denied`. Reading it, and
     #      reading the `tsm` report directory, both succeed — consistent with
-    #      Docker's `docker-default` AppArmor profile, which denies write
-    #      (`w`) under `/sys/[^f]*/**` but not read. This is also why
-    #      `parallax-attest --check` alone cannot surface this: `check()`
-    #      only reads, by design (see `src/attest/rtmr.rs`'s own doc comment
-    #      on why a dry run must not write), so it would report both
-    #      interfaces "reachable" under a configuration that still cannot
-    #      extend.
+    #      the AppArmor profile Ubuntu 24.04's `docker.io` package installs as
+    #      `docker-default`, as measured on this deployment, which denies
+    #      write (`w`) under `/sys/[^f]*/**` but not read. Scoped to that
+    #      package rather than stated as a property of Docker generally,
+    #      because the profile a distribution ships is not necessarily the
+    #      upstream Docker CE one. This is also why `parallax-attest --check`
+    #      alone cannot surface this: `check()` only reads, by design (see
+    #      `src/attest/rtmr.rs`'s own doc comment on why a dry run must not
+    #      write), so it would report both interfaces "reachable" under a
+    #      configuration that still cannot extend.
     #   3. Adding `security_opt: apparmor=unconfined` — nothing else — makes
     #      the same write-open probe succeed, and makes creating a
     #      `tsm/report/<name>` directory and reading it back succeed too.

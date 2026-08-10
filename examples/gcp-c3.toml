@@ -4,14 +4,25 @@
 # that deployment directly or was derived and then checked against what it
 # reported; where the two could disagree, that is said, not hidden.
 #
-# Run from this machine (not the confidential VM):
+# Run from this machine (not the confidential VM). `listen` below is a plain
+# TCP socket, not TLS — the proxy speaks RA-TLS to `upstream`, not to its own
+# client — so this is `http://`, not `https://`:
 #
 #   cargo run --features fetch-collateral --bin parallax-proxy -- examples/gcp-c3.toml
-#   curl -k https://localhost:8080/
+#   curl http://localhost:8080/
 #
 # The instance's external IP, from:
 #   gcloud compute instances describe parallax-demo --zone=us-central1-a \
 #     --project=example-project --format='value(networkInterfaces[0].accessConfigs[0].natIP)'
+#
+# THIS ADDRESS NO LONGER RESOLVES TO ANYTHING OF OURS. `parallax-demo` was a
+# specific demo instance, torn down after Task 7's capture so it would not be
+# left billing (see `docs/WALKTHROUGH.md`). GCP recycles external IPs, so
+# `203.0.113.10` now names whatever project it was next handed to, not this
+# deployment. This file is kept as the real, measured record of what Task 6/7
+# actually ran against — reusing it against a live deployment means
+# provisioning a fresh instance and replacing this address (and, per the
+# `rtmr3` comment below, likely the reference values too).
 upstream = "https://203.0.113.10:8443"
 
 # Loopback, matching every example in this repository — see
@@ -88,12 +99,20 @@ mrtd = ["c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c916
 #   RTMR3 (in the quote) 1d2860c8d9bca4ac3d2acbeb38bdb832c52e4b783e9b644f3bb73f8ca199988615042dadfcc92556ac222835504a3325
 #
 # No mismatch to report here — the prediction and the hardware agreed on the
-# first real run. See task-6-report.md for the full transcript.
+# first real run, and `deploy/gcp/up.sh`'s own output above is the complete
+# shipped record of that agreement.
+#
+# THIS DOES NOT SURVIVE A REBUILD, even from byte-identical source. Task 7
+# rebuilt `deploy/gcp/app` from an unchanged `app.py` and got a *third*,
+# different RTMR3 — neither this value nor the deliberately-different one the
+# walkthrough demonstrates. See `docs/WALKTHROUGH.md` §5 for the full account.
+# This value is pinned to the specific image digest quoted above, not to
+# "whatever `deploy/gcp/app`'s source currently builds to."
 rtmr3 = ["1d2860c8d9bca4ac3d2acbeb38bdb832c52e4b783e9b644f3bb73f8ca199988615042dadfcc92556ac222835504a3325"]
 
 # Left at the documented default (warn, not refuse, on an empty list) rather
 # than set to `true`: both lists above are populated for this deployment, so
 # the flag has no effect on it either way, and there is no `require_rtmr3`
-# mirror of this flag yet (see progress.md's Task 5.5 entry) for it to pair
-# with.
+# mirror of this flag yet — deliberately deferred, see
+# `docs/WALKTHROUGH.md`'s "Does not cover" section — for it to pair with.
 require = false

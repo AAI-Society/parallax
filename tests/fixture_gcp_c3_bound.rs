@@ -129,9 +129,11 @@ fn check_binding_accepts_the_real_captured_binding() {
 
 /// The measurements this quote carries are the ones Task 6 recorded in
 /// `examples/gcp-c3.toml`, and the ones `docs/WALKTHROUGH.md`'s accepting run
-/// was checked against — pinned here so a future recapture that silently
-/// landed on a different deployment would fail loudly rather than only in
-/// prose.
+/// was checked against — pinned here by actually loading that file, not by a
+/// second copy of its hex literals, so a future edit to
+/// `examples/gcp-c3.toml` that silently drifted from this fixture would fail
+/// here with a message naming which side moved, rather than passing a test
+/// that never opened the file it claims to pin.
 #[test]
 fn mrtd_and_rtmr3_match_examples_gcp_c3_toml() {
     let f = load();
@@ -144,15 +146,23 @@ fn mrtd_and_rtmr3_match_examples_gcp_c3_toml() {
     )
     .expect("the committed quote does not verify");
 
-    let mrtd = hex(&outcome.mr_td);
-    let rtmr3 = hex(&outcome.rt_mrs[3]);
+    let example_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/gcp-c3.toml");
+    let cfg =
+        parallax::proxy::ProxyConfig::load(&example_path).expect("examples/gcp-c3.toml loads");
+
     assert_eq!(
-        mrtd, "c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5",
-        "MRTD no longer matches examples/gcp-c3.toml's reference value"
+        cfg.gate.derive.reference_values,
+        vec![outcome.mr_td],
+        "examples/gcp-c3.toml's [reference_values].mrtd no longer matches this \
+         fixture's attested MRTD ({})",
+        hex(&outcome.mr_td)
     );
     assert_eq!(
-        rtmr3, "1d2860c8d9bca4ac3d2acbeb38bdb832c52e4b783e9b644f3bb73f8ca199988615042dadfcc92556ac222835504a3325",
-        "RTMR3 no longer matches examples/gcp-c3.toml's reference value"
+        cfg.gate.derive.rtmr3_reference_values,
+        vec![outcome.rt_mrs[3]],
+        "examples/gcp-c3.toml's [reference_values].rtmr3 no longer matches this \
+         fixture's attested RTMR3 ({})",
+        hex(&outcome.rt_mrs[3])
     );
 }
 

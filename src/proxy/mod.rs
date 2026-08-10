@@ -30,25 +30,40 @@
 //!
 //! # What is not covered by a test, and why
 //!
-//! **There is no end-to-end test of the forwarding path**, and there cannot be
-//! one from this repository as it stands. The only real quote committed here is
-//! `tests/fixtures/gcp-c3-tdx/quote.bin`, whose `report_data` is 64 zero bytes
-//! — a capture-time placeholder recorded in that directory's `PROVENANCE.md`.
-//! [`check_binding`] therefore refuses it as
+//! **There is no end-to-end test of the forwarding path.** This repository now
+//! has seven real quotes across three fixture directories, and one of them —
+//! `tests/fixtures/gcp-c3-bound/quote.bin` — genuinely commits to a key, so the
+//! binding can hold; `check_binding_accepts_the_real_captured_binding` in
+//! `tests/fixture_gcp_c3_bound.rs` exercises it offline. But nothing wires that
+//! fixture into a socket-level test: `tests/proxy.rs` still stands up its TLS
+//! peer with an `rcgen`-generated certificate, so every quote a socket test in
+//! this repository actually sees is one of the zeroed placeholders in
+//! `tests/fixtures/gcp-c3-tdx/` or `tests/fixtures/gcp-c3-rtmr/` — a
+//! capture-time placeholder recorded in each directory's `PROVENANCE.md`.
+//! [`check_binding`] therefore refuses those as
 //! [`BindingError::Unbound`](crate::verify::BindingError::Unbound), and it is
 //! right to: a quote committing to no key is evidence that a trust domain
 //! exists somewhere, not that this connection terminates inside one. Every path
-//! past the binding check is consequently unreachable over a socket with the
-//! evidence available here.
+//! past the binding check is consequently still unreachable over a socket, not
+//! for lack of a bound fixture any longer but for lack of a test that uses it.
 //!
-//! Three ways out were considered. Synthesising a quote that verifies means
-//! synthesising Intel's PKI — a root, a PCK chain carrying Intel's SGX
-//! extensions, a TCB signing certificate, signed TCB info and QE identity, two
-//! CRLs, and a correctly SCALE-encoded TDX v4 quote with a QE report signed by
-//! the PCK key. Recapturing a fixture on TDX hardware needs hardware.
-//! Weakening, skipping or flag-gating the binding so a test can pass is the one
-//! option that is not on the table at all, because the binding is the whole
-//! difference between the two claims above.
+//! Three ways out were considered, when this gap first had no bound fixture
+//! to close it with. Synthesising a quote that verifies means synthesising
+//! Intel's PKI — a root, a PCK chain carrying Intel's SGX extensions, a TCB
+//! signing certificate, signed TCB info and QE identity, two CRLs, and a
+//! correctly SCALE-encoded TDX v4 quote with a QE report signed by the PCK
+//! key. Recapturing a fixture on TDX hardware needed hardware — Task 7 did
+//! exactly that, and `tests/fixtures/gcp-c3-bound/` is the result. Weakening,
+//! skipping or flag-gating the binding so a test can pass was, and remains,
+//! the one option that is not on the table at all, because the binding is the
+//! whole difference between the two claims above.
+//!
+//! What is left is narrower: `tests/fixtures/gcp-c3-bound/` carries `cert.der`
+//! and `quote.bin` but no private key, so nothing can stand up a real TLS
+//! server that presents this exact certificate and complete a handshake
+//! against it without that key existing somewhere first. Wiring it into a
+//! socket-level test is consequently still open, not for lack of a bound
+//! quote but for lack of a key to serve it with.
 //!
 //! So the allow path is covered where it is decidable — in [`gate::decide`],
 //! against outcomes built field by field, exhaustively — and the gap is stated

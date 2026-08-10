@@ -265,7 +265,7 @@ verified — two of the five core subjects are placeholders that name nobody:
 
 | Subject emitted | Assumption | Why nobody can be named |
 | :-- | :-- | :-- |
-| `urn:host:unattributed` | `measurement_injection_resistance` | **A TDX quote does not say which machine it came from.** The party is real and load-bearing — the host extends the RTMRs with what it loads, and nothing in a quote distinguishes a firmware measurement the host executed from one it merely wrote — but no field of the evidence identifies it. `derive` uses one principal for every platform-side assumption rather than inventing hostnames. |
+| `urn:host:unattributed` | `measurement_injection_resistance` | **A TDX quote does not say which machine it came from.** The party is real and load-bearing — the host extends RTMR0-RTMR2 with what it loads, and nothing in a quote distinguishes a firmware measurement the host executed from one it merely wrote — but no field of the evidence identifies it. RTMR3 is the exception: only the guest can extend it, which is why it is compared to a reference value (`golden_value_correctness` / `rtmr3_golden_value_correctness`) rather than resting on this same unconditional assumption. `derive` uses one principal for every platform-side assumption rather than inventing hostnames. |
 | `urn:reference-values:configured` | `golden_value_correctness` | Whoever chose the accepted MRTDs. That is a property of the **verifier's own configuration**, not of the evidence: `DeriveConfig::reference_values` is a list of 48-byte values with no author attached. Nothing in the quote, the collateral or the configuration file names the party who picked them. |
 
 The three that *are* named — `did:web:intel.com`, the collateral authority, and
@@ -483,10 +483,13 @@ Three qualifications, so that "implemented" is not read as more than it is:
   policy is what remains once you accept that. So this is an implementation of
   the requirement's *shape* with its subject replaced, not a drop-in.
 - The result log is stdout, per the paragraph above.
-- The proxy's **allow half is not tested over a socket** — the committed quote
-  is unbound, so every socket test refuses at the binding. `src/proxy/mod.rs`
-  enumerates what that leaves uncovered, and is explicit that the list is what
-  reading finds rather than a proof of exhaustiveness. Read it there.
+- The proxy's **allow half is not tested over a socket**. A quote whose binding
+  genuinely holds now exists (`tests/fixtures/gcp-c3-bound/`), but nothing
+  wires it into a socket-level test — `tests/proxy.rs` still stands up its TLS
+  peer with an `rcgen`-generated certificate, so every socket test still
+  refuses at the binding. `src/proxy/mod.rs` enumerates what that leaves
+  uncovered, and is explicit that the list is what reading finds rather than a
+  proof of exhaustiveness. Read it there.
 
 ---
 
@@ -578,8 +581,12 @@ verification clock. That is enough to establish that the gap is reachable with
 real evidence — it is not a thought experiment — and it is not enough to say
 anything about how other platforms, other CAs, or SGX and SEV-SNP behave. Two
 of the three dimensions of the collateral cache key (`tee` and `ca`) have never
-been exercised end to end against Intel, and the fixture's `report_data` is a
-placeholder, so no committed evidence demonstrates a *successful* key binding
-on real hardware. The README's
+been exercised end to end against Intel. The single-quote count above is the
+reference-value seam's own evidence base and stands regardless: a *second*
+capture, `tests/fixtures/gcp-c3-bound/`, now demonstrates a successful key
+binding on real hardware (see the C7.2.4 row [at a
+glance](#at-a-glance) above) — but it is one more quote from the same single
+platform and the same single deployment, not a second sample along any of the
+dimensions this paragraph is about. The README's
 "[What is real, and what is not](../README.md#what-is-real-and-what-is-not)"
 section states the rest.

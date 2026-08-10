@@ -25,7 +25,14 @@ to check RTMR3 at all.
 
 **What this does not prove**, up front, so it is not buried: one platform,
 one region, one instance family (`c3-standard-4`, `us-central1-a`), one
-operator running both ends of the connection. See
+operator running both ends of the connection. **And an RTMR3 reference value
+does not survive rebuilding its own image from unchanged source** — §5 below
+is a rebuild of `deploy/gcp/app` from byte-identical `app.py` that produced a
+*third*, different RTMR3, matching neither reference value this document
+uses. That is a real limit on what an image-digest-keyed reference value can
+promise across rebuilds, not a code defect, and it means the reference values
+in `examples/gcp-c3.toml` can go stale the next time that image is rebuilt,
+with no code change at all. See
 [What this attestation covers, and what it does not](#what-this-attestation-covers-and-what-it-does-not)
 below for the full accounting, and the README's ["What is real, and what is
 not"](../README.md#what-is-real-and-what-is-not) for how this fits the rest of
@@ -36,14 +43,23 @@ the project's evidence base.
 Task 6 provisioned the confidential VM this walkthrough runs against and
 deployed the first build on it: `parallax-demo`, a GCP `c3-standard-4` with
 `--confidential-compute-type=TDX`, `us-central1-a`, external IP
-`203.0.113.10`. `deploy/gcp/provision.sh` is the script; `task-6-report.md`
-has the full transcript, including the two container-access findings (mount
-the whole `/sys/kernel/config`, not just its `tsm` child; `security_opt:
-apparmor=unconfined` is sufficient, `privileged: true` was never needed) that
-`deploy/gcp/docker-compose.yml` now carries as committed comments. This
-walkthrough does not re-provision — the brief for the task that produced it is
-explicit that the hardware is already up and billing, and tearing it down and
-back up is not part of what this document demonstrates.
+`203.0.113.10` (since torn down — see the note at the end of this section).
+`deploy/gcp/provision.sh` is the script; the two container-access findings
+(mount the whole `/sys/kernel/config`, not just its `tsm` child;
+`security_opt: apparmor=unconfined` is sufficient, `privileged: true` was
+never needed) are recorded as committed, measured comments in
+`deploy/gcp/docker-compose.yml` itself, which is the shipped record of them.
+This walkthrough does not re-provision — the brief for the task that produced
+it is explicit that the hardware is already up and billing, and tearing it
+down and back up is not part of what this document demonstrates.
+
+**The hardware is gone.** `parallax-demo` was torn down after this walkthrough
+and Task 7's fixture capture were complete, per the human's ruling that it not
+be left billing. `203.0.113.10` was that specific instance's ephemeral
+external IP; GCP recycles addresses, so it now names someone else's resource,
+not this one. Everything below is the real transcript from when the hardware
+existed — see [Reproducing this](#reproducing-this) for what that means for a
+reader today.
 
 `deploy/gcp/up.sh` is the deploy step, run on the guest:
 
@@ -108,11 +124,14 @@ stdout, reformatted here for readability — the byte content is unchanged):
 }
 ```
 
-(The full record also carries the Residual Trust Manifest — eleven principals,
-each with the capability it was trusted for and its detection latency — nested
-under `manifest`. It is omitted here for length; `tests/proxy.rs` and
-`src/derive.rs` are where every entry in it is pinned by test, and it is
-unchanged in shape from what Task 6 already recorded.)
+(The full record also carries the Residual Trust Manifest — eleven entries
+over nine distinct principals (`HOST` carries three) — each with the
+capability it was trusted for and its detection latency, nested under
+`manifest`. It is omitted here for length; `tests/proxy.rs` and `src/derive.rs`
+are where every entry in it is pinned by test — `src/derive.rs`'s sibling case
+with RTMR3 unconfigured pins nine assumptions over nine principals
+(`the_healthy_set_is_exactly_these_nine_assumptions`) — and it is unchanged in
+shape from what Task 6 already recorded.)
 
 This is the same acceptance Task 6 recorded. What Task 7 adds is the fixture:
 `tests/fixtures/gcp-c3-bound/` is `parallax-attest`'s real TLS certificate
@@ -278,11 +297,12 @@ $ cd ../.. && sudo ./up.sh
 
 That is a **third** RTMR3 value — different from both the original
 (`1d2860c8…`) and the deliberately-different image (`28af8e56…`) — from a
-build whose source is byte-identical to the original. `task-6-report.md`
-already flagged this as a concern rather than a hypothetical: *"Rebuilding
-`deploy/gcp/app` (even with identical `app.py`, since base-image layer
-metadata is not perfectly reproducible across builds) will very likely change
-the image digest and therefore RTMR3."* This walkthrough is the confirmation:
+build whose source is byte-identical to the original. Task 6's own
+provisioning notes already flagged this as a concern rather than a
+hypothetical: *"Rebuilding `deploy/gcp/app` (even with identical `app.py`,
+since base-image layer metadata is not perfectly reproducible across builds)
+will very likely change the image digest and therefore RTMR3."* This
+walkthrough is the confirmation:
 identical Python source, different `docker image inspect -f '{{.Id}}'`,
 different RTMR3. Most likely cause is the base image's own layer metadata
 (`python:3.12-alpine`'s digest is pinned by tag, not by a fixed manifest
@@ -333,21 +353,34 @@ capture of the accepting run in §2, verified offline against its own
   A workload that behaves correctly at boot and is later compromised through
   a running-process exploit is not something RTMR3 — or anything else in this
   stack — detects.
+- **Reproducible rebuilds of the same source.** §5 below rebuilt
+  `deploy/gcp/app` from `app.py` restored byte-for-byte to its original
+  content and got a *third* RTMR3 value, different from both this document's
+  first deployment and its deliberately-different one. Most likely cause is
+  the base image's own layer metadata or a build-time timestamp — not
+  isolated here. The consequence: an RTMR3 reference value is pinned to one
+  specific build's image digest, not to "this source tree," and rebuilding
+  without redeploying is enough to make a correct, unchanged deployment start
+  failing its own reference value. Nothing in this repository detects or
+  works around that; it is a property of image-digest-keyed reference values
+  that an operator has to manage outside this tool.
 - **The unconfigured case.** This walkthrough's refusal only happens because
   `examples/gcp-c3.toml` sets `[reference_values].rtmr3` to a real,
   previously-derived value. If an operator's proxy configuration leaves that
   list empty, RTMR3 is never compared to anything — same convention as an
   empty `reference_values` (MRTD) list, `require = false` by default — and
   the connection is *allowed*, with the gap named in the trust set as
-  `workload_measurement_was_never_compared` rather than refused. **There is
-  no `require_rtmr3` flag** mirroring `[reference_values].require` that would
-  let an operator force this check the way `require` forces the MRTD one;
-  Task 5.5 deliberately did not add it (see `progress.md`'s Task 5.5 entry).
-  Concretely: this walkthrough's refusal is not a guarantee any deployment
-  gets automatically. It is a property of `examples/gcp-c3.toml` specifically
-  configuring `rtmr3`, and an operator who forgets to would get RTMR3-blind
-  acceptance instead — silently, since nothing in this schema currently
-  forces the check the way it can force MRTD's.
+  `workload_measurement_was_never_compared` and, since the final whole-branch
+  review, surfaced as its own startup and per-connection warning
+  (`src/proxy/gate.rs`'s `warnings`) rather than passing silently. **There is
+  still no `require_rtmr3` flag** mirroring `[reference_values].require` that
+  would let an operator force a refusal the way `require` forces one for
+  MRTD; that remains deliberately deferred. Concretely: this walkthrough's
+  refusal is not a guarantee any deployment gets automatically. It is a
+  property of `examples/gcp-c3.toml` specifically configuring `rtmr3`, and an
+  operator who forgets to would get RTMR3-blind acceptance instead — warned
+  about on every connection, but not refused, since nothing in this schema
+  currently forces the check the way it can force MRTD's.
 - **Anything Task 5's original spike would have called BLOCKED.** It was not:
   `docs/spike-rtmr-gcp.md` and `tests/spike_rtmr_fixture.rs` establish that a
   GCP TDX guest can extend RTMR3 at all, and this walkthrough is the
@@ -367,19 +400,27 @@ capture of the accepting run in §2, verified offline against its own
 
 ## Reproducing this
 
-The accepting half needs nothing but the laptop side:
+**Not against `parallax-demo` any longer — that VM is gone.** Everything
+below describes what reproducing this would take against a live instance; a
+reader today needs to provision their own (`deploy/gcp/provision.sh`) and
+redo Task 6's derivation of fresh reference values against it, rather than
+running the commands below unmodified against this document's IP.
+
+The accepting half, against a live instance, needs nothing but the laptop
+side:
 
 ```
 cargo run --features fetch-collateral --bin parallax-proxy -- examples/gcp-c3.toml
 curl http://127.0.0.1:8080/
 ```
 
-against whatever is currently running on `parallax-demo` — which, per §5
-above, may or may not match `examples/gcp-c3.toml`'s reference values at any
-given moment, depending on what was last deployed there. The refusing half
-needs guest access: change `deploy/gcp/app/app.py`, reboot, confirm RTMR3
-reads 48 zero bytes, run `sudo ./up.sh`, then repeat the proxy commands above
-from the laptop. Both halves cost real time (a multi-minute Rust release
-build inside the `attest` container image, per `up.sh`'s own build step) and,
-for the refusing half, a VM reboot — they are not something to script into a
-CI gate on this hardware.
+against whatever is currently running on the instance — which, per §5 above,
+may or may not match `examples/gcp-c3.toml`'s reference values at any given
+moment, depending on what was last deployed there (and, now, will not match
+by default at all: those reference values name `parallax-demo` specifically).
+The refusing half needs guest access: change `deploy/gcp/app/app.py`, reboot,
+confirm RTMR3 reads 48 zero bytes, run `sudo ./up.sh`, then repeat the proxy
+commands above from the laptop. Both halves cost real time (a multi-minute
+Rust release build inside the `attest` container image, per `up.sh`'s own
+build step) and, for the refusing half, a VM reboot — they are not something
+to script into a CI gate on this hardware.

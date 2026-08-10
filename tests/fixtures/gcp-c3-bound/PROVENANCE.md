@@ -43,6 +43,18 @@ with.
 | `captured-at` | RFC 3339 capture time. The verification clock is pinned to this. |
 | `transcript.txt` | Every command that produced this fixture, with real output, including the (expected, harmless) openssl chain-verification error. |
 
+**A known discrepancy in `transcript.txt`, left uncorrected.** Its
+`report_data` line is 127 hex characters, one short of the 128 (64 bytes)
+`quote.bin` and `cert.der` actually carry — almost certainly a single `0`
+dropped from the trailing zero run somewhere between the terminal and the
+copy pasted into this file. `transcript.txt`'s own header claims verbatim
+output, so the line is left exactly as it was captured rather than "corrected"
+— there is no way to know from here which character was lost, and editing it
+would trade a visible discrepancy for an invisible, unverifiable one.
+**`quote.bin` (and `cert.der`, which embeds it) are authoritative**; every
+test in `tests/fixture_gcp_c3_bound.rs` reads those files, never
+`transcript.txt`, so this discrepancy affects nothing this fixture proves.
+
 SHA-256, of every file in this directory except this one:
 
 ```
@@ -54,7 +66,9 @@ SHA-256, of every file in this directory except this one:
 
 (`transcript.txt` is not in this table: it was written after the four files
 above and describes them, so hashing it into a manifest generated before it
-existed would be circular. Its own byte count is recorded in itself.)
+existed would be circular. It carries no hash or byte count of its own here —
+git's own history of this file is what a reader checking it for tampering
+would use.)
 
 ## Why this fixture has no `provider` or `capture-host.txt`, unlike its neighbours
 
@@ -65,11 +79,17 @@ by connecting to the sidecar's TLS port from outside the VM — deliberately,
 so capturing it could not accidentally consume the boot's one RTMR3
 extension or otherwise touch the deployment Task 6 measured. That means
 there is no local shell on the guest in this fixture's own provenance chain
-to ask. The guest identity is not undocumented, though: it is the same
-`parallax-demo` instance, on the same boot, whose kernel, Docker version and
-AppArmor finding are recorded at length in `task-6-report.md`, and whose MRTD
-above is byte-identical to `../gcp-c3-rtmr/`'s and `../gcp-c3-tdx/`'s
-independent SSH-based captures of the same platform family.
+to ask, and this repository's shipped tree does not carry the guest's kernel
+version or Docker version for *this specific boot* anywhere — that is a real
+gap in this fixture's own documentation, not a discrepancy explained away by
+a file that ships with it. What is shipped and does tie this capture to the
+same platform: its container-access findings (the `/sys/kernel/config` mount
+requirement and the AppArmor requirement) are recorded as measured, committed
+comments in `deploy/gcp/docker-compose.yml`, and its MRTD above is
+byte-identical to `../gcp-c3-rtmr/`'s and `../gcp-c3-tdx/`'s independent
+SSH-based captures of the same platform family — which is evidence about the
+*platform*, not a substitute for a kernel or Docker version captured on this
+specific boot.
 
 ## `report_data` is not zero here, and that is the entire point
 
