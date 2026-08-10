@@ -39,6 +39,19 @@ name = "parallax-proxy"
 path = "src/bin/parallax-proxy.rs"
 required-features = ["fetch-collateral"]
 
+# The attester. Behind `attest` because it needs a TEE to be useful and rcgen,
+# tokio and the TLS stack to run at all; the default build links none of them.
+# Note what it is *not* behind: `fetch-collateral`. This process holds the
+# attestation key inside the trust domain, and it fetches no collateral and
+# serves none — the verifier does that — so it has no business linking an HTTP
+# client. See `[features]` below.
+#
+#   cargo run --features attest --bin parallax-attest -- examples/attest.toml
+[[bin]]
+name = "parallax-attest"
+path = "src/bin/parallax-attest.rs"
+required-features = ["attest"]
+
 # The only test that talks to Intel. Declared explicitly so it can carry
 # `required-features`: without that, a default `cargo test` would try to build a
 # file that calls the feature-gated `CollateralSource::fetch` and fail to
@@ -103,7 +116,22 @@ fetch-collateral = [
 # `fetch-collateral` would instead link reqwest into the one process that holds
 # the attestation key inside the TEE. The attester serves collateral to nobody
 # and fetches none: the verifier does that.
-attest = ["dep:rcgen", "dep:tokio", "dep:tokio-rustls", "dep:rustls"]
+#
+# The tokio sub-features are listed again for the same reason: the sidecar
+# terminates TLS and forwards plaintext, so it needs `net`, `io-util` and
+# `sync` exactly as the proxy does, and `signal` for the Ctrl-C that makes exit
+# 0 mean a clean shutdown. It does *not* take `tokio/time`: nothing on this
+# side has a deadline to enforce, because there is no refusal path to drain.
+attest = [
+    "dep:rcgen",
+    "dep:tokio",
+    "dep:tokio-rustls",
+    "dep:rustls",
+    "tokio/net",
+    "tokio/io-util",
+    "tokio/signal",
+    "tokio/sync",
+]
 
 [dependencies]
 ascent = "0.8"

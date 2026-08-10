@@ -1,0 +1,14 @@
+# Faces the verifying proxy, which is on another machine — so unlike
+# examples/proxy.toml this necessarily binds a non-loopback interface.
+# The RA-TLS certificate authenticates this sidecar. It does not
+# authenticate the client, and no client authentication is performed.
+listen = "0.0.0.0:8443"
+
+# Plaintext, on the loopback of the confidential VM.
+app = "127.0.0.1:3000"
+
+[workload]
+# What gets extended into RTMR3, and therefore what a verifier's
+# reference values must cover. Exactly one of these.
+image_digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+# binary = "/usr/local/bin/app"

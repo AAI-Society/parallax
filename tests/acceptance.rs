@@ -117,7 +117,12 @@ fn all_examples_solve() {
     // Files in `examples/` that are configuration rather than deployment
     // descriptions. Listed explicitly: a new file that is neither covered nor
     // declared here fails the directory check below, which is the point.
-    const NOT_DEPLOYMENTS: [&str; 3] = ["policy-proxy.toml", "policy-strict.toml", "proxy.toml"];
+    const NOT_DEPLOYMENTS: [&str; 4] = [
+        "attest.toml",
+        "policy-proxy.toml",
+        "policy-strict.toml",
+        "proxy.toml",
+    ];
 
     // The filter is `.ends_with(".toml")`, so an example shipped in another
     // serialisation would be skipped silently rather than caught by the
