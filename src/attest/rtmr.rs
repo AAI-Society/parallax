@@ -172,7 +172,18 @@ pub fn extend_rtmr3_at(
     }
 
     // Guard 2, secondary: this sidecar must not have run in this boot.
-    if marker.exists() {
+    //
+    // `try_exists` rather than `exists`, for the reason `request_quote_at`
+    // uses `metadata` rather than `is_dir`: `exists` returns `false` both for
+    // "absent" and for "could not find out", and a guard that reads EACCES on
+    // a parent directory as "no marker" fails open in the one direction that
+    // matters. An unanswerable question is an error, not a no.
+    let claimed = marker.try_exists().map_err(|e| RtmrError::Io {
+        action: "check for the restart marker",
+        path: marker.display().to_string(),
+        reason: e.to_string(),
+    })?;
+    if claimed {
         return Err(RtmrError::Restarted {
             marker: marker.display().to_string(),
         });
@@ -349,6 +360,54 @@ mod tests {
     }
 
     #[test]
+    fn a_single_non_zero_byte_is_enough_to_refuse() {
+        // Guard 1 asks whether RTMR3 is *all* zero, not whether it is
+        // *nowhere* zero, and only this fixture can tell the two apart. A real
+        // extended RTMR3 is a SHA-384 output, so it contains at least one zero
+        // byte about 17% of the time; a guard written `all(|b| b != 0)` would
+        // pass those through and extend a second time, roughly one boot in six.
+        let mut partly = [0u8; RTMR_LEN];
+        partly[RTMR_LEN - 1] = 1;
+        let (dir, marker) = fake_base("onebyte", partly);
+        let err = extend_rtmr3_at(&dir, &marker, &[7u8; RTMR_LEN]).expect_err("must refuse");
+        assert!(
+            matches!(err, RtmrError::AlreadyExtended { .. }),
+            "got {err}"
+        );
+        assert_eq!(
+            std::fs::read(dir.join(RTMR3_ATTR)).expect("still there"),
+            partly.to_vec(),
+            "the refused path must not have written"
+        );
+        assert!(!marker.exists(), "a refusal must not leave a record");
+    }
+
+    /// A marker whose existence cannot be determined must not read as "absent".
+    ///
+    /// A self-referential symlink is the portable way to make that question
+    /// unanswerable: `try_exists` returns `ELOOP` where `exists` quietly
+    /// returns `false`. Permissions would have been the other way to do it, and
+    /// they are not deterministic — a suite running as root can read anything.
+    #[cfg(unix)]
+    #[test]
+    fn a_marker_that_cannot_be_looked_at_is_an_error_not_an_absence() {
+        let (dir, marker) = fake_base("unreadable-marker", [0u8; RTMR_LEN]);
+        std::os::unix::fs::symlink(&marker, &marker).expect("a loop to nowhere");
+
+        let err = extend_rtmr3_at(&dir, &marker, &[7u8; RTMR_LEN])
+            .expect_err("an unanswerable guard is not a passed guard");
+        assert!(
+            matches!(err, RtmrError::Io { action, .. } if action.contains("restart marker")),
+            "got {err}"
+        );
+        assert_eq!(
+            std::fs::read(dir.join(RTMR3_ATTR)).expect("still there"),
+            vec![0u8; RTMR_LEN],
+            "a guard that could not be evaluated must not have let the write through"
+        );
+    }
+
+    #[test]
     fn a_second_start_in_the_same_boot_is_refused() {
         // The secondary guard, in the one arrangement the primary cannot see:
         // RTMR3 is zero and the marker says this sidecar has already run. On
@@ -404,6 +463,43 @@ mod tests {
         assert!(
             !marker.exists(),
             "a failed extension must not be recorded as a successful one"
+        );
+    }
+
+    #[test]
+    fn the_marker_records_the_digest_and_refuses_to_be_claimed_twice() {
+        // `extend_rtmr3_at` has no reachable success path off a TDX guest --
+        // faking one would need a `d` with `d == SHA-384(0^48 || d)`, which
+        // nobody has -- but `record` is a private fn in this file and needs no
+        // hardware at all. It is also the one step that runs on real hardware
+        // *after* a successful extension, so leaving it unexercised would mean
+        // the only untested code is the code with an irreversible act behind
+        // it.
+        let dir = scratch("record");
+        // A parent that does not exist yet, because on the real path `/run`
+        // holds no `parallax-attest` directory until this creates one.
+        let marker = dir.join("run/parallax-attest/rtmr3-extended");
+        let digest = [0x5au8; RTMR_LEN];
+
+        record(&marker, &digest).expect("the first claim succeeds");
+        assert_eq!(
+            std::fs::read_to_string(&marker).expect("the marker is readable"),
+            format!("{}\n", hex(&digest)),
+            "an operator has to be able to see what was measured"
+        );
+
+        // The `create_new` in `record` is what makes a second copy of the
+        // sidecar racing this one a failure rather than a silent overwrite.
+        let err = record(&marker, &[0xffu8; RTMR_LEN]).expect_err("the second claim must fail");
+        assert!(
+            matches!(err, RtmrError::MarkerNotRecorded { .. }),
+            "got {err}"
+        );
+        assert!(err.to_string().contains("was extended"), "got {err}");
+        assert_eq!(
+            std::fs::read_to_string(&marker).expect("still readable"),
+            format!("{}\n", hex(&digest)),
+            "the loser of the race must not have overwritten the winner's record"
         );
     }
 
