@@ -83,6 +83,19 @@ const REFERENCE_VALUES: &str = "urn:reference-values:configured";
 /// nobody was asked" must not present the same list of parties as "somebody was
 /// asked and agreed".
 const NO_REFERENCE_VALUES: &str = "urn:reference-values:unconfigured";
+/// Whoever chose the reference values RTMR3 was compared against.
+///
+/// A distinct principal from [`REFERENCE_VALUES`], for the same reason
+/// [`REFERENCE_VALUES`] is distinct from [`NO_REFERENCE_VALUES`]: MRTD and
+/// RTMR3 are different registers measuring different things — the platform
+/// firmware and the workload the firmware measured in turn — and a trust set
+/// that let one principal stand for both checks would make "the firmware was
+/// verified" indistinguishable from "the workload was verified" in every
+/// aggregate view. See [`DeriveConfig::rtmr3_reference_values`].
+const RTMR3_REFERENCE_VALUES: &str = "urn:reference-values:rtmr3:configured";
+/// Stands in for the RTMR3 reference values that were not supplied. See
+/// [`NO_REFERENCE_VALUES`] for why this is its own principal.
+const NO_RTMR3_REFERENCE_VALUES: &str = "urn:reference-values:rtmr3:unconfigured";
 /// The proxy's collateral cache.
 const CACHE: &str = "urn:parallax:collateral-cache";
 /// The proxy itself, as the thing that forwards a request onward.
@@ -96,6 +109,23 @@ pub struct DeriveConfig {
     /// what the operator proved is weaker than they think: *some* code ran in
     /// a genuine trust domain, not theirs. See `reference_check`, private below.
     pub reference_values: Vec<[u8; 48]>,
+    /// Accepted RTMR3 values: what a workload's boot-time extension into
+    /// RTMR3 (see `ratls::expected_rtmr3`) must equal. **Empty means it was
+    /// never compared to anything**, same convention as `reference_values`
+    /// and for the identical reason.
+    ///
+    /// **A second, independent axis, not a second copy of the first.** MRTD
+    /// measures the platform firmware; RTMR3 is what a workload extends into
+    /// its own register after boot. They can disagree in either direction —
+    /// see `reference_check` and `rtmr3_check`, private below, and
+    /// `neither_reference_axis_can_mask_the_others_failure` in this module's
+    /// tests — so a deployment that only configures one of them has proved
+    /// only that one thing, and the other stays an open hole recorded as
+    /// [`Refutation::Rtmr3`] or `workload_measurement_was_never_compared`.
+    ///
+    /// Participates in `DeriveConfig`'s `PartialEq`, and so in trust-set
+    /// identity, for the same reason `reference_values` does.
+    pub rtmr3_reference_values: Vec<[u8; 48]>,
     /// Identifies the verifier implementation, which is itself trusted.
     pub verifier_id: String,
     /// How long the proxy's own collateral cache may serve a stale copy.
@@ -191,13 +221,50 @@ pub enum Refutation {
         /// How many reference values it was compared against.
         configured: usize,
     },
+    /// `rt_mrs[3]` is none of the configured RTMR3 reference values.
+    ///
+    /// A distinct variant from [`Refutation::Measurement`], not a second case
+    /// of the same one: the two answer different questions for an operator.
+    /// `Measurement` naming no match means "this is not your trust domain, or
+    /// it was never checked"; `Rtmr3` naming no match means "this is your
+    /// trust domain, running an image you did not declare" — the refusal
+    /// [`Refutation::Rtmr3`] exists for, and Task 7's whole deliverable.
+    #[error(
+        "the attested RTMR3 matches none of the {configured} configured \
+         RTMR3 reference values"
+    )]
+    Rtmr3 {
+        /// The RTMR3 the quote actually carried.
+        rtmr3: [u8; 48],
+        /// The MRTD of the same quote, carried for context. An RTMR3
+        /// refutation is only reached after the MRTD check above it already
+        /// matched or was left unconfigured, so this is not a foreign
+        /// platform — see `mr_td`'s doc comment on `Refutation::mr_td`.
+        mr_td: [u8; 48],
+        /// How many RTMR3 reference values it was compared against.
+        configured: usize,
+    },
 }
 
 impl Refutation {
-    /// The measurement that was refuted.
+    /// The MRTD the quote carried, whichever axis refused it.
+    ///
+    /// Present on both variants — including [`Refutation::Rtmr3`], which
+    /// does not fail because of this value — so a caller logging a refusal
+    /// can always say which trust domain it came from, not only which check
+    /// caught it.
     pub fn mr_td(&self) -> [u8; 48] {
         match self {
-            Refutation::Measurement { mr_td, .. } => *mr_td,
+            Refutation::Measurement { mr_td, .. } | Refutation::Rtmr3 { mr_td, .. } => *mr_td,
+        }
+    }
+
+    /// The RTMR3 that was refuted, or `None` when it was the MRTD check that
+    /// failed and RTMR3 was never reached.
+    pub fn rtmr3(&self) -> Option<[u8; 48]> {
+        match self {
+            Refutation::Measurement { .. } => None,
+            Refutation::Rtmr3 { rtmr3, .. } => Some(*rtmr3),
         }
     }
 }
@@ -229,14 +296,34 @@ enum ReferenceCheck {
     NoMatch,
 }
 
-fn reference_check(o: &VerificationOutcome, cfg: &DeriveConfig) -> ReferenceCheck {
-    if cfg.reference_values.is_empty() {
+/// Whether `attested` is among `configured`, or nothing was configured to
+/// compare it against. Shared by [`reference_check`] and [`rtmr3_check`],
+/// which are the same arithmetic over two different registers.
+fn check_measurement(configured: &[[u8; 48]], attested: [u8; 48]) -> ReferenceCheck {
+    if configured.is_empty() {
         ReferenceCheck::NotConfigured
-    } else if cfg.reference_values.contains(&o.mr_td) {
+    } else if configured.contains(&attested) {
         ReferenceCheck::Matched
     } else {
         ReferenceCheck::NoMatch
     }
+}
+
+fn reference_check(o: &VerificationOutcome, cfg: &DeriveConfig) -> ReferenceCheck {
+    check_measurement(&cfg.reference_values, o.mr_td)
+}
+
+/// The RTMR3 axis: `o.rt_mrs[3]` against `cfg.rtmr3_reference_values`.
+///
+/// Reads the array slot dcap-qvl already parsed rather than any byte offset
+/// into the quote — `rt_mrs` is `[[u8; 48]; 4]`, so `[3]` is a compile-time
+/// bounds-checked index into a fixed-size array, not a slice into untrusted
+/// bytes. `tests/spike_rtmr_fixture.rs`'s
+/// `rtmr3_is_at_absolute_offset_520_and_472_is_rtmr2` is the independent
+/// check that this slot really is RTMR3; reintroducing the literal 520 here
+/// would collapse that independence.
+fn rtmr3_check(o: &VerificationOutcome, cfg: &DeriveConfig) -> ReferenceCheck {
+    check_measurement(&cfg.rtmr3_reference_values, o.rt_mrs[3])
 }
 
 /// How long a lapse by the collateral authority can go unnoticed.
@@ -385,10 +472,15 @@ fn undeclared_flag_assumptions(o: &VerificationOutcome) -> Vec<&'static str> {
 /// Fields of `o` this deliberately does **not** use, since the module explains
 /// every other one:
 ///
-/// - `report_data` and `rt_mrs` bind a quote to a key and to a boot sequence.
-///   Neither is compared to anything here, so neither yields an assumption
-///   beyond the unconditional one below. A deployment that binds a TLS key into
-///   `report_data` has a *stronger* claim than this trust set expresses.
+/// - `report_data` binds a quote to a key. It is not compared to anything
+///   here, so it yields no assumption beyond the unconditional one below. A
+///   deployment that binds a TLS key into `report_data` has a *stronger*
+///   claim than this trust set expresses.
+/// - `rt_mrs[0]`, `rt_mrs[1]` and `rt_mrs[2]` (RTMR0-RTMR2) bind a quote to a
+///   boot sequence and are not compared to anything here either, for the same
+///   reason. `rt_mrs[3]` (RTMR3) is the one exception — see `rtmr3_check`,
+///   private below, which mirrors the MRTD comparison above over a different
+///   register.
 /// - `attested_len` is about the buffer rather than about any party.
 /// - `tcb_eval_data_number` is trust-relevant and is dropped anyway, which is
 ///   worth naming as a gap rather than passing over: a low number against
@@ -632,6 +724,45 @@ pub fn derive(o: &VerificationOutcome, cfg: &DeriveConfig) -> Result<TrustSet, R
         }
     }
 
+    // The RTMR3 axis: what the workload's own boot-time extension into RTMR3
+    // was compared against, if anything. A second, independent match rather
+    // than a second arm of the one above — see
+    // `DeriveConfig::rtmr3_reference_values`'s doc comment for why matching
+    // one register says nothing about the other. Reached only when the MRTD
+    // match above did not already return, so an MRTD refutation still takes
+    // priority and RTMR3 is never evaluated for a quote that is not even the
+    // right trust domain.
+    match rtmr3_check(o, cfg) {
+        ReferenceCheck::Matched => push(a(
+            RTMR3_REFERENCE_VALUES,
+            "rtmr3_golden_value_correctness",
+            Latency::Never,
+            Impact::Soundness,
+            m,
+        )),
+        // No comparison happened for this axis either, on its own principal
+        // so a consumer reading `principals()` cannot mistake "MRTD was
+        // checked, RTMR3 was not" for "neither was checked" or the reverse.
+        ReferenceCheck::NotConfigured => push(a(
+            NO_RTMR3_REFERENCE_VALUES,
+            "workload_measurement_was_never_compared",
+            Latency::Never,
+            Impact::Soundness,
+            m,
+        )),
+        // The trust domain matched (or was never checked, above), but the
+        // workload running inside it did not: "you deployed an image you did
+        // not declare", not "this is not your trust domain". See
+        // `Refutation::Rtmr3`.
+        ReferenceCheck::NoMatch => {
+            return Err(Refutation::Rtmr3 {
+                rtmr3: o.rt_mrs[3],
+                mr_td: o.mr_td,
+                configured: cfg.rtmr3_reference_values.len(),
+            })
+        }
+    }
+
     // The proxy's own contribution. A tool that enumerates everyone else's
     // assumptions and omits its own commits the overclaim this project exists
     // to attack.
@@ -732,6 +863,11 @@ mod tests {
     fn cfg(refvals: Vec<[u8; 48]>) -> DeriveConfig {
         DeriveConfig {
             reference_values: refvals,
+            // Empty by default: most tests here are exercising the MRTD axis
+            // and do not care about RTMR3, so they get the same
+            // "never compared" hole an empty `mrtd` list produces. Tests that
+            // do care about RTMR3 override this field directly.
+            rtmr3_reference_values: Vec::new(),
             verifier_id: "urn:parallax:dcap-qvl:0.6.1".into(),
             cache_ttl: Latency::Bounded(43_200),
             collateral_source: crate::collateral::INTEL_PCS_URL.into(),
@@ -912,6 +1048,183 @@ mod tests {
             unconfigured.principals()
         );
         assert!(!unconfigured.principals().contains(REFERENCE_VALUES));
+    }
+
+    // ---- the RTMR3 axis -----------------------------------------------------
+
+    /// A matching RTMR3 reference value is a match, among several configured.
+    #[test]
+    fn a_matching_rtmr3_reference_value_is_a_match() {
+        let mut o = outcome();
+        o.rt_mrs[3] = [0x42; 48];
+        let mut c = cfg(vec![o.mr_td]);
+        c.rtmr3_reference_values = vec![[0x01; 48], [0x42; 48]];
+        let t = derive(&o, &c).expect("rtmr3 matches one of the two configured values");
+        assert!(has(&t, "rtmr3_golden_value_correctness"));
+    }
+
+    /// An empty `rtmr3_reference_values` list behaves exactly like an empty
+    /// `reference_values` list: the hole is named, not silently allowed.
+    #[test]
+    fn an_empty_rtmr3_list_names_the_hole_like_an_empty_mrtd_list_does() {
+        let t = set(&outcome());
+        assert!(!has(&t, "rtmr3_golden_value_correctness"));
+        assert!(has(&t, "workload_measurement_was_never_compared"));
+        assert!(
+            t.principals().contains(NO_RTMR3_REFERENCE_VALUES),
+            "{:?}",
+            t.principals()
+        );
+        assert!(!t.principals().contains(RTMR3_REFERENCE_VALUES));
+    }
+
+    /// A quote whose RTMR3 matches no configured value is refused, and the
+    /// refusal names RTMR3 — the load-bearing distinction: an operator must be
+    /// able to tell "you deployed an image you did not declare" (this) from
+    /// "this is not your trust domain" (`Refutation::Measurement`).
+    #[test]
+    fn an_rtmr3_matching_no_reference_value_is_a_refutation_naming_rtmr3() {
+        let mut o = outcome();
+        o.rt_mrs[3] = [0x77; 48];
+        let mut c = cfg(vec![o.mr_td]);
+        c.rtmr3_reference_values = vec![[0x01; 48], [0x02; 48]];
+
+        let err = derive(&o, &c).expect_err("rtmr3 matches neither configured value");
+        assert_eq!(
+            err,
+            Refutation::Rtmr3 {
+                rtmr3: [0x77; 48],
+                mr_td: o.mr_td,
+                configured: 2,
+            }
+        );
+        assert_eq!(err.rtmr3(), Some([0x77; 48]));
+        // The MRTD is still available, for context: this really is the
+        // declared trust domain, running an undeclared image.
+        assert_eq!(err.mr_td(), o.mr_td);
+        // Printed with `{e}`, never `{e:#}`, and it names RTMR3 specifically
+        // rather than reusing the MRTD refusal's wording.
+        assert_eq!(
+            format!("{err}"),
+            "the attested RTMR3 matches none of the 2 configured RTMR3 reference values"
+        );
+    }
+
+    /// `Refutation::rtmr3` is `None` when the MRTD check is what refused the
+    /// quote: the RTMR3 axis was never reached, so there is no RTMR3 to give.
+    #[test]
+    fn rtmr3_accessor_is_none_on_a_measurement_refutation() {
+        let err = derive(&outcome(), &cfg(vec![[0x01; 48]])).expect_err("mrtd refuted");
+        assert_eq!(err.rtmr3(), None);
+    }
+
+    /// Both axes can be configured and matched at once, independently of each
+    /// other, and both assumptions land in the set.
+    #[test]
+    fn both_axes_are_present_when_both_reference_lists_match() {
+        let mut o = outcome();
+        o.rt_mrs[3] = [0x11; 48];
+        let mut c = cfg(vec![o.mr_td]);
+        c.rtmr3_reference_values = vec![o.rt_mrs[3]];
+
+        let t = derive(&o, &c).expect("both axes match");
+        assert!(has(&t, "golden_value_correctness"));
+        assert!(has(&t, "rtmr3_golden_value_correctness"));
+    }
+
+    /// Neither reference axis can mask the other's failure, in either
+    /// direction.
+    ///
+    /// This is the property `DeriveConfig::rtmr3_reference_values`'s doc
+    /// comment claims and the brief this task came from was written to pin: a
+    /// matching MRTD does not paper over a foreign RTMR3, and — the direction
+    /// that is easy to get backwards — a matching RTMR3 does not paper over a
+    /// foreign MRTD either, because the MRTD check runs first and returns
+    /// before RTMR3 is even evaluated.
+    #[test]
+    fn neither_reference_axis_can_mask_the_others_failure() {
+        // MRTD matches, RTMR3 does not: refused, and the refusal is about
+        // RTMR3 specifically.
+        let mut o = outcome();
+        o.rt_mrs[3] = [0x11; 48];
+        let mut mrtd_ok = cfg(vec![o.mr_td]);
+        mrtd_ok.rtmr3_reference_values = vec![[0x99; 48]];
+        let err = derive(&o, &mrtd_ok).expect_err("rtmr3 does not match despite mrtd matching");
+        assert!(
+            matches!(err, Refutation::Rtmr3 { .. }),
+            "a matching MRTD must not mask a foreign RTMR3: {err:?}"
+        );
+
+        // RTMR3 would match, MRTD does not: refused, and the refusal is about
+        // the measurement, because that check runs first.
+        let mut rtmr3_would_match = cfg(vec![[0x99; 48]]); // does not match o.mr_td
+        rtmr3_would_match.rtmr3_reference_values = vec![o.rt_mrs[3]];
+        let err2 =
+            derive(&o, &rtmr3_would_match).expect_err("mrtd does not match despite rtmr3 doing so");
+        assert!(
+            matches!(err2, Refutation::Measurement { .. }),
+            "a matching RTMR3 must not mask a foreign MRTD: {err2:?}"
+        );
+    }
+
+    /// The value `ratls::expected_rtmr3` predicts from a workload's own
+    /// arithmetic is exactly what the committed hardware capture reported —
+    /// the config path (hex reference values an operator writes) and the
+    /// attester's own computation must agree, or a correctly-derived
+    /// reference value would still be refused.
+    ///
+    /// `extended-digest.bin` is `SHA-384("parallax-attest-spike-v1")` —
+    /// exactly what `ratls::workload_measurement` computes from that same
+    /// pre-image, since the function is `SHA-384(d)` — and `quote-after.bin`
+    /// is what a real GCP TD reported in RTMR3 after extending it from a
+    /// fresh boot. See `tests/spike_rtmr_fixture.rs` and
+    /// `expected_rtmr3_reproduces_what_the_hardware_reported` in
+    /// `src/ratls.rs`, which this does not duplicate: this test goes through
+    /// `verify_quote` rather than slicing the quote at a literal offset, so
+    /// it stays independent of that one.
+    #[test]
+    fn the_rtmr3_config_path_agrees_with_the_attesters_arithmetic() {
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gcp-c3-rtmr");
+        let quote = std::fs::read(dir.join("quote-after.bin")).expect("fixture quote");
+        let collateral: dcap_qvl::QuoteCollateralV3 = serde_json::from_slice(
+            &std::fs::read(dir.join("collateral.json")).expect("collateral"),
+        )
+        .expect("collateral parses");
+        let now = humantime::parse_rfc3339(
+            std::fs::read_to_string(dir.join("captured-at"))
+                .expect("captured-at")
+                .trim(),
+        )
+        .expect("captured-at is RFC 3339")
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after epoch")
+        .as_secs();
+        let out = verify_quote(
+            &quote,
+            &collateral,
+            now,
+            &RootCa::IntelProduction,
+            Latency::Bounded(43_200),
+        )
+        .expect("the committed fixture verifies");
+
+        let d = b"parallax-attest-spike-v1";
+        let predicted = crate::ratls::expected_rtmr3(&crate::ratls::workload_measurement(d));
+        assert_eq!(
+            predicted, out.rt_mrs[3],
+            "expected_rtmr3 disagrees with what the hardware reported"
+        );
+
+        // A quote whose RTMR3 is exactly the predicted value is admitted
+        // through `derive`, using the reference value the way an operator's
+        // config would carry it: as the 48 raw bytes, not as hex text (that
+        // parsing is `proxy::config::parse_rtmr3`'s job, and is tested
+        // there).
+        let mut c = cfg(vec![out.mr_td]);
+        c.rtmr3_reference_values = vec![predicted];
+        let t = derive(&out, &c).expect("the predicted rtmr3 matches the real quote");
+        assert!(has(&t, "rtmr3_golden_value_correctness"));
     }
 
     // ---- Ok does not mean healthy -----------------------------------------
@@ -1493,22 +1806,27 @@ mod tests {
     /// claims. Ordered by principal, because `TrustSet` is a `BTreeSet` and
     /// `Assumption`'s derived `Ord` compares `principal` first.
     #[test]
-    fn the_healthy_set_is_exactly_these_eight_assumptions() {
+    fn the_healthy_set_is_exactly_these_nine_assumptions() {
+        // `cfg()` leaves `rtmr3_reference_values` empty, so the ninth
+        // assumption is the RTMR3 axis' own "never compared" hole — the
+        // counterpart of `workload_identity_was_never_compared` that would
+        // appear here too if `reference_values` were also left empty.
         let t = set(&outcome());
         assert_eq!(
             caps(&t),
             vec![
-                "silicon_and_microcode_integrity",  // did:web:intel.com
-                "accurate_collateral_issuance",     // did:web:pcs.intel.com
-                "measurement_injection_resistance", // urn:host:unattributed
-                "serves_current_collateral",        // urn:parallax:collateral-cache
-                "sound_quote_verification",         // urn:parallax:dcap-qvl:0.6.1
-                "forwards_only_what_it_verified",   // urn:parallax:proxy
-                "quote_signing_honesty",            // urn:qe:tdx
-                "golden_value_correctness",         // urn:reference-values:configured
+                "silicon_and_microcode_integrity",         // did:web:intel.com
+                "accurate_collateral_issuance",            // did:web:pcs.intel.com
+                "measurement_injection_resistance",        // urn:host:unattributed
+                "serves_current_collateral",               // urn:parallax:collateral-cache
+                "sound_quote_verification",                // urn:parallax:dcap-qvl:0.6.1
+                "forwards_only_what_it_verified",          // urn:parallax:proxy
+                "quote_signing_honesty",                   // urn:qe:tdx
+                "golden_value_correctness",                // urn:reference-values:configured
+                "workload_measurement_was_never_compared", // urn:reference-values:rtmr3:unconfigured
             ]
         );
-        assert_eq!(t.principals().len(), 8, "eight distinct parties");
+        assert_eq!(t.principals().len(), 9, "nine distinct parties");
     }
 
     // ---- the collateral source is a party, not a constant ------------------

@@ -146,7 +146,17 @@ fn family(a: &Assumption) -> Option<&'static str> {
         // `golden_value_correctness`: nothing was configured, so nothing was
         // compared. (The third variant, a measurement matching no configured
         // value, is a `Refutation` and never reaches a trust set at all.)
-        "workload_identity_was_never_compared" => Some("reference_value"),
+        //
+        // `workload_measurement_was_never_compared` is the same hole on the
+        // RTMR3 axis rather than the MRTD one — `cfg` below never configures
+        // `rtmr3_reference_values`, so every derived set here carries it, and
+        // it belongs in the same family: neither the written description nor
+        // the calculus this file cross-checks against has any vocabulary for
+        // RTMR3 yet, so this is exactly the kind of thing a live quote
+        // legitimately establishes that a description cannot state.
+        "workload_identity_was_never_compared" | "workload_measurement_was_never_compared" => {
+            Some("reference_value")
+        }
 
         _ => None,
     }
@@ -230,6 +240,11 @@ fn degraded(platform: TcbStatus, qe: TcbStatus, advisories: &[&str]) -> Verifica
 fn cfg() -> DeriveConfig {
     DeriveConfig {
         reference_values: vec![MR_TD],
+        // Left empty: RTMR3 has no counterpart in `examples/verified-tdx.toml`
+        // or in `mechanism.rs`'s calculus, so every outcome here reports the
+        // "never compared" hole on that axis, classified above under the
+        // `reference_value` family alongside the MRTD one.
+        rtmr3_reference_values: Vec::new(),
         verifier_id: "urn:parallax:dcap-qvl:0.6.1".into(),
         cache_ttl: Latency::Bounded(43_200),
         // Intel's own service, because the described deployment

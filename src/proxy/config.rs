@@ -48,10 +48,16 @@ pub enum ConfigError {
         source: crate::latency::LatencyError,
     },
     #[error(
-        "reference value #{index} is not a 48-byte MRTD in lowercase hex \
-         ({reason}); an MRTD is 96 hex characters"
+        "reference value #{index} is not a 48-byte {field} in lowercase hex \
+         ({reason}); an {field} is 96 hex characters"
     )]
-    ReferenceValue { index: usize, reason: String },
+    ReferenceValue {
+        /// "MRTD" or "RTMR3", named in the message so `[reference_values].mrtd`
+        /// and `[reference_values].rtmr3` do not share one ambiguous error.
+        field: &'static str,
+        index: usize,
+        reason: String,
+    },
     #[error(
         "`max_connections = 0` accepts nothing and is refused rather than \
          guessed at: it reads equally well as `no limit` and as `serve no \
@@ -208,6 +214,15 @@ struct CollateralTable {
 struct ReferenceValuesTable {
     #[serde(default)]
     mrtd: Vec<String>,
+    /// Accepted RTMR3 values, in the same 96-character lowercase hex as
+    /// `mrtd`. See [`DeriveConfig::rtmr3_reference_values`] for what this
+    /// axis is and why it is independent of `mrtd`: MRTD names the firmware,
+    /// RTMR3 names the workload the firmware measured in turn, and only the
+    /// second one can tell one deployed image from another.
+    ///
+    /// [`DeriveConfig::rtmr3_reference_values`]: crate::DeriveConfig::rtmr3_reference_values
+    #[serde(default)]
+    rtmr3: Vec<String>,
     /// Refuse rather than warn when `mrtd` is empty. Default `false`, which is
     /// the behaviour the shipped example documents: allow, and warn that this
     /// attests some code ran in a genuine trust domain rather than yours.
@@ -304,6 +319,11 @@ impl ProxyConfig {
             reference_values.push(parse_mrtd(hex, index)?);
         }
 
+        let mut rtmr3_reference_values = Vec::with_capacity(file.reference_values.rtmr3.len());
+        for (index, hex) in file.reference_values.rtmr3.iter().enumerate() {
+            rtmr3_reference_values.push(parse_rtmr3(hex, index)?);
+        }
+
         // Zero is refused rather than silently meaning "no limit" or "accept
         // nothing": both readings are defensible, so neither is guessed at.
         let max_connections = match file.max_connections {
@@ -325,6 +345,7 @@ impl ProxyConfig {
         let gate = GateConfig {
             derive: DeriveConfig {
                 reference_values,
+                rtmr3_reference_values,
                 verifier_id: verifier_id(),
                 // The cache TTL *is* how often this proxy refreshes, so the
                 // assumption the trust set reports is the staleness bound this
@@ -365,9 +386,25 @@ impl ProxyConfig {
     }
 }
 
-/// 96 lowercase hex characters into 48 bytes.
-fn parse_mrtd(hex: &str, index: usize) -> Result<[u8; 48], ConfigError> {
-    let bad = |reason: String| ConfigError::ReferenceValue { index, reason };
+/// 96 lowercase-or-uppercase hex characters into 48 bytes. Shared by
+/// [`parse_mrtd`] and [`parse_rtmr3`], which are the same arithmetic over two
+/// different config fields; `field` ("MRTD" or "RTMR3") only changes which
+/// word ends up in the error.
+///
+/// **Each pair is checked with `is_ascii_hexdigit` before it is parsed.**
+/// `u8::from_str_radix` alone is not strict enough: it accepts a leading `+`
+/// on an unsigned integer, so `"+0"` parses to `0` and `"+f"` parses to `15`
+/// exactly as `"00"` and `"0f"` would. Left unchecked, a reference value with
+/// a typo silently becomes a *different, valid* reference value instead of
+/// being refused — the identical defect `src/attest/serve.rs`'s
+/// `parse_image_digest` was fixed for, and this mirrors that fix rather than
+/// leaving the two parsers at different strictness.
+fn parse_hex48(hex: &str, index: usize, field: &'static str) -> Result<[u8; 48], ConfigError> {
+    let bad = |reason: String| ConfigError::ReferenceValue {
+        field,
+        index,
+        reason,
+    };
     if hex.len() != 96 {
         return Err(bad(format!("it is {} characters, not 96", hex.len())));
     }
@@ -379,10 +416,23 @@ fn parse_mrtd(hex: &str, index: usize) -> Result<[u8; 48], ConfigError> {
         let pair = hex
             .get(i * 2..i * 2 + 2)
             .ok_or_else(|| bad("it is not ASCII hex".to_string()))?;
+        if !pair.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(bad(format!("`{pair}` at character {} is not hex", i * 2)));
+        }
         *byte = u8::from_str_radix(pair, 16)
             .map_err(|e| bad(format!("`{pair}` at character {} is not hex: {e}", i * 2)))?;
     }
     Ok(out)
+}
+
+/// 96 lowercase hex characters into 48 bytes: an MRTD reference value.
+fn parse_mrtd(hex: &str, index: usize) -> Result<[u8; 48], ConfigError> {
+    parse_hex48(hex, index, "MRTD")
+}
+
+/// 96 lowercase hex characters into 48 bytes: an RTMR3 reference value.
+fn parse_rtmr3(hex: &str, index: usize) -> Result<[u8; 48], ConfigError> {
+    parse_hex48(hex, index, "RTMR3")
 }
 
 #[cfg(test)]
@@ -402,6 +452,10 @@ mod tests {
         assert_eq!(cfg.cache_ttl, Latency::Bounded(43_200));
         assert!(
             cfg.gate.derive.reference_values.is_empty(),
+            "the example ships with none on purpose"
+        );
+        assert!(
+            cfg.gate.derive.rtmr3_reference_values.is_empty(),
             "the example ships with none on purpose"
         );
         assert!(!cfg.gate.require_reference_values);
@@ -521,6 +575,105 @@ requrie = true
             let e = parse_mrtd(bad, 3).expect_err("not an MRTD");
             assert!(e.to_string().contains("reference value #3"), "{e}");
         }
+    }
+
+    /// The RTMR3 parser accepts the same shape MRTD does, and refuses the
+    /// same malformed shapes, with the same error naming the field.
+    #[test]
+    fn an_rtmr3_is_96_hex_characters() {
+        let good = "cd".repeat(48);
+        assert_eq!(parse_rtmr3(&good, 0).expect("96 characters"), [0xCD; 48]);
+
+        for bad in [
+            "",
+            "cd",
+            &"cd".repeat(47),
+            &"zz".repeat(48),
+            &"é".repeat(48),
+        ] {
+            let e = parse_rtmr3(bad, 4).expect_err("not an RTMR3");
+            assert!(e.to_string().contains("reference value #4"), "{e}");
+            assert!(e.to_string().contains("RTMR3"), "{e}");
+        }
+    }
+
+    /// CRITICAL regression, for MRTD. `u8::from_str_radix(_, 16)` alone
+    /// accepts a leading `+`, so `"+0"` parses to the same byte as `"00"` and
+    /// a reference value with a typo can silently become a *different, valid*
+    /// one instead of being refused — the identical defect fixed for
+    /// `sha256:` digests in `src/attest/serve.rs`'s `parse_image_digest`.
+    /// `parse_mrtd` shares `parse_hex48` with `parse_rtmr3` and must not
+    /// regain this gap.
+    #[test]
+    fn a_leading_plus_is_refused_rather_than_read_as_zero() {
+        // 96 characters: "+0" repeated 48 times, which the unguarded
+        // `from_str_radix` used to parse to 48 zero bytes.
+        let text = "+0".repeat(48);
+        assert_eq!(
+            text.len(),
+            96,
+            "the test string itself must be 96 characters"
+        );
+        let e = parse_mrtd(&text, 5).expect_err("a leading + must be refused, not read as zero");
+        assert!(e.to_string().contains("reference value #5"), "{e}");
+        assert!(e.to_string().contains("not hex"), "{e}");
+    }
+
+    /// The same bug, and the same fix, on the RTMR3 side.
+    #[test]
+    fn a_leading_plus_is_refused_on_rtmr3_too() {
+        let text = "+f".repeat(48);
+        let e = parse_rtmr3(&text, 0).expect_err("a leading + must be refused, not read as 0x0f");
+        assert!(e.to_string().contains("not hex"), "{e}");
+        assert!(e.to_string().contains("RTMR3"), "{e}");
+    }
+
+    /// `[reference_values].rtmr3` loads into the config the gate actually
+    /// enforces.
+    #[test]
+    fn rtmr3_reference_values_load() {
+        let dir = tempdir();
+        let policy = dir.join("policy.toml");
+        std::fs::write(&policy, "forbid_undetectable = false\n").expect("write");
+        let cfg = dir.join("proxy.toml");
+        let rtmr3 = "cd".repeat(48);
+        std::fs::write(
+            &cfg,
+            format!(
+                "upstream = \"https://a:1\"\nlisten = \"127.0.0.1:0\"\npolicy = \"{}\"\n\
+                 [collateral]\nsource = \"https://pccs\"\ncache_ttl = \"12h\"\n\
+                 [reference_values]\nrtmr3 = [\"{rtmr3}\"]\n",
+                policy.display()
+            ),
+        )
+        .expect("write");
+        let loaded = ProxyConfig::load(&cfg).expect("loadable");
+        assert_eq!(loaded.gate.derive.rtmr3_reference_values, vec![[0xCD; 48]]);
+        // The MRTD axis is unaffected by configuring the RTMR3 one.
+        assert!(loaded.gate.derive.reference_values.is_empty());
+    }
+
+    /// A malformed `rtmr3` entry is refused with the same error shape
+    /// `parse_mrtd` produces for `mrtd`, naming the RTMR3 field and the index.
+    #[test]
+    fn a_malformed_rtmr3_reference_value_is_refused_at_load() {
+        let dir = tempdir();
+        let policy = dir.join("policy.toml");
+        std::fs::write(&policy, "forbid_undetectable = false\n").expect("write");
+        let cfg = dir.join("proxy.toml");
+        std::fs::write(
+            &cfg,
+            format!(
+                "upstream = \"https://a:1\"\nlisten = \"127.0.0.1:0\"\npolicy = \"{}\"\n\
+                 [collateral]\nsource = \"https://pccs\"\ncache_ttl = \"12h\"\n\
+                 [reference_values]\nrtmr3 = [\"not-hex\"]\n",
+                policy.display()
+            ),
+        )
+        .expect("write");
+        let e = ProxyConfig::load(&cfg).expect_err("not 96 hex characters");
+        assert!(e.to_string().contains("reference value #0"), "{e}");
+        assert!(e.to_string().contains("RTMR3"), "{e}");
     }
 
     #[test]

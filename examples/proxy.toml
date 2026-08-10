@@ -35,6 +35,33 @@ cache_ttl = "12h"
 # this attests some code ran in a genuine trust domain, not that it is yours.
 mrtd = []
 
+# RTMR3, the register `parallax-attest` extends with a workload's own
+# measurement (see `ratls::expected_rtmr3`), is a second, independent axis from
+# `mrtd` above. MRTD names the platform firmware, which is the same across
+# every workload that runs on it; RTMR3 is what tells one deployed image from
+# another. Absent here for the same reason `mrtd` is: with nothing configured
+# the proxy allows but records that the workload's identity, specifically, was
+# never compared to anything.
+#
+# To compute a value for a real deployment: take the workload's own digest
+# `d` (a container image's SHA-256, or whatever `parallax-attest`'s config
+# names) and write
+# `hex(ratls::expected_rtmr3(&ratls::workload_measurement(d)))` — the same
+# arithmetic the sidecar itself performs starting from a freshly booted VM,
+# where RTMR3 is 48 zero bytes. Not invented here: this repository's only
+# worked example of that arithmetic is
+# `tests/fixtures/gcp-c3-rtmr/quote-after.bin`, a real GCP capture after
+# extending `d = "parallax-attest-spike-v1"`. Its reported RTMR3,
+# `73f94f274f5bcfccde03b398fbfd063f2687a0568b0ef760c4db4c4f35a29eae8c6a27a10f6ebc73f61c29afaf5c90c3`,
+# is exactly `ratls::expected_rtmr3(&ratls::workload_measurement(d))` for that
+# `d` — pinned by `the_rtmr3_config_path_agrees_with_the_attesters_arithmetic`
+# in `src/derive.rs` — but it measures a spike's test string, not
+# `svc.internal`'s actual image, so it is left commented out here rather than
+# shipped as a value an operator might mistake for their own deployment's.
+#
+# rtmr3 = ["73f94f274f5bcfccde03b398fbfd063f2687a0568b0ef760c4db4c4f35a29eae8c6a27a10f6ebc73f61c29afaf5c90c3"]
+rtmr3 = []
+
 # This configuration exits 1 at startup, and that is the demonstration.
 #
 # `examples/policy-strict.toml` sets `forbid_undetectable = true`. No TDX

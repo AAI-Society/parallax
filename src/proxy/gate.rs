@@ -415,13 +415,34 @@ fn warnings(outcome: &VerificationOutcome, cfg: &GateConfig) -> Vec<String> {
     out
 }
 
+/// The refusal text for a refuted measurement, on whichever axis refused it.
+///
+/// The two variants are worded differently on purpose, not merely with a
+/// different noun substituted in: an operator reading `Measurement`'s text
+/// should conclude "this is not my trust domain, or I never configured a
+/// check", and an operator reading `Rtmr3`'s text should conclude "this is my
+/// trust domain, running an image I did not declare". Collapsing them into
+/// one templated sentence would lose that distinction, which is the entire
+/// reason RTMR3 checking exists — see the module doc on `Refutation::Rtmr3`.
 fn refutation_reason(r: &Refutation) -> String {
-    format!(
-        "the attested measurement was compared to this proxy's reference values and \
-         matched none of them: {r}. The attested MRTD is {}. A refuted measurement is a \
-         verification failure, not a weaker trust set.",
-        hex_lower(&r.mr_td())
-    )
+    match r {
+        Refutation::Measurement { .. } => format!(
+            "the attested measurement was compared to this proxy's reference values and \
+             matched none of them: {r}. The attested MRTD is {}. A refuted measurement is a \
+             verification failure, not a weaker trust set.",
+            hex_lower(&r.mr_td())
+        ),
+        Refutation::Rtmr3 { rtmr3, .. } => format!(
+            "the attested RTMR3 was compared to this proxy's rtmr3 reference values and \
+             matched none of them: {r}. The attested RTMR3 is {}, attested by the same quote \
+             whose MRTD is {} — this proves the trust domain but not that the declared \
+             workload is what is running inside it. You deployed an image that was not \
+             declared. A refuted measurement is a verification failure, not a weaker trust \
+             set.",
+            hex_lower(rtmr3),
+            hex_lower(&r.mr_td())
+        ),
+    }
 }
 
 /// The principal a violation is about. Every variant names one.
@@ -487,7 +508,13 @@ fn policy_reason(violations: &[Violation], m: &Manifest) -> String {
 /// collateral window of zero width so the PCS bound is the operator's declared
 /// refresh interval and nothing wider. The measurement is the first configured
 /// reference value, so the reference-values axis matches the configuration
-/// rather than being a fourth thing that could differ.
+/// rather than being a fourth thing that could differ. `rt_mrs[3]` is set the
+/// same way from the first configured RTMR3 reference value, for the same
+/// reason and guarding the same failure: leaving it at the zero default while
+/// `rtmr3_reference_values` is configured would make even the best-case
+/// outcome fail the RTMR3 comparison, and
+/// `the_floor_accounts_for_a_configured_rtmr3_reference_value` below pins that
+/// this does not happen.
 ///
 /// **What this is for.** Every assumption in the trust set derived from this
 /// outcome appears in the trust set derived from *any* outcome this
@@ -512,7 +539,20 @@ pub fn most_favourable_outcome(cfg: &GateConfig) -> VerificationOutcome {
             .first()
             .copied()
             .unwrap_or([0u8; 48]),
-        rt_mrs: [[0u8; 48]; 4],
+        rt_mrs: {
+            let mut r = [[0u8; 48]; 4];
+            // Only slot 3 (RTMR3) is ever compared to anything — see
+            // `derive::rtmr3_check` — so it is the only slot that needs to
+            // track a configured reference value here; RTMR0-RTMR2 stay at
+            // the zero default `derive` never reads.
+            r[3] = cfg
+                .derive
+                .rtmr3_reference_values
+                .first()
+                .copied()
+                .unwrap_or([0u8; 48]);
+            r
+        },
         report_data: [0u8; 64],
         attested_len: 0,
         dynamic_platform: PckCertFlag::False,
@@ -608,6 +648,11 @@ mod tests {
         GateConfig {
             derive: DeriveConfig {
                 reference_values,
+                // Empty by default: most tests here exercise the MRTD axis
+                // and get the RTMR3 "never compared" hole along for free, the
+                // same way an empty `mrtd` list would. Tests exercising RTMR3
+                // set this directly.
+                rtmr3_reference_values: Vec::new(),
                 verifier_id: verifier_id(),
                 cache_ttl: Latency::Bounded(43_200),
                 collateral_source: crate::collateral::INTEL_PCS_URL.to_string(),
@@ -1102,8 +1147,17 @@ mod tests {
     ///   zero-width window, so its bound is `collateral_refresh` exactly and
     ///   any other window can only raise it. The floor property wants the real
     ///   latency to be no *smaller*, so widening is the safe direction.
-    /// * `attested_len`, `rt_mrs` and `tcb_eval_data_number` are not read by
-    ///   `derive` at all — its doc comment lists them as deliberate omissions.
+    /// * `attested_len` and `tcb_eval_data_number` are not read by `derive` at
+    ///   all — its doc comment lists them as deliberate omissions.
+    ///   `rt_mrs[0]`, `rt_mrs[1]` and `rt_mrs[2]` are not read either. `rt_mrs[3]`
+    ///   (RTMR3) now *is* read, by `rtmr3_check`, and this sweep is still safe:
+    ///   `cfg` here is `gate(vec![REFVAL])`, which leaves
+    ///   `rtmr3_reference_values` empty, and `check_measurement` returns
+    ///   `NotConfigured` on an empty list without ever inspecting the attested
+    ///   value — see `derive.rs`. A sweep that configured an RTMR3 reference
+    ///   value would need `rt_mrs[3]` held at that value rather than varied
+    ///   freely; `the_floor_accounts_for_a_configured_rtmr3_reference_value`
+    ///   below covers that configuration instead of folding it in here.
     /// * `report_data` is not read by `derive` either; it is `check_binding`'s
     ///   input, one stage earlier.
     #[test]
@@ -1144,6 +1198,63 @@ mod tests {
                 assert!(a.latency >= b.latency, "{} / {}", b.principal, b.capability);
             }
         }
+    }
+
+    /// `most_favourable_outcome` must set `rt_mrs[3]` from the first
+    /// configured RTMR3 reference value, exactly as it already does for
+    /// `mr_td`.
+    ///
+    /// This is the regression the brief this task came from was written to
+    /// guard against: `most_favourable_outcome` used to hardcode
+    /// `rt_mrs: [[0u8; 48]; 4]` unconditionally. Once RTMR3 is enforced, a
+    /// configuration with `rtmr3_reference_values` set would then have its
+    /// own best-case outcome fail the RTMR3 comparison —
+    /// `startup_check` would conclude *no* connection this proxy could ever
+    /// receive would be forwarded, and `parallax-proxy` would exit 1 instead
+    /// of binding a listener, against a config an operator has every reason
+    /// to believe is correct. That failure mode is the one most likely to be
+    /// discovered on real hardware in Task 6 rather than here, which is why
+    /// it is pinned directly rather than left to the general floor sweep.
+    #[test]
+    fn the_floor_accounts_for_a_configured_rtmr3_reference_value() {
+        const RTMR3_REFVAL: [u8; 48] = [0x42; 48];
+        let mut cfg = gate(vec![REFVAL]);
+        cfg.derive.rtmr3_reference_values = vec![RTMR3_REFVAL];
+
+        let floor = most_favourable_outcome(&cfg);
+        assert_eq!(
+            floor.rt_mrs[3], RTMR3_REFVAL,
+            "the floor's RTMR3 must track the configured reference value"
+        );
+
+        // And the practical consequence: a permissive policy still admits the
+        // best case rather than the proxy refusing to start.
+        let d = startup_check(&cfg, &permissive()).expect("evaluable");
+        assert!(d.is_allow(), "{:?}", d.reason());
+    }
+
+    /// The failure mode itself, demonstrated directly: had `rt_mrs[3]` stayed
+    /// at its old hardcoded zero while an RTMR3 reference value was
+    /// configured, the best-case outcome would be refused on the RTMR3 axis
+    /// and every permissive policy would fail its startup check.
+    ///
+    /// Built by hand rather than by reverting the fix, so this stays a
+    /// regression test rather than a copy of the source it guards.
+    #[test]
+    fn a_zeroed_rt_mrs_would_have_failed_the_startup_check_under_a_configured_rtmr3() {
+        let mut cfg = gate(vec![REFVAL]);
+        cfg.derive.rtmr3_reference_values = vec![[0x42; 48]];
+
+        let mut broken_floor = most_favourable_outcome(&cfg);
+        broken_floor.rt_mrs = [[0u8; 48]; 4];
+
+        let d = decide(&broken_floor, &cfg, &permissive()).expect("evaluable");
+        assert!(
+            !d.is_allow(),
+            "a zeroed rt_mrs must be refused when rtmr3 is configured, or this test is not \
+             exercising the bug"
+        );
+        assert!(refused(&d).contains("RTMR3"), "{:?}", d.reason());
     }
 
     /// `examples/policy-strict.toml` cannot admit any TDX attestation.
