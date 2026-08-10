@@ -120,8 +120,19 @@ fetch-collateral = [
 # The tokio sub-features are listed again for the same reason: the sidecar
 # terminates TLS and forwards plaintext, so it needs `net`, `io-util` and
 # `sync` exactly as the proxy does, and `signal` for the Ctrl-C that makes exit
-# 0 mean a clean shutdown. It does *not* take `tokio/time`: nothing on this
-# side has a deadline to enforce, because there is no refusal path to drain.
+# 0 mean a clean shutdown. It does *not* take `tokio/time` -- not because
+# there is nothing here a deadline could bound, but because nothing here
+# enforces one yet: `Sidecar::handle`'s incoming TLS handshake
+# (`src/attest/serve.rs`) has no timeout and holds a connection-limit permit
+# for as long as it runs, so a peer that completes the TCP handshake and then
+# never speaks TLS occupies a slot indefinitely. `examples/attest.toml` binds
+# a non-loopback address with no client authentication, so this is reachable
+# from the network the sidecar faces, not only in theory. `parallax-proxy`
+# has the same gap on its own accept path, and this feature block follows
+# that precedent rather than diverging from it; a fix, if one is added, needs
+# `tokio/time` in both places at once. Recorded here rather than only in a
+# code comment so a reader checking why `tokio/time` is absent finds the
+# reason and not just the omission.
 attest = [
     "dep:rcgen",
     "dep:tokio",

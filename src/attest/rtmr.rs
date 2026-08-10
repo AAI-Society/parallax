@@ -134,6 +134,29 @@ pub fn extend_rtmr3(digest: &[u8; RTMR_LEN]) -> Result<(), RtmrError> {
     extend_rtmr3_at(Path::new(MEASUREMENTS_DIR), Path::new(MARKER_PATH), digest)
 }
 
+/// Confirm the measurement-register interface exists and can be read,
+/// **without writing to it**.
+///
+/// This is what a dry run (`parallax-attest --check`) uses to report "RTMR3
+/// is reachable": it performs the same read [`extend_rtmr3_at`]'s primary
+/// guard performs, and stops there. Extension is a hash chain only a reboot
+/// resets, so a readiness check that extended as a side effect would consume
+/// the one extension a real deployment gets — this function exists so that
+/// checking readiness and mutating hardware state are two different calls,
+/// not two code paths through the same one.
+///
+/// Deliberately does not report whether RTMR3 is currently zero: that is
+/// [`extend_rtmr3_at`]'s guard to make, at the moment it is about to write,
+/// because the answer can change between this check and a real run.
+pub fn measurement_register_available() -> Result<(), RtmrError> {
+    measurement_register_available_at(Path::new(MEASUREMENTS_DIR))
+}
+
+/// [`measurement_register_available`], against a caller-supplied directory.
+pub fn measurement_register_available_at(base: &Path) -> Result<(), RtmrError> {
+    read_rtmr3(&base.join(RTMR3_ATTR)).map(|_| ())
+}
+
 /// [`extend_rtmr3`], against caller-supplied paths.
 ///
 /// `base` is the measurements directory and `marker` the restart record. Both
@@ -336,6 +359,27 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("rtmr3:sha384"), "got {msg}");
         assert!(msg.contains("docs/spike-rtmr-gcp.md"), "got {msg}");
+    }
+
+    #[test]
+    fn measurement_register_available_reports_unsupported_without_writing() {
+        let err = measurement_register_available_at(Path::new("/nonexistent/measurements"))
+            .expect_err("there is no register there");
+        assert!(matches!(err, RtmrError::Unsupported { .. }), "got {err}");
+    }
+
+    #[test]
+    fn measurement_register_available_succeeds_on_a_readable_register_and_leaves_it_alone() {
+        // Whether RTMR3 is currently zero is deliberately not this function's
+        // question -- it succeeds either way, and either way it must not have
+        // written anything.
+        let (dir, _marker) = fake_base("availability-check", [0xab; RTMR_LEN]);
+        measurement_register_available_at(&dir).expect("the fake register is readable");
+        assert_eq!(
+            std::fs::read(dir.join(RTMR3_ATTR)).expect("still there"),
+            vec![0xab; RTMR_LEN],
+            "a readiness check must not have written to the register"
+        );
     }
 
     #[test]

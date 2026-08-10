@@ -94,30 +94,48 @@ pub fn request_quote_at(
     base: &Path,
     report_data: &[u8; REPORT_DATA_LEN],
 ) -> Result<Vec<u8>, TsmError> {
-    // `metadata` rather than `is_dir`, which folds "absent" and "cannot be
-    // looked at" into the same `false` and would report a permission problem
-    // as a missing kernel interface.
-    match std::fs::metadata(base) {
-        Ok(m) if m.is_dir() => {}
-        Ok(_) => {
-            return Err(TsmError::Unavailable {
-                path: base.display().to_string(),
-                reason: "not a directory".to_string(),
-            })
-        }
-        Err(e) => {
-            return Err(TsmError::Unavailable {
-                path: base.display().to_string(),
-                reason: e.to_string(),
-            })
-        }
-    }
+    report_dir_available_at(base)?;
 
     let entry = ReportEntry::create(base)?;
     entry.write_inblob(report_data)?;
     let outblob = entry.read_outblob()?;
     // Copied out before `entry` is dropped and the report directory removed.
     Ok(parse_outblob(&outblob)?.to_vec())
+}
+
+/// Confirm the configfs-tsm report interface exists, without requesting a
+/// quote or creating a report directory.
+///
+/// This is what a dry run (`parallax-attest --check`) uses to report "quote
+/// generation is reachable" without the side effects [`request_quote`] has —
+/// it creates and removes nothing under [`TSM_REPORT_DIR`]. Unlike RTMR3
+/// extension, requesting a quote is not a hash chain and has no restart
+/// hazard, so this check exists for symmetry with
+/// [`crate::attest::rtmr::measurement_register_available`] and because a
+/// caller reporting readiness should not need to create a report directory
+/// just to prove one can be created.
+pub fn report_dir_available() -> Result<(), TsmError> {
+    report_dir_available_at(Path::new(TSM_REPORT_DIR))
+}
+
+/// [`report_dir_available`], against a caller-supplied directory.
+///
+/// `metadata` rather than `is_dir`, which folds "absent" and "cannot be
+/// looked at" into the same `false` and would report a permission problem
+/// as a missing kernel interface. [`request_quote_at`] uses this as its own
+/// first step, so the two cannot drift.
+pub fn report_dir_available_at(base: &Path) -> Result<(), TsmError> {
+    match std::fs::metadata(base) {
+        Ok(m) if m.is_dir() => Ok(()),
+        Ok(_) => Err(TsmError::Unavailable {
+            path: base.display().to_string(),
+            reason: "not a directory".to_string(),
+        }),
+        Err(e) => Err(TsmError::Unavailable {
+            path: base.display().to_string(),
+            reason: e.to_string(),
+        }),
+    }
 }
 
 /// A configfs-tsm report directory, removed when it goes out of scope.
@@ -269,6 +287,31 @@ mod tests {
             request_quote_at(std::path::Path::new("/nonexistent/tsm"), &[0u8; 64]),
             Err(TsmError::Unavailable { .. })
         ));
+    }
+
+    #[test]
+    fn report_dir_available_agrees_with_request_quote_ats_own_check_and_creates_nothing() {
+        let missing = report_dir_available_at(std::path::Path::new("/nonexistent/tsm"))
+            .expect_err("there is no report directory there");
+        assert!(
+            matches!(missing, TsmError::Unavailable { .. }),
+            "got {missing}"
+        );
+
+        // A real directory: the check succeeds, and — unlike `request_quote_at`
+        // — creates no `parallax-attest-<pid>-<n>` subdirectory inside it.
+        let dir = std::env::temp_dir().join(format!(
+            "parallax-tsm-report-dir-available-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch directory");
+        report_dir_available_at(&dir).expect("a real directory is available");
+        assert_eq!(
+            std::fs::read_dir(&dir).expect("readable").count(),
+            0,
+            "a readiness check must not have created a report directory"
+        );
     }
 
     #[test]

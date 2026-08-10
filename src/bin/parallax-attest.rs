@@ -17,10 +17,22 @@
 //! produce a certificate the verifying proxy's `check_binding` rejects —
 //! which is safe on its own — but starting at all in that state invites an
 //! operator to disable the check that makes it safe.
+//!
+//! `--check` runs [`parallax::attest::check`], **not**
+//! [`parallax::attest::prepare`]. RTMR3 is a hash chain a reboot is the only
+//! way to reset, so a dry run that called `prepare` would extend it as a side
+//! effect: `--check` would succeed, and the very next, real invocation would
+//! refuse with `RtmrError::AlreadyExtended` or `RtmrError::Restarted` until
+//! the VM is rebooted. `check` validates the configuration, resolves the
+//! workload, and confirms RTMR3 and the quoting interface are both reachable
+//! — without writing to either, and without requesting a quote — so it can be
+//! run as many times as an operator likes. It does **not** prove the next
+//! `prepare` will succeed end to end; see that function's own doc comment for
+//! what is and is not covered.
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use parallax::attest::{prepare, AttestConfig, Sidecar};
+use parallax::attest::{check, prepare, AttestConfig, Sidecar};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -34,7 +46,11 @@ use std::sync::Arc;
 struct Cli {
     /// The attester configuration file; see `examples/attest.toml`
     config: PathBuf,
-    /// Load the configuration, run the startup check, and exit without binding
+    /// Validate the configuration and confirm the TEE is reachable, then exit
+    /// without binding. Does NOT extend RTMR3 or request a quote — RTMR3 is a
+    /// hash chain only a reboot resets, so a dry run must not consume the
+    /// single extension a real run gets. Repeatable; does not prove the next
+    /// run without --check will succeed, only that both TEE interfaces exist.
     #[arg(long)]
     check: bool,
 }
@@ -63,19 +79,24 @@ fn run() -> Result<ExitCode> {
     let cfg = AttestConfig::load(&cli.config)
         .map_err(|e| anyhow!("loading {}: {e}", cli.config.display()))?;
 
+    if cli.check {
+        // `check`, not `prepare`: this must not extend RTMR3. See the module
+        // doc comment and `check`'s own for why a mutating dry run would
+        // brick the boot for the real run that follows it.
+        check(&cfg).map_err(|e| anyhow!("checking readiness: {e}"))?;
+        println!(
+            "OK — {} loads, the workload resolves, and RTMR3 and the quoting interface are \
+             both reachable (RTMR3 was not extended and no quote was requested)",
+            cli.config.display()
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+
     // Everything that must succeed before a listener binds: resolve the
     // workload, extend RTMR3, take a quote, mint the certificate. Fail
     // closed — an error anywhere in `prepare` exits without listening, and
     // nothing past this point can turn a failure here into a bound socket.
     let identity = prepare(&cfg).map_err(|e| anyhow!("preparing the RA-TLS identity: {e}"))?;
-
-    if cli.check {
-        println!(
-            "OK — {} loads, and an RA-TLS identity was minted",
-            cli.config.display()
-        );
-        return Ok(ExitCode::SUCCESS);
-    }
 
     let sidecar = Arc::new(
         Sidecar::new(&identity, cfg.listen, cfg.app)

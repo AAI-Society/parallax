@@ -39,7 +39,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::{
-    extend_rtmr3, mint_with_key, request_quote, MintError, MintedIdentity, RtmrError, TsmError,
+    extend_rtmr3, mint_with_key, request_quote, rtmr, tsm, MintError, MintedIdentity, RtmrError,
+    TsmError,
 };
 
 // ---------------------------------------------------------------------------
@@ -192,6 +193,17 @@ pub enum PrepareError {
     Tsm(#[source] TsmError),
     #[error("minting the RA-TLS certificate failed: {0}")]
     Mint(#[source] MintError),
+    /// [`check`]'s failure when RTMR3 cannot even be read. Distinct from
+    /// [`PrepareError::Rtmr`], which wraps a failure to *extend* — that
+    /// variant is unreachable from `check`, which never attempts a write.
+    #[error("RTMR3 is not reachable, so this workload could not be measured: {0}")]
+    RtmrUnreachable(#[source] RtmrError),
+    /// [`check`]'s failure when the configfs-tsm report directory is not
+    /// there. Distinct from [`PrepareError::Tsm`] for the same reason
+    /// [`PrepareError::RtmrUnreachable`] is distinct from
+    /// [`PrepareError::Rtmr`].
+    #[error("the TDX quoting interface is not reachable: {0}")]
+    TsmUnreachable(#[source] TsmError),
 }
 
 /// Everything that must succeed before the listener binds.
@@ -209,6 +221,16 @@ pub enum PrepareError {
 /// quote request: a quote taken before RTMR3 is extended attests to the
 /// register's pre-extension value, and the resulting certificate would carry
 /// evidence about a workload it does not actually name.
+///
+/// **This function extends RTMR3, which a reboot is the only way to undo.**
+/// [`check`] is the non-mutating counterpart — it validates and probes
+/// reachability without calling [`extend_rtmr3`] — and is what
+/// `parallax-attest --check` runs. Calling `prepare` itself as a dry run
+/// (Task 5's original design, corrected in review) consumes the one
+/// extension a real deployment gets: `--check` would succeed, and the
+/// production run immediately after would refuse with
+/// [`RtmrError::AlreadyExtended`]/[`RtmrError::Restarted`] until the VM is
+/// rebooted.
 pub fn prepare(cfg: &AttestConfig) -> Result<MintedIdentity, PrepareError> {
     let digest = digest_bytes(&cfg.workload)?;
     let measurement = crate::ratls::workload_measurement(&digest);
@@ -218,6 +240,33 @@ pub fn prepare(cfg: &AttestConfig) -> Result<MintedIdentity, PrepareError> {
     let report_data = crate::ratls::expected_report_data(&key.public_key_der());
     let quote = request_quote(&report_data).map_err(PrepareError::Tsm)?;
     mint_with_key(&quote, SUBJECT, key, report_data).map_err(PrepareError::Mint)
+}
+
+/// Validate `cfg`, resolve the workload, and confirm both TDX interfaces
+/// [`prepare`] needs are reachable — **without mutating anything**. This is
+/// what `parallax-attest --check` runs.
+///
+/// Order matches `prepare`'s own: the workload is resolved first, so a
+/// configuration that cannot even name a workload is refused before either
+/// hardware interface is touched.
+///
+/// # What this does and does not prove
+///
+/// It proves the configuration file parses, `[workload]` names exactly one
+/// of `image_digest`/`binary` and that value resolves to 32 bytes, RTMR3's
+/// sysfs attribute can be read, and configfs-tsm's report directory exists.
+/// It does **not** prove `extend_rtmr3` will succeed on the next real run —
+/// that function's primary guard depends on RTMR3's value at the moment it
+/// runs, which can change between this check and a later `prepare` call —
+/// and it does not prove a quote can be minted end to end, since it never
+/// requests one. A `check` that passes is "the two interfaces exist and this
+/// config could plausibly produce a quote," not "the next `prepare` will
+/// succeed."
+pub fn check(cfg: &AttestConfig) -> Result<(), PrepareError> {
+    digest_bytes(&cfg.workload)?;
+    rtmr::measurement_register_available().map_err(PrepareError::RtmrUnreachable)?;
+    tsm::report_dir_available().map_err(PrepareError::TsmUnreachable)?;
+    Ok(())
 }
 
 /// Resolve `workload` to the 32-byte digest that [`prepare`] passes to
@@ -255,6 +304,17 @@ fn digest_bytes(workload: &Workload) -> Result<[u8; 32], PrepareError> {
 /// never indexed, so a multi-byte UTF-8 character landing mid-pair is a
 /// refusal rather than a panic — the same discipline
 /// `crate::proxy::config::parse_mrtd` uses for the same reason.
+///
+/// **Each pair is checked with `is_ascii_hexdigit` before it is parsed.**
+/// `u8::from_str_radix` alone is not strict enough: it accepts a leading `+`
+/// on an unsigned integer, so `"+0"` parses to `0` and `"+f"` parses to `15`
+/// exactly as `"00"` and `"0f"` would. A code review caught the consequence:
+/// `sha256:` followed by `"+0"` repeated 32 times parsed to the same
+/// all-zero bytes as the shipped example's legitimate digest, and `"+f"`
+/// repeated 32 times parsed to `0f0f0f…` — a half-typed digest producing a
+/// *different, valid* measurement instead of being refused. The explicit
+/// character check closes that: only the sixteen ASCII hex digits pass, `+`,
+/// `-` and whitespace among them refused like any other non-hex byte.
 fn parse_image_digest(value: &str) -> Result<[u8; 32], PrepareError> {
     let bad = |reason: String| PrepareError::ImageDigest {
         value: value.to_string(),
@@ -274,6 +334,9 @@ fn parse_image_digest(value: &str) -> Result<[u8; 32], PrepareError> {
         let pair = hex
             .get(i * 2..i * 2 + 2)
             .ok_or_else(|| bad("is not ASCII hex".to_string()))?;
+        if !pair.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(bad(format!("`{pair}` at character {} is not hex", i * 2)));
+        }
         *byte = u8::from_str_radix(pair, 16)
             .map_err(|e| bad(format!("`{pair}` at character {} is not hex: {e}", i * 2)))?;
     }
@@ -430,6 +493,15 @@ impl Sidecar {
 
     /// One connection: complete the TLS handshake presenting the minted
     /// identity, dial the plaintext app, then forward bytes both ways.
+    ///
+    /// **No deadline on the TLS accept below.** A peer that completes the TCP
+    /// handshake and then never speaks TLS holds its `serve` permit
+    /// indefinitely, which — with `examples/attest.toml` binding a
+    /// non-loopback address and no client authentication — is reachable from
+    /// the network this sidecar faces. `Cargo.toml`'s `attest` feature block
+    /// records why `tokio/time` is not pulled in to fix this yet:
+    /// `parallax-proxy` has the same gap on its own accept path, and this
+    /// follows that precedent rather than diverging from it in this round.
     async fn handle(&self, client: TcpStream) {
         let mut tls = match self.acceptor.accept(client).await {
             Ok(stream) => stream,
@@ -620,6 +692,42 @@ mod tests {
         assert!(matches!(e, PrepareError::ImageDigest { .. }), "{e}");
     }
 
+    /// CRITICAL regression, per code review. `u8::from_str_radix(pair, 16)`
+    /// alone accepts a leading `+` for an unsigned integer: before the
+    /// explicit `is_ascii_hexdigit` check, `sha256:` followed by `"+0"`
+    /// repeated 32 times parsed to the same all-zero 32 bytes as the shipped
+    /// example's legitimate digest, and `"+f"` repeated 32 times parsed to
+    /// `0f0f0f…` — a malformed digest silently producing a *different, valid*
+    /// measurement rather than being refused, which is worse than a
+    /// truncation: the sidecar would attest to a workload nobody described.
+    /// `-` and whitespace are covered alongside `+` because `from_str_radix`
+    /// tolerates neither on their own, but the fix is one character check
+    /// covering all three rather than three special cases.
+    #[test]
+    fn a_digest_with_a_leading_sign_or_whitespace_is_refused_not_silently_reinterpreted() {
+        for bad in [
+            format!("sha256:{}", "+0".repeat(32)),
+            format!("sha256:{}", "+f".repeat(32)),
+            format!("sha256:{}", "-0".repeat(32)),
+            format!("sha256: {}", "0".repeat(63)),
+            format!("sha256:{} ", "0".repeat(63)),
+        ] {
+            let e = digest_bytes(&image_digest_workload(&bad)).expect_err("not hex");
+            assert!(
+                matches!(e, PrepareError::ImageDigest { .. }),
+                "{bad:?}: {e}"
+            );
+        }
+
+        // And the fix does not reject what it must still accept: the
+        // all-zero digest really is `00` repeated, not `+0`.
+        let zeros = image_digest_workload(&format!("sha256:{}", "00".repeat(32)));
+        assert_eq!(
+            digest_bytes(&zeros).expect("legitimate all-zero digest"),
+            [0u8; 32]
+        );
+    }
+
     #[test]
     fn an_uppercase_digest_and_its_lowercase_spelling_give_the_same_measurement() {
         let lower = image_digest_workload(&format!("sha256:{}", "ab".repeat(32)));
@@ -678,14 +786,31 @@ mod tests {
 
     /// `prepare` wires the pieces together in the documented order, and fails
     /// closed on a machine with no TDX guest interface — which is what every
-    /// CI environment and every developer's laptop is. This cannot reach a
+    /// CI environment and most developers' laptops are. This cannot reach a
     /// success path off real hardware; see `attest::rtmr` and `attest::tsm`'s
     /// own tests for why. What it pins is that a config whose workload *does*
     /// resolve reaches `extend_rtmr3` (and is refused there, not before) —
     /// i.e. that `prepare` really does attempt the whole chain rather than
     /// stopping early for an unrelated reason.
+    ///
+    /// **Laptop/CI only, by an explicit guard.** On a real TDX guest `prepare`
+    /// can *succeed* — and success extends RTMR3, the one extension a boot
+    /// gets. An earlier version of this test unconditionally asserted the
+    /// refusal, which would have both failed and consumed that extension the
+    /// first time `cargo test --features attest` ran on Task 6/7's C3.
+    /// Guarded rather than `#[ignore]`d, so it still runs — and still proves
+    /// something — everywhere except the one environment it would corrupt.
     #[test]
     fn prepare_reaches_the_hardware_dependent_step_and_fails_closed_without_it() {
+        if std::path::Path::new(rtmr::MEASUREMENTS_DIR).exists() {
+            eprintln!(
+                "skipping: {} exists on this machine; calling `prepare` here would \
+                 mutate real hardware state instead of demonstrating a laptop/CI refusal",
+                rtmr::MEASUREMENTS_DIR
+            );
+            return;
+        }
+
         let cfg = AttestConfig {
             listen: "127.0.0.1:0".parse().expect("addr"),
             app: "127.0.0.1:1".parse().expect("addr"),
@@ -696,6 +821,57 @@ mod tests {
         match prepare(&cfg) {
             Err(e) => assert!(matches!(e, PrepareError::Rtmr(_)), "got {e}"),
             Ok(_) => panic!("this machine has no TDX guest interface"),
+        }
+    }
+
+    // ---- check --------------------------------------------------------------
+
+    #[test]
+    fn check_refuses_a_bad_workload_before_touching_hardware() {
+        let cfg = AttestConfig {
+            listen: "127.0.0.1:0".parse().expect("addr"),
+            app: "127.0.0.1:1".parse().expect("addr"),
+            workload: Workload::default(),
+        };
+        assert!(matches!(check(&cfg), Err(PrepareError::NoWorkload)));
+    }
+
+    /// The property that matters: `check` never reaches [`extend_rtmr3`], the
+    /// mutating, once-per-boot step — pinned by the *shape* of the error it
+    /// returns rather than by inspecting hardware state directly, since a
+    /// test cannot see "nothing was written" any other way without a fake
+    /// `/sys`, and `check`'s real-path functions do not take one.
+    ///
+    /// On a machine with no TDX guest interface (every CI environment and
+    /// most developers' laptops), a `check` that stayed non-mutating fails
+    /// with `RtmrUnreachable` — a read that found nothing. A `check` that
+    /// regressed into calling the real, mutating `extend_rtmr3` would instead
+    /// surface as `PrepareError::Rtmr`, the variant `prepare`'s own mutating
+    /// path returns. A future refactor that quietly routed `check` through
+    /// `prepare`'s extension step would flip this assertion from
+    /// `RtmrUnreachable` to `Rtmr`, which is the point of asserting the exact
+    /// variant rather than just `is_err()`.
+    #[test]
+    fn check_validates_and_confirms_reachability_without_extending_rtmr3() {
+        if std::path::Path::new(rtmr::MEASUREMENTS_DIR).exists() {
+            eprintln!(
+                "skipping: {} exists on this machine; the predicted failure mode below \
+                 assumes it does not",
+                rtmr::MEASUREMENTS_DIR
+            );
+            return;
+        }
+
+        let cfg = AttestConfig {
+            listen: "127.0.0.1:0".parse().expect("addr"),
+            app: "127.0.0.1:1".parse().expect("addr"),
+            workload: image_digest_workload(&format!("sha256:{}", "ab".repeat(32))),
+        };
+        match check(&cfg) {
+            Err(PrepareError::RtmrUnreachable(_)) => {}
+            other => panic!(
+                "expected RtmrUnreachable on a machine with no TDX guest interface, got {other:?}"
+            ),
         }
     }
 
