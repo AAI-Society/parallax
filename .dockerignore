@@ -1,0 +1,9 @@
+# The build context for `deploy/gcp/Dockerfile` is the repository root — see
+# `deploy/gcp/docker-compose.yml`'s `context: ../..` — because the sidecar is
+# compiled from this crate's source rather than pulled from a registry.
+# Without this file the context is whatever the working tree happens to hold;
+# `target/` alone runs to several GB, and every `docker build` uploads the
+# whole context to the daemon before the first instruction runs.
+target/
+.git/
+captures/

@@ -1,0 +1,99 @@
+# A real `parallax-proxy` configuration for `deploy/gcp`'s demo stack, pointed
+# at the actual GCP `c3-standard-4` instance Task 6 provisioned and measured
+# — not a template with a placeholder address. Every value below either names
+# that deployment directly or was derived and then checked against what it
+# reported; where the two could disagree, that is said, not hidden.
+#
+# Run from this machine (not the confidential VM):
+#
+#   cargo run --features fetch-collateral --bin parallax-proxy -- examples/gcp-c3.toml
+#   curl -k https://localhost:8080/
+#
+# The instance's external IP, from:
+#   gcloud compute instances describe parallax-demo --zone=us-central1-a \
+#     --project=example-project --format='value(networkInterfaces[0].accessConfigs[0].natIP)'
+upstream = "https://203.0.113.10:8443"
+
+# Loopback, matching every example in this repository — see
+# examples/proxy.toml's comment on why that is not optional: this proxy
+# performs no client authentication, so whoever can reach `listen` gets the
+# attested upstream's traffic.
+listen = "127.0.0.1:8080"
+
+# The permissive policy, not `policy-strict.toml`. `policy-strict.toml` sets
+# `forbid_undetectable = true`, which refuses every TDX attestation outright
+# (see that file's own test, `the_shipped_example_fails_its_startup_check`) —
+# it would never reach the point of comparing a measurement to anything, and
+# this file exists to demonstrate exactly that comparison.
+policy = "examples/policy-proxy.toml"
+
+[collateral]
+# Same public collateral source `examples/proxy.toml` and this repository's
+# README use.
+source    = "https://api.trustedservices.intel.com/tdx/certification/v4"
+cache_ttl = "12h"
+
+[reference_values]
+# MRTD — measures firmware, bootloader, kernel and initrd, so it is the same
+# for every workload on this platform and cannot by itself distinguish one
+# deployed image from another (that is what rtmr3 below is for).
+#
+# NOT derived offline: MRTD is GCP's firmware measurement, not something this
+# deployment chooses, so it has to be read out of a real quote rather than
+# computed. Read from `parallax-demo` by `deploy/gcp/up.sh`, which takes a
+# quote via configfs-tsm (report_data = 64 zero bytes; taking a quote has no
+# once-per-boot hazard, unlike extending RTMR3) and slices the TD report body
+# at absolute offset 184 — see docs/spike-rtmr-gcp.md for why 184, not the
+# plan's original 136, and why it is body-relative vs. quote-absolute that
+# most easily goes wrong. Command, in full, run on the guest:
+#
+#   tsm=/sys/kernel/config/tsm/report/probe-$$; sudo mkdir "$tsm"
+#   sudo dd if=/dev/zero of="$tsm/inblob" bs=64 count=1 status=none
+#   sudo cat "$tsm/outblob" > /tmp/quote.bin; sudo rmdir "$tsm"
+#   xxd -p -s 184 -l 48 /tmp/quote.bin | tr -d '\n'
+#
+# Result, byte-identical to Task 1's spike (`tests/fixtures/gcp-c3-rtmr/`,
+# captured on a different instance, a different day):
+mrtd = ["c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5"]
+
+# RTMR3 — what `parallax-attest` extends with a measurement of the workload
+# it fronts, so unlike mrtd this axis is what tells one deployed image from
+# another. Task 7's "deploy a different image, watch the proxy refuse it"
+# demonstration is this list not containing the other image's value.
+#
+# Derived OFFLINE, before reading anything off the deployment — this is the
+# property `ratls::expected_rtmr3` exists for: a reference value computable
+# without hardware, from the workload's own image digest alone. The digest of
+# `deploy/gcp/app`'s built image on parallax-demo:
+#
+#   docker image inspect -f '{{.Id}}' parallax-demo-app
+#   -> sha256:b6da2c4f8e751039cbe5f116eec3227f729da5e29b8436f545f81105c8515416
+#
+# and the arithmetic (`src/ratls.rs`), run offline against the 32 raw digest
+# bytes, no VM involved:
+#
+#   ratls::expected_rtmr3(&ratls::workload_measurement(&digest_bytes))
+#
+# which in the shell `deploy/gcp/up.sh` actually runs is:
+#
+#   measurement=$(printf '%s' "$digest_hex" | xxd -r -p | sha384sum | cut -d' ' -f1)
+#   expected=$({ head -c 48 /dev/zero; printf '%s' "$measurement" | xxd -r -p; } \
+#              | sha384sum | cut -d' ' -f1)
+#
+# Checked against the running deployment three ways, and all three agreed —
+# `deploy/gcp/up.sh`'s own output on parallax-demo:
+#
+#   RTMR3 (derived)      1d2860c8d9bca4ac3d2acbeb38bdb832c52e4b783e9b644f3bb73f8ca199988615042dadfcc92556ac222835504a3325
+#   RTMR3 (sysfs)        1d2860c8d9bca4ac3d2acbeb38bdb832c52e4b783e9b644f3bb73f8ca199988615042dadfcc92556ac222835504a3325
+#   RTMR3 (in the quote) 1d2860c8d9bca4ac3d2acbeb38bdb832c52e4b783e9b644f3bb73f8ca199988615042dadfcc92556ac222835504a3325
+#
+# No mismatch to report here — the prediction and the hardware agreed on the
+# first real run. See task-6-report.md for the full transcript.
+rtmr3 = ["1d2860c8d9bca4ac3d2acbeb38bdb832c52e4b783e9b644f3bb73f8ca199988615042dadfcc92556ac222835504a3325"]
+
+# Left at the documented default (warn, not refuse, on an empty list) rather
+# than set to `true`: both lists above are populated for this deployment, so
+# the flag has no effect on it either way, and there is no `require_rtmr3`
+# mirror of this flag yet (see progress.md's Task 5.5 entry) for it to pair
+# with.
+require = false

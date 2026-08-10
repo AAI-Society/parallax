@@ -1,0 +1,122 @@
+# The demo stack: an unmodified application, and `parallax-attest` in front of
+# it. Bring it up with `deploy/gcp/up.sh`, which renders `attest.toml` from the
+# app image's digest first — the digest is what gets measured into RTMR3, so
+# it cannot be written down before the image is built.
+#
+# Run from this directory, on the confidential VM:
+#
+#   ./up.sh --check   # build, render, probe both TEE interfaces, extend nothing
+#   ./up.sh           # the above, then extend RTMR3 (once per boot) and serve
+name: parallax-demo
+
+services:
+  # The workload. Knows nothing about attestation, has no attestation
+  # dependency, and would run identically outside a TEE. That is the property
+  # the sidecar exists to add without touching this container.
+  app:
+    build: ./app
+    image: parallax-demo-app
+    container_name: parallax-demo-app
+    restart: unless-stopped
+    # Published here rather than on `attest`: `attest` shares this container's
+    # network namespace (see `network_mode` below), and a container that joins
+    # another one's namespace cannot publish ports of its own. The port
+    # belongs to the sidecar's listener; the app itself binds 127.0.0.1:3000
+    # and is not reachable from outside the namespace at all.
+    ports:
+      - "8443:8443"
+
+  attest:
+    build:
+      # The repository root: the sidecar is compiled from this crate's
+      # source, not pulled from a registry.
+      context: ../..
+      dockerfile: deploy/gcp/Dockerfile
+    image: parallax-demo-attest
+    container_name: parallax-demo-attest
+    depends_on:
+      - app
+
+    # One network namespace with `app`, which is what makes `app =
+    # "127.0.0.1:3000"` in the rendered `attest.toml` literally true. Not a
+    # convenience: `AttestConfig` parses `app` as a `SocketAddr`, so a Compose
+    # service name is not expressible there, and the plaintext hop between
+    # sidecar and workload must not cross a bridge network where anything else
+    # on the host could observe it.
+    network_mode: "service:app"
+
+    # NOT `unless-stopped`. RTMR3 is a hash chain a reboot is the only way to
+    # reset, and `extend_rtmr3` refuses a second extension in the same boot
+    # (`src/attest/rtmr.rs::RtmrError::AlreadyExtended`). A restart policy
+    # would turn the first stop — a crash, an OOM kill, an operator's `docker
+    # compose restart` — into an endless loop of that refusal instead of a
+    # working sidecar, on a VM where the only fix is a reboot.
+    restart: "no"
+
+    # -------------------------------------------------------------------
+    # TEE access — MEASURED on this deployment (parallax-demo,
+    # us-central1-a), not inferred from Task 1's spike, which explicitly did
+    # not test a container: `docs/spike-rtmr-gcp.md` says "Nothing about
+    # containers ... The /sys bind-mount constraint above is inferred ...
+    # Task 6 must verify it." Full commands and output are in
+    # `task-6-report.md`; the summary that explains every line below:
+    #
+    #   1. Mounting only the `tsm` subdirectory
+    #      (`/sys/kernel/config/tsm:/sys/kernel/config/tsm`) FAILS at
+    #      container start: `/sys/kernel/config` inside a container's own
+    #      sysfs is a read-only, empty stand-in directory (present in every
+    #      container, even --privileged — it is sysfs's permanent kobject,
+    #      not the host's separate configfs mount), so runc cannot create a
+    #      new "tsm" mountpoint under it. Bind-mounting the whole
+    #      `/sys/kernel/config` directory works, because that replaces the
+    #      existing (read-only) mountpoint rather than creating a child under
+    #      it.
+    #   2. With that fixed and both mounts below in place, but no
+    #      `security_opt` and not `privileged`: opening
+    #      `rtmr3:sha384` for writing (zero bytes actually written — a probe
+    #      chosen specifically because it cannot trigger the hardware extend,
+    #      which only fires on a real `write()`, so it costs nothing even on
+    #      a real TDX guest) fails with `Permission denied`. Reading it, and
+    #      reading the `tsm` report directory, both succeed — consistent with
+    #      Docker's `docker-default` AppArmor profile, which denies write
+    #      (`w`) under `/sys/[^f]*/**` but not read. This is also why
+    #      `parallax-attest --check` alone cannot surface this: `check()`
+    #      only reads, by design (see `src/attest/rtmr.rs`'s own doc comment
+    #      on why a dry run must not write), so it would report both
+    #      interfaces "reachable" under a configuration that still cannot
+    #      extend.
+    #   3. Adding `security_opt: apparmor=unconfined` — nothing else — makes
+    #      the same write-open probe succeed, and makes creating a
+    #      `tsm/report/<name>` directory and reading it back succeed too.
+    #      `privileged: true` was never tried: it was not needed, and it
+    #      would additionally grant every Linux capability and every host
+    #      device to the one process in this deployment holding the RA-TLS
+    #      private key.
+    #
+    # Two mounts are needed, not one, and only one of them is obvious:
+    #
+    #   /sys/kernel/config .............. creates the configfs-tsm quote path (src/attest/tsm.rs)
+    #   /sys/class/misc/tdx_guest/measurements  RTMR3 extension (src/attest/rtmr.rs)
+    #
+    # Mounting only the first is the failure worth naming: quoting is the
+    # visible half, so a container missing the second mount appears to reach
+    # the TEE and then fails specifically at the extension — the step that
+    # makes the quote say *what* is running, not merely that something is.
+    # -------------------------------------------------------------------
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      # Rendered by `up.sh` from the app image's digest.
+      - ./attest.toml:/etc/parallax/attest.toml:ro
+      # The whole directory, not just `tsm/` underneath it — see point 1
+      # above for why mounting only the subdirectory fails to even start the
+      # container.
+      - /sys/kernel/config:/sys/kernel/config
+      # sysfs *is* visible in the container already, read-only, so this mount
+      # is what makes the existing path writable. The host path resolves
+      # through the `/sys/class/misc/tdx_guest` symlink to
+      # `/sys/devices/virtual/misc/tdx_guest/measurements`; the container path
+      # below is the one `src/attest/rtmr.rs::MEASUREMENTS_DIR` names, which
+      # is the one that has to resolve inside the container's own mount
+      # namespace.
+      - /sys/class/misc/tdx_guest/measurements:/sys/class/misc/tdx_guest/measurements
