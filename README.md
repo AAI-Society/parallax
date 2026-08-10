@@ -203,6 +203,17 @@ procurement conversation that metaphor licenses. See
 
 ## Try it
 
+**[`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md) is the real thing**: provision a
+GCP confidential VM, deploy an unmodified app behind `parallax-attest`, verify
+it through `parallax-proxy` from a second machine, then deploy a different
+image and watch the proxy refuse it — with the verbatim transcript of both
+halves, not a description of what would happen. It is also where the honesty
+work lives: what the attestation covers and, just as pointedly, what it does
+not.
+
+That needs a confidential VM. Without one, the describing mode runs anywhere,
+offline, in well under a second:
+
 ```bash
 git clone https://github.com/Task-force-for-AI-agents-in-Healthcare/parallax
 cd parallax
@@ -289,20 +300,28 @@ TTL in `proxy.toml` instead. `a_latency_bound_also_refuses_undetectable_assumpti
 in `src/proxy/gate.rs` and `a_latency_bound_treats_never_as_exceeding_it` in
 `src/policy.rs` both pin the behaviour, so it will not change silently.
 
-**The allow half of the socket layer is not tested**, and cannot be from this
-repository as it stands: the only real quote committed has 64 zero bytes in
-`report_data`, so the binding check correctly refuses it and every path past
-the binding is unreachable over a socket. That covers the `copy_bidirectional`
-forwarding call, the allow log line and the manifest emission it prints, and a
-further set of mostly degenerate branches. `src/proxy/mod.rs` names them
-individually, and frames its list as **what can be enumerated by reading, not a
-proof of exhaustiveness** — read it there rather than treating this paragraph
-as the inventory, and do not take a count from either: the two previous
-versions of that list were each presented as complete and each was not. The
-decision logic is a pure function and is tested against outcomes built
-field by field. The gap is not academic: it hid a TLS session-resumption defect
-until review, because absorbing a session ticket requires reading from the
-upstream and only the allow path reads. See `src/proxy/mod.rs` and
+**The allow half of the socket layer still has no automated test**, though it
+is no longer true that one *cannot* exist: `tests/fixtures/gcp-c3-bound/`
+carries a real quote whose `report_data` is genuinely bound, and
+`check_binding` accepts it (`tests/fixture_gcp_c3_bound.rs`), so a fixture that
+could drive `Decision::Allow` over a real socket now exists in this
+repository. Nobody has wired it into `tests/proxy.rs` yet — that test file
+still stands up its TLS peer with an `rcgen`-generated certificate, the same
+way it always has. What *did* run the allow path for real, once, by hand
+rather than under `cargo test`, is `docs/WALKTHROUGH.md`: `parallax-proxy`
+against the live `parallax-demo` deployment, `copy_bidirectional` actually
+forwarding an HTTP response from a real upstream through a real TLS
+handshake. That covers the forwarding call, the allow log line and the
+manifest emission it prints, and a further set of mostly degenerate branches
+`src/proxy/mod.rs` names individually — read it there rather than treating
+this paragraph as the inventory, and do not take a count from either: the two
+previous versions of that list were each presented as complete and each was
+not. The decision logic is a pure function and is tested against outcomes
+built field by field. The gap that remains — no *automated, repeatable* test
+of the allow path — is not academic: an earlier version of it hid a TLS
+session-resumption defect until review, because absorbing a session ticket
+requires reading from the upstream and only the allow path reads. See
+`src/proxy/mod.rs`, `tests/fixtures/gcp-c3-bound/PROVENANCE.md` and
 `tests/fixtures/gcp-c3-tdx/PROVENANCE.md`.
 
 **The evidence for "verification is real" is one quote.** See
@@ -347,16 +366,24 @@ rather than the incomparability result.
   `dcap-qvl` appraises SGX quotes, but nothing in this repository derives a
   trust set from one, and there is no SEV-SNP support at any layer. "Real
   attestation verification" here means *TDX* attestation verification.
-- **The fixture's `report_data` is 64 zero bytes** — a capture-time
-  placeholder, recorded as such. That is exactly what an unbound quote looks
-  like, so `check_binding` refuses it, correctly. The consequence is that the
-  binding's *accepting* path is exercised only against certificates the tests
-  generate with `rcgen`. There is no fixture demonstrating a successful binding
-  on real hardware; that needs a second capture with a real digest in
-  `report_data`, and it has not been taken.
-- **The proxy has been exercised against a local test server**, an in-process
-  `TcpListener` on `127.0.0.1` serving an `rcgen` certificate — not against a
-  production deployment, and not against a real RA-TLS peer of anyone else's.
+- **`tests/fixtures/gcp-c3-tdx/`'s `report_data` is 64 zero bytes** — a
+  capture-time placeholder, recorded as such. That is exactly what an unbound
+  quote looks like, so `check_binding` refuses it, correctly. Until Task 7 that
+  meant the binding's *accepting* path was exercised only against certificates
+  the tests generate with `rcgen`. That gap is closed:
+  `tests/fixtures/gcp-c3-bound/` is a second real capture, `parallax-attest`'s
+  own certificate and the quote embedded in it, taken live from `parallax-demo`
+  with a genuine key digest in `report_data`, and `check_binding` accepts it
+  (`tests/fixture_gcp_c3_bound.rs`). What that fixture does not do is drive the
+  proxy over a real socket — see the allow-path bullet above.
+- **The proxy has been exercised against a live, real RA-TLS peer exactly
+  once, by hand.** `tests/proxy.rs`'s automated suite still runs entirely
+  against a local in-process `TcpListener` on `127.0.0.1` serving an `rcgen`
+  certificate — that has not changed. `docs/WALKTHROUGH.md` is the one real
+  run against a production-shaped deployment: `parallax-demo` on GCP, `Task 6`'s
+  confidential VM, over the real internet, with a real refusal recorded when a
+  different image was deployed underneath it. One run, recorded once, not a
+  repeatable test a future change could break silently.
 
 **The evidence base for the describing mode is five architectures we wrote
 ourselves** (seven files — one is a negative control, and one is the TDX
