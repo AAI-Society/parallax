@@ -117,8 +117,9 @@ fn all_examples_solve() {
     // Files in `examples/` that are configuration rather than deployment
     // descriptions. Listed explicitly: a new file that is neither covered nor
     // declared here fails the directory check below, which is the point.
-    const NOT_DEPLOYMENTS: [&str; 4] = [
+    const NOT_DEPLOYMENTS: [&str; 5] = [
         "attest.toml",
+        "gcp-c3.toml",
         "policy-proxy.toml",
         "policy-strict.toml",
         "proxy.toml",

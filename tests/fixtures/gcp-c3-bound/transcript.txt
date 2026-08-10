@@ -1,0 +1,84 @@
+Every command that produced this fixture, run from this laptop against the
+live `parallax-demo` deployment (203.0.113.10:8443, Task 6's C3), with real
+output. No command here was run on the VM itself — everything is a network
+client of the sidecar's already-running TLS listener, so none of it mutates
+the deployment or spends RTMR3's one extension.
+
+$ date -u +%Y-%m-%dT%H:%M:%SZ
+2026-08-10T20:38:54Z
+  (written to captured-at)
+
+$ openssl s_client -connect 203.0.113.10:8443 -servername parallax-attest -showcerts </dev/null
+CONNECTED(00000003)
+depth=0 CN = rcgen self signed cert
+verify error:num=18:self signed certificate
+verify return:1
+depth=0 CN = rcgen self signed cert
+verify return:1
+---
+Certificate chain
+ 0 s:/CN=rcgen self signed cert
+   i:/CN=rcgen self signed cert
+-----BEGIN CERTIFICATE----- ... -----END CERTIFICATE-----
+---
+Server certificate
+subject=/CN=rcgen self signed cert
+issuer=/CN=rcgen self signed cert
+---
+SSL handshake has read 5611 bytes and written 375 bytes
+---
+New, TLSv1/SSLv3, Cipher is AEAD-CHACHA20-POLY1305-SHA256
+SSL-Session:
+    Protocol  : TLSv1.3
+    Cipher    : AEAD-CHACHA20-POLY1305-SHA256
+    Verify return code: 18 (self signed certificate)
+
+The "self signed certificate" verify error is expected and unrelated to
+RA-TLS: openssl's own chain verifier has no reason to trust a self-signed
+leaf, and this capture used it only to pull the certificate off the wire, not
+to accept the connection. `parallax-proxy`, on the same certificate, does not
+run openssl's chain verifier at all — it verifies the embedded quote and
+checks the binding instead (`src/proxy/serve.rs`), which is the check this
+fixture exists to exercise. The one certificate presented (no intermediate,
+no chain — RA-TLS is self-signed by construction, see `src/attest/cert.rs`)
+was saved as `cert.pem`, then:
+
+$ openssl x509 -in cert.pem -outform DER -out cert.der
+$ openssl x509 -in cert.pem -noout -subject -dates
+subject= /CN=rcgen self signed cert
+notBefore=Jan  1 00:00:00 1975 GMT
+notAfter=Jan  1 00:00:00 4096 GMT
+
+  (rcgen's fixed, deliberately unbounded validity window — the same one
+  every other RA-TLS certificate this repository mints carries; the
+  certificate is not what dates the fixture, `captured-at` is.)
+
+Then the quote was pulled out of `cert.der`'s QUOTE_OID extension with the
+crate's own extractor, not a hand-rolled ASN.1 walk, so what is in
+`quote.bin` is exactly what `check_binding`'s caller would see:
+
+$ cargo test --test zzz_scratch_extract_quote -- --nocapture   # scratch-only, not committed
+quote length: 4935
+
+Collateral was then fetched for that quote through the crate's own
+`fetch-collateral` binary — the same tool and the same path
+`tests/fixtures/gcp-c3-tdx` and `tests/fixtures/gcp-c3-rtmr` were built with:
+
+$ cargo run --features fetch-collateral --bin fetch-collateral -- tests/fixtures/gcp-c3-bound
+quote: 4935 bytes
+pccs:  https://pccs.phala.network
+verified at 1786394334 (capture time): status UpToDate
+advisories: none
+wrote tests/fixtures/gcp-c3-bound/collateral.json (25096 bytes)
+
+And finally, before this fixture was trusted enough to commit, the same
+scratch test verified the quote and ran the real check end to end:
+
+tcb status: UpToDate
+report_data: 859da6cca67b21c88a9c8dec75cf923b1f3b38bc044a815564fe4e0f4997e4d7000000000000000000000000000000000000000000000000000000000000000
+mrtd: c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5
+rtmr3: 1d2860c8d9bca4ac3d2acbeb38bdb832c52e4b783e9b644f3bb73f8ca199988615042dadfcc92556ac222835504a3325
+check_binding: ACCEPTED
+
+`tests/fixture_gcp_c3_bound.rs` is the committed, permanent version of that
+same check.

@@ -59,10 +59,18 @@ unbound quote looks like, and the check refuses it:
 `the_real_fixtures_report_data_is_unbound` verifies this quote and then rejects
 the binding as `BindingError::Unbound`. What this fixture is evidence for is
 therefore the negative case, that a genuine, verifying, `UpToDate` quote can
-still be bound to nothing at all. The positive case needs a second fixture
-captured with a real digest in `report_data`; it is forthcoming rather than
-done, and until it exists the accepting path is exercised only against
-certificates the tests generate with `rcgen`.
+still be bound to nothing at all.
+
+The positive case now exists: `tests/fixtures/gcp-c3-bound/`, captured live
+from `parallax-attest` running on `parallax-demo` (Task 6/7), carries a real
+quote whose `report_data` commits to the certified key's `subjectPublicKeyInfo`
+and that `check_binding` accepts —
+`check_binding_accepts_the_real_captured_binding` in
+`tests/fixture_gcp_c3_bound.rs`. Before that fixture was captured, the
+accepting path had been exercised only against certificates the tests
+generate with `rcgen`; this file's earlier text said that fixture was
+"forthcoming rather than done," which is no longer accurate and is corrected
+here rather than left to mislead a reader of this specific paragraph.
 
 **What that costs the proxy, recorded here because this file is the reason.**
 Every path past the binding check is unreachable over a socket with the evidence

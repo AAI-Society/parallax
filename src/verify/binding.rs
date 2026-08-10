@@ -238,10 +238,12 @@ mod tests {
     /// therefore cannot be bound to anything, and this is the test that says so
     /// with the real bytes rather than with a hand-written array.
     ///
-    /// Read as: nothing in this repository yet demonstrates a *successful*
-    /// binding against real hardware. That needs a fixture captured with a
-    /// digest in `report_data`, and until it exists the success path above is
-    /// exercised only against certificates these tests generate.
+    /// Read as: this fixture alone cannot demonstrate a *successful* binding
+    /// against real hardware — `report_data` here is zero by construction, see
+    /// above. `tests/fixture_gcp_c3_bound.rs`'s
+    /// `check_binding_accepts_the_real_captured_binding` is that demonstration,
+    /// against `tests/fixtures/gcp-c3-bound/`, captured from `parallax-attest`
+    /// running on real TDX hardware.
     #[test]
     fn the_real_fixtures_report_data_is_unbound() {
         use crate::latency::Latency;
