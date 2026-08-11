@@ -1,5 +1,5 @@
 # A real `parallax-proxy` configuration for `deploy/gcp`'s demo stack, pointed
-# at the actual GCP `c3-standard-4` instance Task 6 provisioned and measured
+# at the actual GCP `c3-standard-4` instance Task 7 provisioned and measured
 # — not a template with a placeholder address. Every value below either names
 # that deployment directly or was derived and then checked against what it
 # reported; where the two could disagree, that is said, not hidden.
@@ -17,12 +17,12 @@
 #
 # THIS ADDRESS NO LONGER RESOLVES TO ANYTHING OF OURS. `parallax-demo` was a
 # specific demo instance, torn down after Task 7's capture so it would not be
-# left billing (see `docs/WALKTHROUGH.md`). GCP recycles external IPs, so
-# `203.0.113.10` now names whatever project it was next handed to, not this
-# deployment. This file is kept as the real, measured record of what Task 6/7
-# actually ran against — reusing it against a live deployment means
-# provisioning a fresh instance and replacing this address (and, per the
-# `rtmr3` comment below, likely the reference values too).
+# left billing. GCP recycles external IPs, so `203.0.113.10` now names
+# whatever project it was next handed to, not this deployment. This file is
+# kept as the real, measured record of what Task 7 actually ran against —
+# reusing it against a live deployment means provisioning a fresh instance
+# and replacing this address (and, per the `rtmr3` comment below, certainly
+# the reference values too, since a fresh publish produces a fresh digest).
 upstream = "https://203.0.113.10:8443"
 
 # Loopback, matching every example in this repository — see
@@ -63,8 +63,10 @@ cache_ttl = "12h"
 #   sudo cat "$tsm/outblob" > /tmp/quote.bin; sudo rmdir "$tsm"
 #   xxd -p -s 184 -l 48 /tmp/quote.bin | tr -d '\n'
 #
-# Result, byte-identical to Task 1's spike (`tests/fixtures/gcp-c3-rtmr/`,
-# captured on a different instance, a different day):
+# Result, byte-identical to every other capture of this platform in this
+# repository (`tests/fixtures/gcp-c3-rtmr/`, `tests/fixtures/gcp-c3-tdx/`,
+# `tests/fixtures/gcp-c3-bound/`) despite each being a different instance, a
+# different day:
 mrtd = ["c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5"]
 
 # RTMR3 — what `parallax-attest` extends with a measurement of the workload
@@ -72,43 +74,52 @@ mrtd = ["c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c916
 # another. Task 7's "deploy a different image, watch the proxy refuse it"
 # demonstration is this list not containing the other image's value.
 #
-# Derived OFFLINE, before reading anything off the deployment — this is the
-# property `ratls::expected_rtmr3` exists for: a reference value computable
-# without hardware, from the workload's own image digest alone. The digest of
-# `deploy/gcp/app`'s built image on parallax-demo:
+# Derived OFFLINE from a registry manifest digest, via the published-image
+# flow Tasks 1-6 built (`deploy/gcp/publish.sh`, `deploy/gcp/up.sh`) — NOT
+# from a local `docker image inspect -f '{{.Id}}'`, which is exactly the
+# unstable quantity this flow replaces (see `deploy/gcp/app/Dockerfile` and
+# `tests/fixtures/publish-digest-stability/` for the measured reason why).
+# `deploy/gcp/publish.sh` built `deploy/gcp/app` once, pushed it to
+# `us-central1-docker.pkg.dev/example-project/parallax-demo/app`, and read back
+# its manifest digest:
 #
-#   docker image inspect -f '{{.Id}}' parallax-demo-app
-#   -> sha256:b6da2c4f8e751039cbe5f116eec3227f729da5e29b8436f545f81105c8515416
+#   sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83
 #
-# and the arithmetic (`src/ratls.rs`), run offline against the 32 raw digest
-# bytes, no VM involved:
+# Regenerate this value from that digest alone, offline, any time:
 #
-#   ratls::expected_rtmr3(&ratls::workload_measurement(&digest_bytes))
+#   cargo run --bin parallax -- reference-value \
+#     --image-digest sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83
 #
-# which in the shell `deploy/gcp/up.sh` actually runs is:
+# Checked against the running deployment three ways (`deploy/gcp/up.sh`'s own
+# output on parallax-demo, after `up.sh` pulled that exact digest and
+# extended RTMR3 with it), and all three agreed:
 #
-#   measurement=$(printf '%s' "$digest_hex" | xxd -r -p | sha384sum | cut -d' ' -f1)
-#   expected=$({ head -c 48 /dev/zero; printf '%s' "$measurement" | xxd -r -p; } \
-#              | sha384sum | cut -d' ' -f1)
+#   RTMR3 (derived)      5a53e6faf0d7c66fa02f520832d08aa88db92ae286ceebdffcf05fa935c2f97d55dd7551d78a8c2a2dccd15ccf296ec1
+#   RTMR3 (sysfs)        5a53e6faf0d7c66fa02f520832d08aa88db92ae286ceebdffcf05fa935c2f97d55dd7551d78a8c2a2dccd15ccf296ec1
+#   RTMR3 (in the quote) 5a53e6faf0d7c66fa02f520832d08aa88db92ae286ceebdffcf05fa935c2f97d55dd7551d78a8c2a2dccd15ccf296ec1
 #
-# Checked against the running deployment three ways, and all three agreed —
-# `deploy/gcp/up.sh`'s own output on parallax-demo:
+# No mismatch to report on THIS value — the offline prediction and the
+# hardware agreed. (A different, transient mismatch did occur later in the
+# same session, on a *second* boot deploying a *different* image: `up.sh`'s
+# own post-extension sysfs re-read raced the just-completed extension and
+# briefly read back 48 zero bytes while the quote taken moments earlier
+# already showed the correct, extended value; re-reading the same sysfs path
+# by hand ~10 seconds later returned the correct, quote-matching value. That
+# is recorded in Task 7's report as a timing anomaly in `up.sh`'s own
+# consistency check, not a defect in this value or in RTMR3 itself, and does
+# not concern the digit above — the proxy's refusal of that second boot's
+# genuinely different RTMR3 is exactly the property this reference value
+# exists to make possible; see `docs/WALKTHROUGH.md`.)
 #
-#   RTMR3 (derived)      1d2860c8d9bca4ac3d2acbeb38bdb832c52e4b783e9b644f3bb73f8ca199988615042dadfcc92556ac222835504a3325
-#   RTMR3 (sysfs)        1d2860c8d9bca4ac3d2acbeb38bdb832c52e4b783e9b644f3bb73f8ca199988615042dadfcc92556ac222835504a3325
-#   RTMR3 (in the quote) 1d2860c8d9bca4ac3d2acbeb38bdb832c52e4b783e9b644f3bb73f8ca199988615042dadfcc92556ac222835504a3325
-#
-# No mismatch to report here — the prediction and the hardware agreed on the
-# first real run, and `deploy/gcp/up.sh`'s own output above is the complete
-# shipped record of that agreement.
-#
-# THIS DOES NOT SURVIVE A REBUILD, even from byte-identical source. Task 7
-# rebuilt `deploy/gcp/app` from an unchanged `app.py` and got a *third*,
-# different RTMR3 — neither this value nor the deliberately-different one the
-# walkthrough demonstrates. See `docs/WALKTHROUGH.md` §5 for the full account.
-# This value is pinned to the specific image digest quoted above, not to
-# "whatever `deploy/gcp/app`'s source currently builds to."
-rtmr3 = ["1d2860c8d9bca4ac3d2acbeb38bdb832c52e4b783e9b644f3bb73f8ca199988615042dadfcc92556ac222835504a3325"]
+# THIS DOES NOT SURVIVE A REBUILD from source — it is pinned to the specific
+# registry manifest digest quoted above, not to "whatever `deploy/gcp/app`'s
+# source currently builds to." That is now true by design, not despite it:
+# `deploy/gcp/publish.sh` derives this value from a digest read back from the
+# registry after a single build-and-push, and `deploy/gcp/up.sh` refuses to
+# deploy anything that is not pinned to a manifest digest, so a rebuild
+# produces a *new* digest and a *new* reference value rather than silently
+# invalidating this one.
+rtmr3 = ["5a53e6faf0d7c66fa02f520832d08aa88db92ae286ceebdffcf05fa935c2f97d55dd7551d78a8c2a2dccd15ccf296ec1"]
 
 # Left at the documented default (warn, not refuse, on an empty list) rather
 # than set to `true`: both lists above are populated for this deployment, so

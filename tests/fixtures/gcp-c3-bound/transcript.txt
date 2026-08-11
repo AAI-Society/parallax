@@ -1,19 +1,20 @@
 Every command that produced this fixture, run from this laptop against the
-live `parallax-demo` deployment (203.0.113.10:8443, Task 6's C3), with real
+live `parallax-demo` deployment (203.0.113.10:8443, Task 7's C3), with real
 output. No command here was run on the VM itself — everything is a network
 client of the sidecar's already-running TLS listener, so none of it mutates
 the deployment or spends RTMR3's one extension.
 
 ONE SUBSTITUTION, made after capture: the VM's actual external address has
 been replaced throughout with 203.0.113.10, which is RFC 5737 TEST-NET-3 and
-reserved for documentation. The instance was deleted on 2026-08-10 and its
-ephemeral address returned to Google's pool, so the original now names
-whatever machine happens to hold it next — publishing it would point readers
-at a stranger's host. Nothing else in this file was altered, and no value the
-fixture attests to passes through the address: see PROVENANCE.md.
+reserved for documentation. The instance was deleted at the end of Task 7's
+session and its ephemeral address returned to Google's pool, so the original
+now names whatever machine happens to hold it next — publishing it would
+point readers at a stranger's host. Nothing else in this file was altered,
+and no value the fixture attests to passes through the address: see
+PROVENANCE.md.
 
 $ date -u +%Y-%m-%dT%H:%M:%SZ
-2026-08-10T20:38:54Z
+2026-08-11T06:19:54Z
   (written to captured-at)
 
 $ openssl s_client -connect 203.0.113.10:8443 -servername parallax-attest -showcerts </dev/null
@@ -33,9 +34,17 @@ Server certificate
 subject=/CN=rcgen self signed cert
 issuer=/CN=rcgen self signed cert
 ---
-SSL handshake has read 5611 bytes and written 375 bytes
+No client certificate CA names sent
+Server Temp Key: ECDH, X25519, 253 bits
+---
+SSL handshake has read 5612 bytes and written 375 bytes
 ---
 New, TLSv1/SSLv3, Cipher is AEAD-CHACHA20-POLY1305-SHA256
+Server public key is 256 bit
+Secure Renegotiation IS NOT supported
+Compression: NONE
+Expansion: NONE
+No ALPN negotiated
 SSL-Session:
     Protocol  : TLSv1.3
     Cipher    : AEAD-CHACHA20-POLY1305-SHA256
@@ -62,11 +71,13 @@ notAfter=Jan  1 00:00:00 4096 GMT
   certificate is not what dates the fixture, `captured-at` is.)
 
 Then the quote was pulled out of `cert.der`'s QUOTE_OID extension with the
-crate's own extractor, not a hand-rolled ASN.1 walk, so what is in
-`quote.bin` is exactly what `check_binding`'s caller would see:
+crate's own extractor, via a scratch `examples/scratch_extract_quote.rs` not
+committed to this repository (it calls nothing but
+`parallax::verify::quote_from_cert(&cert_der, DEFAULT_QUOTE_OID)`, the same
+function `src/proxy/gate.rs` calls on every real connection):
 
-$ cargo test --test zzz_scratch_extract_quote -- --nocapture   # scratch-only, not committed
-quote length: 4935
+$ cargo run --quiet --example scratch_extract_quote -- cert.der quote.bin
+wrote 4935 bytes to quote.bin
 
 Collateral was then fetched for that quote through the crate's own
 `fetch-collateral` binary — the same tool and the same path
@@ -75,18 +86,41 @@ Collateral was then fetched for that quote through the crate's own
 $ cargo run --features fetch-collateral --bin fetch-collateral -- tests/fixtures/gcp-c3-bound
 quote: 4935 bytes
 pccs:  https://pccs.phala.network
-verified at 1786394334 (capture time): status UpToDate
+verified at 1786429194 (capture time): status UpToDate
 advisories: none
 wrote tests/fixtures/gcp-c3-bound/collateral.json (25096 bytes)
 
-And finally, before this fixture was trusted enough to commit, the same
-scratch test verified the quote and ran the real check end to end:
+Reading the committed measurement offsets directly out of `quote.bin` (48-byte
+header, MRTD at body offset 136 / quote-absolute 184, RTMR3 at body offset 472
+/ quote-absolute 520, report_data at quote-absolute 568 — `docs/spike-rtmr-gcp.md`):
 
-tcb status: UpToDate
-report_data: 859da6cca67b21c88a9c8dec75cf923b1f3b38bc044a815564fe4e0f4997e4d7000000000000000000000000000000000000000000000000000000000000000
-mrtd: c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5
-rtmr3: 1d2860c8d9bca4ac3d2acbeb38bdb832c52e4b783e9b644f3bb73f8ca199988615042dadfcc92556ac222835504a3325
-check_binding: ACCEPTED
+$ xxd -p -s 184 -l 48 quote.bin | tr -d '\n'
+c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5
+$ xxd -p -s 520 -l 48 quote.bin | tr -d '\n'
+5a53e6faf0d7c66fa02f520832d08aa88db92ae286ceebdffcf05fa935c2f97d55dd7551d78a8c2a2dccd15ccf296ec1
+$ xxd -p -s 568 -l 64 quote.bin | tr -d '\n'
+3fb9b4d65a25bb53b6b03cf0fb0521c280dba5207b72e3241cfe979b641af4310000000000000000000000000000000000000000000000000000000000000000
+
+Both measurements match `deploy/gcp/up.sh`'s own printed output from the same
+deployment, taken moments earlier during Task 7's Step 1 (see the task's
+report): MRTD `c1ee9c16e3af...` and RTMR3 `5a53e6faf0d7...`, and RTMR3 in turn
+matches the value `deploy/gcp/publish.sh` derived offline from the published
+image's manifest digest before anything was deployed. `report_data`'s first
+32 bytes (`3fb9b4d6...af43`) is `SHA-256` of this certificate's
+`subjectPublicKeyInfo`; the trailing 32 bytes are zero, exactly
+`ratls::LAYOUT`'s contract.
+
+And finally, before this fixture was trusted enough to commit, `cargo test
+--test fixture_gcp_c3_bound` verified the quote and ran the real check end to
+end — see the crate's own test output rather than a hand-run scratch check:
+
+running 4 tests
+test check_binding_accepts_the_real_captured_binding ... ok
+test mrtd_and_rtmr3_match_examples_gcp_c3_toml ... ok
+test the_committed_quote_is_the_one_embedded_in_the_committed_certificate ... ok
+test the_quote_verifies_up_to_date_with_no_advisories ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 
 `tests/fixture_gcp_c3_bound.rs` is the committed, permanent version of that
 same check.
