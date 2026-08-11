@@ -87,8 +87,16 @@ pub fn expected_rtmr3(measurement: &[u8; 48]) -> [u8; 48] {
 /// Carries the offending value and a reason rather than a bare unit, because
 /// the attester renders both into `PrepareError::ImageDigest` and an operator
 /// reading that message needs to see what they actually typed.
+///
+/// The attester never prints this type's own `Display`: it destructures
+/// `value` and `reason` into `PrepareError::ImageDigest`'s own fields and
+/// renders those through its own message, so this impl is free to name what
+/// `value` is without touching that wording. `parallax reference-value` is
+/// the first caller that prints this error standalone (`--image-digest`
+/// never reaches the attester's wrapping), so it needs a noun of its own —
+/// otherwise it reads as a bare string followed by a complaint.
 #[derive(Debug, thiserror::Error)]
-#[error("{value} {reason}")]
+#[error("image digest \"{value}\" {reason}")]
 pub struct ImageDigestError {
     pub value: String,
     pub reason: String,

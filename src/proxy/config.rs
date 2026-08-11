@@ -387,19 +387,23 @@ impl ProxyConfig {
 }
 
 /// 96 lowercase-or-uppercase hex characters into 48 bytes. Shared by
-/// [`parse_mrtd`] and [`parse_rtmr3`], which are the same arithmetic over two
-/// different config fields; `field` ("MRTD" or "RTMR3") only changes which
-/// word ends up in the error.
+/// `parse_mrtd` and `parse_rtmr3` (both private to this module), which are
+/// the same arithmetic over two different config fields; `field` ("MRTD" or
+/// "RTMR3") only changes which word ends up in the error.
 ///
 /// **Each pair is checked with `is_ascii_hexdigit` before it is parsed.**
 /// `u8::from_str_radix` alone is not strict enough: it accepts a leading `+`
 /// on an unsigned integer, so `"+0"` parses to `0` and `"+f"` parses to `15`
 /// exactly as `"00"` and `"0f"` would. Left unchecked, a reference value with
 /// a typo silently becomes a *different, valid* reference value instead of
-/// being refused — the identical defect `src/attest/serve.rs`'s
+/// being refused — the identical defect `crate::ratls`'s
 /// `parse_image_digest` was fixed for, and this mirrors that fix rather than
 /// leaving the two parsers at different strictness.
-fn parse_hex48(hex: &str, index: usize, field: &'static str) -> Result<[u8; 48], ConfigError> {
+///
+/// Public because `parallax reference-value` validates the `--mrtd` it echoes
+/// with it. A second 48-byte hex parser is what this function's own
+/// `is_ascii_hexdigit` check exists to stop being necessary.
+pub fn parse_hex48(hex: &str, index: usize, field: &'static str) -> Result<[u8; 48], ConfigError> {
     let bad = |reason: String| ConfigError::ReferenceValue {
         field,
         index,

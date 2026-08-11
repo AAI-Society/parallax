@@ -72,6 +72,22 @@ enum Cmd {
         #[arg(short, long)]
         principal: String,
     },
+    /// Derive the `[reference_values]` block for a workload image digest.
+    ///
+    /// RTMR3 is computable offline from the digest alone, which is what lets
+    /// an operator write a reference value *before* deploying. Reading it off
+    /// the running deployment instead would be circular: a reference derived
+    /// from the image you are checking cannot detect that you deployed the
+    /// wrong image.
+    ReferenceValue {
+        /// The workload image's registry manifest digest: `sha256:` and 64 hex.
+        #[arg(long)]
+        image_digest: String,
+        /// The platform's MRTD, 96 hex characters. Omitted, the `mrtd` array
+        /// is emitted empty rather than filled with a guess.
+        #[arg(long)]
+        mrtd: Option<String>,
+    },
 }
 
 /// Rust's runtime ignores `SIGPIPE` by default (see
@@ -426,6 +442,39 @@ fn run() -> Result<ExitCode> {
                     Ok(ExitCode::SUCCESS)
                 }
             }
+        }
+        Cmd::ReferenceValue { image_digest, mrtd } => {
+            let digest = match parallax::ratls::parse_image_digest(&image_digest) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("parallax: {e}");
+                    return Ok(ExitCode::from(2));
+                }
+            };
+            let rtmr3 =
+                parallax::ratls::expected_rtmr3(&parallax::ratls::workload_measurement(&digest));
+            let mrtd_line = match mrtd {
+                Some(m) => match parallax::proxy::config::parse_hex48(&m, 0, "mrtd") {
+                    Ok(_) => format!("mrtd  = [\"{m}\"]"),
+                    Err(e) => {
+                        eprintln!("parallax: --mrtd {e}");
+                        return Ok(ExitCode::from(2));
+                    }
+                },
+                None => {
+                    eprintln!(
+                        "parallax: no --mrtd given, so the mrtd array is empty. MRTD measures \
+                         the platform firmware, not the workload, so it cannot be derived from \
+                         an image digest -- read it from a quote this platform produced."
+                    );
+                    "mrtd  = []".to_string()
+                }
+            };
+            let hex: String = rtmr3.iter().map(|b| format!("{b:02x}")).collect();
+            println!("[reference_values]");
+            println!("{mrtd_line}");
+            println!("rtmr3 = [\"{hex}\"]");
+            Ok(ExitCode::SUCCESS)
         }
     }
 }
