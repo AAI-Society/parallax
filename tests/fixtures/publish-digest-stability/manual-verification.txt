@@ -1,0 +1,162 @@
+Supplementary manual verification, run by hand after scripts/publish-digest-stability.sh
+aborted at its own self-check (see transcript.txt) on the same Docker daemon
+(parallax-demo, Docker 29.1.3, storage driver overlayfs / io.containerd.snapshotter.v1),
+in the same session, minutes later. These commands were run directly against the
+real Docker engine and the real example-project/us-central1/parallax-demo Artifact
+Registry repository -- nothing here is synthesised -- but they are NOT the script's
+own output and are kept in a separate file from transcript.txt for that reason.
+
+They exist because the script's extract_config helper cannot complete on this
+Docker version (see transcript.txt and PROVENANCE.md for why), which stopped the
+script before it reached Part 1's field-isolation step and all of Part 2. The
+questions those steps would have answered are answered here by a different,
+simpler method: diffing `docker image inspect`'s own JSON instead of the raw
+config blob `docker save` exports.
+
+===============================================================
+== why extract_config's self-check failed: this daemon's storage driver
+===============================================================
+
+$ ssh 203.0.113.10 'docker info 2>&1 | grep -i -E "storage driver|snapshotter"'
+ Storage Driver: overlayfs
+  driver-type: io.containerd.snapshotter.v1
+
+===============================================================
+== isolating the differing field a different way: docker image inspect, not docker save
+===============================================================
+Same two images transcript.txt's Part 1 built and left addressable by their own
+.Id (the tag was overwritten by build 2, but build 1 stays addressable):
+
+  build 1: sha256:6a05b841795d32593433776443f8b7aa86d0f4fcf8a426425d79874baf25e1ef
+  build 2: sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83
+
+$ ssh 203.0.113.10 'docker image inspect sha256:6a05b841795d32593433776443f8b7aa86d0f4fcf8a426425d79874baf25e1ef > /tmp/build1.json'
+$ ssh 203.0.113.10 'docker image inspect sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83 > /tmp/build2.json'
+$ ssh 203.0.113.10 'diff /tmp/build1.json /tmp/build2.json'
+18c18
+<         "Created": "2026-08-11T06:09:31.105112677Z",
+---
+>         "Created": "2026-08-11T06:09:34.064436272Z",
+20c20
+<             "digest": "sha256:6a05b841795d32593433776443f8b7aa86d0f4fcf8a426425d79874baf25e1ef",
+---
+>             "digest": "sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83",
+24c24
+<         "Id": "sha256:6a05b841795d32593433776443f8b7aa86d0f4fcf8a426425d79874baf25e1ef",
+---
+>         "Id": "sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83",
+26c26
+<             "LastTagTime": "2026-08-11T06:09:34.121079474Z"
+---
+>             "LastTagTime": "2026-08-11T06:09:34.123604826Z"
+29,31c29,35
+<         "Parent": "sha256:5af960ebeec0fef64114ec24749b08122267643a4e4634572da76a230fcdf57d",
+<         "RepoDigests": [],
+<         "RepoTags": [],
+---
+>         "Parent": "sha256:63046cc8b331882a8ec6f19da36ab157dff1164b74cee97818616052975b63df",
+>         "RepoDigests": [
+>             "us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83"
+>         ],
+>         "RepoTags": [
+>             "us-central1-docker.pkg.dev/example-project/parallax-demo/app:digest-stability-old-flow"
+>         ]
+
+Verdict: the top-level "Created" timestamp is the field that differs between
+build 1 and build 2. Everything else that differs ("digest", "Id", "LastTagTime",
+"Parent", "RepoDigests", "RepoTags") is a downstream consequence of that -- the
+image ID is a function of the config content, which embeds "Created", so a
+different "Created" produces a different ID and everything keyed off it. Both
+builds resolved the same base layer (`---> 6d43704baacd` in both, transcript.txt
+lines 75 and 99) and neither build passed --pull, so this is not base-image tag
+drift in this run: the base layer was held byte-identical by construction and
+the configs still differed until "Created" is accounted for.
+
+This confirms the deploy/gcp/app/Dockerfile's "created" hypothesis, though by a
+different diagnostic than the one the script itself was written to run, and
+through the daemon's own inspect JSON's "Created" field rather than the raw OCI
+config blob's "created" field the script's extract_config was written to read.
+The two are very likely the same underlying value (docker image inspect's
+top-level "Created" is documented as reflecting the image config's own
+"created"), but that identity was not independently confirmed here because
+extract_config could not run.
+
+===============================================================
+== the new flow: build once, push once, remove local copies, pull twice by
+== manifest digest, and compare -- Part 2's core claim, checked without
+== extract_config
+===============================================================
+
+$ docker build --no-cache -t us-central1-docker.pkg.dev/example-project/parallax-demo/app:digest-stability-manual ~/parallax/deploy/gcp/app   (via DOCKER_HOST=ssh://203.0.113.10, i.e. built on parallax-demo's own daemon)
+...
+Successfully built 70e54e9b2d3e
+build .Id: sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+
+$ docker push us-central1-docker.pkg.dev/example-project/parallax-demo/app:digest-stability-manual
+...
+digest-stability-manual: digest: sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54 size: 1401
+
+Note: for this one build, the locally-computed .Id and the registry's manifest
+digest are the same value. That is a real, observed property of this Docker
+version's local image ID under the containerd snapshotter (see the storage
+driver check above) -- .Id is evidently no longer simply the config-JSON
+digest here, the way it was under the classic ("moby") image store the
+predecessor plan's Dockerfile comment and this script's extract_config both
+assumed. This is offered as an observation, not a claim about Docker's
+internals verified any further than what is shown here.
+
+$ docker rmi us-central1-docker.pkg.dev/example-project/parallax-demo/app:digest-stability-manual
+$ docker rmi us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+$ docker image inspect us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+confirmed gone
+
+$ docker pull us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+Digest: sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+Status: Downloaded newer image for us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+pull1 .Id: sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+
+$ docker rmi us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+$ docker pull us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+Digest: sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+Status: Downloaded newer image for us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+pull2 .Id: sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+
+VERDICT: IDENTICAL. Two independent pulls of the same manifest digest, with the
+local copy fully removed and confirmed gone between them, produced the same
+local image ID both times.
+
+$ cargo run --quiet --bin parallax -- reference-value --image-digest sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+parallax: no --mrtd given, so the mrtd array is empty. MRTD measures the platform firmware, not the workload, so it cannot be derived from an image digest -- read it from a quote this platform produced.
+[reference_values]
+mrtd  = []
+rtmr3 = ["6829079c578e9abfbe26f0c12ff7104c695907a3b627d7e981ec833bba080fdc798682dca0c68e2a56bfbf24fd1fab02"]
+
+$ cargo run --quiet --bin parallax -- reference-value --image-digest sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+parallax: no --mrtd given, so the mrtd array is empty. MRTD measures the platform firmware, not the workload, so it cannot be derived from an image digest -- read it from a quote this platform produced.
+[reference_values]
+mrtd  = []
+rtmr3 = ["6829079c578e9abfbe26f0c12ff7104c695907a3b627d7e981ec833bba080fdc798682dca0c68e2a56bfbf24fd1fab02"]
+
+VERDICT: IDENTICAL. `parallax reference-value` printed byte-identical output
+both times, run from the same manifest digest.
+
+===============================================================
+== summary of what this file adds
+===============================================================
+Part 1's core claim (two --no-cache builds of unchanged source produce different
+image identities) is established in transcript.txt itself (build 1 .Id !=
+build 2 .Id) without needing extract_config at all. What this file adds to
+Part 1 is the specific differing field, found by a different tool (`docker
+image inspect` diff) after the script's own tool (`docker save` + diff)
+proved incompatible with this Docker version.
+
+Part 2's core claim -- that pulling by manifest digest twice, independently,
+produces a stable local image identity, and that `parallax reference-value`
+derived from that digest is a pure, repeatable function of it -- could not be
+established by the script at all, because it aborted during Part 1. It is
+established here instead, using the registry repository provision.sh created
+for this task (deleted at teardown, per the task's resource-discipline
+requirement) and the shared reference-value derivation the script itself would
+have used. The digest exercised here (sha256:70e54e9b2d3e89bb...) is a scratch
+tag pushed for this purpose only, distinct from both deploy/gcp/publish.sh's
+real `:latest` publish and the digests recorded in examples/gcp-c3.toml.

@@ -1,0 +1,136 @@
+
+===============================================================
+== preflight: dependencies
+===============================================================
+found: /opt/homebrew/bin/docker
+found: /sbin/sha256sum
+found: /usr/bin/tar
+found: /usr/bin/cmp
+found: /Users/jimschwoebel/.cargo/bin/cargo
+found: /opt/homebrew/bin/gcloud
+
+===============================================================
+== preflight: checking parallax-demo exists in example-project/us-central1
+===============================================================
+
+$ gcloud artifacts repositories describe "parallax-demo" --location="us-central1" --project="example-project" --quiet
+Encryption: Google-managed key
+Repository Size: 0.000MB
+createTime: '2026-08-11T06:05:54.318455Z'
+description: parallax-attest demo; see provision.sh's printed inventory for the delete
+  command
+format: DOCKER
+mode: STANDARD_REPOSITORY
+name: projects/example-project/locations/us-central1/repositories/parallax-demo
+registryUri: us-central1-docker.pkg.dev/example-project/parallax-demo
+satisfiesPzi: true
+updateTime: '2026-08-11T06:05:54.318455Z'
+vulnerabilityScanningConfig:
+  enablementState: SCANNING_DISABLED
+  enablementStateReason: API containerscanning.googleapis.com is not enabled.
+  lastEnableTime: '2026-08-11T06:05:53.647346570Z'
+[exit 0]
+repository exists; continuing
+
+===============================================================
+== Part 1: the old flow -- two builds of byte-identical source
+===============================================================
+Two builds of deploy/gcp/app, back to back, from source that does not
+change between them. --no-cache forces the builder to actually redo
+the build rather than short-circuit on Docker's own build cache, which
+would otherwise just hand back the first build's image unchanged and
+hide the very drift this half of the script exists to show. Neither
+build passes --pull, so python:3.12-alpine's locally cached layers are
+held fixed across both builds -- if something still differs, it is not
+because the base image resolved to different bytes between builds.
+
+===============================================================
+== build 1 of 2
+===============================================================
+
+$ docker build --no-cache -t "us-central1-docker.pkg.dev/example-project/parallax-demo/app:digest-stability-old-flow" "/Users/jimschwoebel/Desktop/parallax/deploy/gcp/app"
+DEPRECATED: The legacy builder is deprecated and will be removed in a future release.
+            Install the buildx component to build images with BuildKit:
+            https://docs.docker.com/go/buildx/
+
+Sending build context to Docker daemon   5.12kB
+Step 1/3 : FROM python:3.12-alpine
+3.12-alpine: Pulling from library/python
+71475e2f9a6f: Pulling fs layer
+55167a880c77: Pulling fs layer
+55afa1ecc21d: Pulling fs layer
+37daa602ac89: Pulling fs layer
+71475e2f9a6f: Download complete
+37daa602ac89: Download complete
+53986b38def8: Download complete
+55167a880c77: Download complete
+55afa1ecc21d: Download complete
+69e1b3b638c3: Download complete
+55afa1ecc21d: Pull complete
+37daa602ac89: Pull complete
+55167a880c77: Pull complete
+71475e2f9a6f: Pull complete
+Digest: sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df
+Status: Downloaded newer image for python:3.12-alpine
+ ---> 6d43704baacd
+Step 2/3 : COPY app.py /app.py
+ ---> 5af960ebeec0
+Step 3/3 : CMD ["python3", "/app.py"]
+ ---> Running in 3cc843f9ae6f
+ ---> Removed intermediate container 3cc843f9ae6f
+ ---> 6a05b841795d
+Successfully built 6a05b841795d
+Successfully tagged us-central1-docker.pkg.dev/example-project/parallax-demo/app:digest-stability-old-flow
+[exit 0]
+$ docker image inspect -f '{{.Id}}' us-central1-docker.pkg.dev/example-project/parallax-demo/app:digest-stability-old-flow
+sha256:6a05b841795d32593433776443f8b7aa86d0f4fcf8a426425d79874baf25e1ef
+
+===============================================================
+== build 2 of 2 (retags over build 1; build 1 stays addressable by its own .Id)
+===============================================================
+
+$ docker build --no-cache -t "us-central1-docker.pkg.dev/example-project/parallax-demo/app:digest-stability-old-flow" "/Users/jimschwoebel/Desktop/parallax/deploy/gcp/app"
+DEPRECATED: The legacy builder is deprecated and will be removed in a future release.
+            Install the buildx component to build images with BuildKit:
+            https://docs.docker.com/go/buildx/
+
+Sending build context to Docker daemon   5.12kB
+Step 1/3 : FROM python:3.12-alpine
+ ---> 6d43704baacd
+Step 2/3 : COPY app.py /app.py
+ ---> 63046cc8b331
+Step 3/3 : CMD ["python3", "/app.py"]
+ ---> Running in 40ae413d56e4
+ ---> Removed intermediate container 40ae413d56e4
+ ---> e2c9fbcae48d
+Successfully built e2c9fbcae48d
+Successfully tagged us-central1-docker.pkg.dev/example-project/parallax-demo/app:digest-stability-old-flow
+[exit 0]
+$ docker image inspect -f '{{.Id}}' us-central1-docker.pkg.dev/example-project/parallax-demo/app:digest-stability-old-flow
+sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83
+
+===============================================================
+== Part 1 verdict: build 1's .Id vs build 2's .Id
+===============================================================
+build 1: sha256:6a05b841795d32593433776443f8b7aa86d0f4fcf8a426425d79874baf25e1ef
+build 2: sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83
+DIFFERENT, reproducing the instability the old build-on-the-VM flow
+exhibited.
+
+$ docker save -o "/private/tmp/claude-501/-Users-jimschwoebel-Desktop-poc-research-roadmap/9dbebfd1-130f-468f-8c39-a6401bb06ed5/scratchpad/task7/publish-digest-stability/old-flow-build1-config.json.extract/image.tar" "sha256:6a05b841795d32593433776443f8b7aa86d0f4fcf8a426425d79874baf25e1ef"
+[exit 0]
+
+$ tar -xf "/private/tmp/claude-501/-Users-jimschwoebel-Desktop-poc-research-roadmap/9dbebfd1-130f-468f-8c39-a6401bb06ed5/scratchpad/task7/publish-digest-stability/old-flow-build1-config.json.extract/image.tar" -C "/private/tmp/claude-501/-Users-jimschwoebel-Desktop-poc-research-roadmap/9dbebfd1-130f-468f-8c39-a6401bb06ed5/scratchpad/task7/publish-digest-stability/old-flow-build1-config.json.extract" manifest.json
+[exit 0]
+$ cat /private/tmp/claude-501/-Users-jimschwoebel-Desktop-poc-research-roadmap/9dbebfd1-130f-468f-8c39-a6401bb06ed5/scratchpad/task7/publish-digest-stability/old-flow-build1-config.json.extract/manifest.json
+[{"Config":"blobs/sha256/1f0f1c5139541190d767c507a75944bf4a53cdc4057cbc4313c808374ef03155","RepoTags":null,"Layers":["blobs/sha256/55afa1ecc21d2bb5e5045f32dafee56272ffd89860bac26f6c32123439af26a4","blobs/sha256/37daa602ac89f280ab5b9f9dd12d9ab9df7a0197dd5044850dc1565f354fe3ff","blobs/sha256/55167a880c7766ee614c8a364a5750fed1153520915dc3cb4b4a0da92791da84","blobs/sha256/71475e2f9a6fa6049ced939c4248cb7711711bfae08e83bf715e83ab54292050","blobs/sha256/38a22c56ebbfdb0f2f9a050e6f921383172b6418a40e39196392a81178329812"]}]
+build 1: manifest.json names the config blob "blobs/sha256/1f0f1c5139541190d767c507a75944bf4a53cdc4057cbc4313c808374ef03155"
+
+$ tar -xf "/private/tmp/claude-501/-Users-jimschwoebel-Desktop-poc-research-roadmap/9dbebfd1-130f-468f-8c39-a6401bb06ed5/scratchpad/task7/publish-digest-stability/old-flow-build1-config.json.extract/image.tar" -C "/private/tmp/claude-501/-Users-jimschwoebel-Desktop-poc-research-roadmap/9dbebfd1-130f-468f-8c39-a6401bb06ed5/scratchpad/task7/publish-digest-stability/old-flow-build1-config.json.extract" "blobs/sha256/1f0f1c5139541190d767c507a75944bf4a53cdc4057cbc4313c808374ef03155"
+[exit 0]
+$ sha256sum /private/tmp/claude-501/-Users-jimschwoebel-Desktop-poc-research-roadmap/9dbebfd1-130f-468f-8c39-a6401bb06ed5/scratchpad/task7/publish-digest-stability/old-flow-build1-config.json
+1f0f1c5139541190d767c507a75944bf4a53cdc4057cbc4313c808374ef03155  /private/tmp/claude-501/-Users-jimschwoebel-Desktop-poc-research-roadmap/9dbebfd1-130f-468f-8c39-a6401bb06ed5/scratchpad/task7/publish-digest-stability/old-flow-build1-config.json
+publish-digest-stability.sh: sha256 of the extracted config blob
+  (1f0f1c5139541190d767c507a75944bf4a53cdc4057cbc4313c808374ef03155) for "build 1" does not equal .Id (sha256:6a05b841795d32593433776443f8b7aa86d0f4fcf8a426425d79874baf25e1ef).
+  This extraction is not the file .Id actually hashes on this
+  Docker version; nothing downstream of this point can be trusted.
