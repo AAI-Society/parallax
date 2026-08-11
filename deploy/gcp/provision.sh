@@ -9,10 +9,15 @@
 #
 # NAME defaults to `parallax-demo`, and every resource this script creates is
 # named from it, so `--delete` is exhaustive by construction rather than by
-# anyone remembering what else exists.
+# anyone remembering what else exists -- except the Artifact Registry
+# repository below, which is fixed by name (not derived from NAME, to match
+# `publish.sh`'s own default) and deliberately outside `--delete`; see its own
+# comment for why.
 #
 # Requires gcloud, authenticated, with billing enabled. Creates one
-# c3-standard-4 with --confidential-compute-type=TDX and one firewall rule.
+# c3-standard-4 with --confidential-compute-type=TDX, one firewall rule, and
+# (or reuses) one Artifact Registry repository that `publish.sh` pushes the
+# workload image to and this VM pulls it from.
 #
 # ---------------------------------------------------------------------------
 # THIS SCRIPT DOES NOT DELETE THE VM ON EXIT, unlike scripts/capture-on-gcp.sh.
@@ -43,6 +48,19 @@ VM="$NAME"
 FIREWALL="$NAME-tls"
 TAG="$NAME"
 TLS_PORT=8443
+
+# Artifact Registry locations are regions, not zones -- AR rejects a zone
+# suffix -- so this strips the trailing `-<letter>` off $ZONE
+# (`us-central1-a` -> `us-central1`), the standard GCP zone naming
+# convention rather than a value this script invents.
+REGION="${ZONE%-*}"
+
+# Fixed, not derived from $NAME: this is the exact repository name
+# `deploy/gcp/publish.sh`'s usage text names as its own default, and the two
+# scripts have no shared configuration to keep it in sync through -- an
+# operator who overrides NAME here still publishes to the name publish.sh
+# expects unless they also pass a different REPOSITORY there.
+REPOSITORY=parallax-demo
 
 if [ -z "$PROJECT" ]; then
   echo "provision.sh: no project. Pass one, or set a default with" >&2
@@ -117,7 +135,12 @@ shout_on_failure() {
   echo "  exists, then clean up:" >&2
   echo "    gcloud compute instances list --project=$PROJECT" >&2
   echo "    gcloud compute firewall-rules list --project=$PROJECT" >&2
+  echo "    gcloud artifacts repositories list --location=$REGION --project=$PROJECT" >&2
   echo "    $HERE/provision.sh --delete $PROJECT $ZONE $NAME" >&2
+  # --delete, above, only reaches the instance and the firewall rule (both
+  # zone-scoped); the repository is region-scoped and, per its own policy
+  # below, deleted only by this explicit command -- never automatically.
+  echo "    gcloud artifacts repositories delete $REPOSITORY --location=$REGION --project=$PROJECT --quiet" >&2
   return 0
 }
 trap shout_on_failure EXIT
@@ -164,6 +187,62 @@ else
     --description="parallax-attest demo; delete with provision.sh --delete" \
     >/dev/null
 fi
+
+# ---------------------------------------------------------------------------
+# Artifact Registry: what `publish.sh` pushes to and the VM pulls from
+# ---------------------------------------------------------------------------
+# `publish.sh` builds and pushes the workload image once, from the operator's
+# machine; the VM then pulls that exact artifact by manifest digest instead of
+# rebuilding it (see that script's header for why). Both halves of that flow
+# need somewhere to push to and pull from, and `publish.sh` pre-flights this
+# exact repository with `gcloud artifacts repositories describe` before it
+# builds anything -- so name and location have to match what it expects.
+#
+# describe-then-create, the same idiom the firewall rule above uses, rather
+# than a bare `create ... || true`: a swallowed error there could just as
+# easily be a real permissions problem, and papering over it here would only
+# resurface it later as a confusing `docker push` failure in publish.sh. If
+# the repository is missing for a reason other than "does not exist yet" --
+# e.g. this account cannot describe it -- `create` below still runs and its
+# real error is what reaches the operator, unmasked.
+if g artifacts repositories describe "$REPOSITORY" --location="$REGION" \
+     >/dev/null 2>&1; then
+  echo "==> repository $REPOSITORY already exists in $PROJECT/$REGION"
+else
+  echo "==> creating repository $REPOSITORY in $PROJECT/$REGION"
+  g artifacts repositories create "$REPOSITORY" \
+    --repository-format=docker --location="$REGION" \
+    --description="parallax-attest demo; see provision.sh's printed inventory for the delete command" \
+    >/dev/null
+fi
+
+# The VM authenticates to Artifact Registry as its default Compute Engine
+# service account -- `instances create` below passes no `--service-account`,
+# so that default is what it gets. Derived from the project number, not
+# guessed: `<project-number>-compute@developer.gserviceaccount.com` is GCP's
+# fixed naming convention for it (the project number itself comes from the
+# `projects describe` call, not from anything this script assumes).
+PROJECT_NUMBER="$(g projects describe "$PROJECT" --format='value(projectNumber)')"
+VM_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
+# Scoped to this one repository, not `--role` at the project level: the VM
+# only ever needs to pull this one image, and a project-wide grant is a wider
+# blast radius for no benefit -- the same narrowest-scope-that-works call the
+# firewall rule above makes by pinning ingress to one source IP rather than
+# 0.0.0.0/0. `add-iam-policy-binding` is idempotent -- re-running this against
+# an already-granted binding succeeds without creating a duplicate.
+echo "==> granting $VM_SA roles/artifactregistry.reader on $REPOSITORY"
+g artifacts repositories add-iam-policy-binding "$REPOSITORY" \
+  --location="$REGION" \
+  --member="serviceAccount:$VM_SA" \
+  --role=roles/artifactregistry.reader \
+  >/dev/null
+
+# For the operator's own `docker push` in publish.sh -- the VM never docker
+# push-es, only pulls, and does so as $VM_SA via the credential helper
+# `bootstrap.sh` configures on the guest, not this.
+echo "==> configuring docker for ${REGION}-docker.pkg.dev"
+gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet >/dev/null
 
 # c3-standard-4, Ubuntu 24.04, us-central1-a: the exact configuration
 # `docs/spike-rtmr-gcp.md` measured RTMR3 extension on. Diverging from it
@@ -241,12 +320,13 @@ verifying proxy:
   curl http://localhost:8080/
 
 ---------------------------------------------------------------------------
-RESOURCES CREATED. Both bill or expose access until deleted:
+RESOURCES CREATED. All three bill or expose access until deleted:
 
   instance      $VM           ($ZONE)
   firewall rule $FIREWALL     (tcp:$TLS_PORT from $SOURCE_RANGE, tag $TAG)
+  repository    $REPOSITORY   ($REGION), $VM_SA granted roles/artifactregistry.reader
 
-DELETE THEM WITH:
+DELETE THE INSTANCE AND FIREWALL RULE WITH:
 
   $HERE/provision.sh --delete $PROJECT $ZONE $NAME
 
@@ -254,5 +334,13 @@ or by hand:
 
   gcloud compute instances delete $VM --zone=$ZONE --project=$PROJECT --quiet
   gcloud compute firewall-rules delete $FIREWALL --project=$PROJECT --quiet
+
+The repository is NOT touched by --delete above, deliberately: this demo is
+meant to stay up, so --delete only reaches what stops serving the demo when
+removed. Deleting it (and, with it, the IAM grant above -- there is no
+separate command for that) is its own explicit step, whenever the repository
+itself is no longer needed:
+
+  gcloud artifacts repositories delete $REPOSITORY --location=$REGION --project=$PROJECT --quiet
 ===========================================================================
 EOF
