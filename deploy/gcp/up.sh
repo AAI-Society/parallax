@@ -109,12 +109,15 @@ fi
 echo "==> pulling $IMAGE_REF"
 $DOCKER pull "$IMAGE_REF"
 
-# docker-compose.yml's `app` service still names its image
-# `parallax-demo-app` (and still carries a `build:` directive, for local
-# development off this script). Tagging the pulled artifact under that name
-# makes compose find an image already present under the name it expects, so
-# it runs what was just pulled instead of falling back to `build:`.
-$DOCKER tag "$IMAGE_REF" parallax-demo-app
+# docker-compose.yml's `app` service has no `build:` directive at all — it
+# takes its image from $PARALLAX_DEMO_APP_IMAGE, so there is no path by
+# which that service can be built on this VM, not even via `docker compose
+# up --build`. Written to a `.env` file rather than `export`ed: `sudo`
+# resets the environment by default (see $DOCKER above), so an exported
+# shell variable would silently not reach `sudo docker compose`; a `.env`
+# file in the project directory is read by Compose itself, independent of
+# sudo's environment handling.
+echo "PARALLAX_DEMO_APP_IMAGE=$IMAGE_REF" > .env
 
 # The sidecar is still compiled from this checkout's source, never pulled —
 # only the workload's identity has to be pinnable and stable ahead of time;

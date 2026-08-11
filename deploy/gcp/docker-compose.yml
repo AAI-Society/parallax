@@ -1,12 +1,14 @@
 # The demo stack: an unmodified application, and `parallax-attest` in front of
-# it. Bring it up with `deploy/gcp/up.sh`, which renders `attest.toml` from the
-# app image's digest first — the digest is what gets measured into RTMR3, so
-# it cannot be written down before the image is built.
+# it. Bring it up with `deploy/gcp/up.sh <image-ref>@sha256:<digest>`, which
+# pulls the workload by digest — see that script's own header for why it
+# pulls rather than builds — writes the pulled reference into `.env` for the
+# `app` service below, and renders `attest.toml` from the same digest before
+# starting anything.
 #
 # Run from this directory, on the confidential VM:
 #
-#   ./up.sh --check   # build, render, probe both TEE interfaces, extend nothing
-#   ./up.sh           # the above, then extend RTMR3 (once per boot) and serve
+#   ./up.sh <image-ref>@sha256:<digest> --check   # pull, render, probe both TEE interfaces, extend nothing
+#   ./up.sh <image-ref>@sha256:<digest>            # the above, then extend RTMR3 (once per boot) and serve
 name: parallax-demo
 
 services:
@@ -14,8 +16,15 @@ services:
   # dependency, and would run identically outside a TEE. That is the property
   # the sidecar exists to add without touching this container.
   app:
-    build: ./app
-    image: parallax-demo-app
+    # No `build:` directive, deliberately: this service can only ever run an
+    # image `up.sh` pulled by digest, never one built from source on this
+    # VM. That is what makes the omission structural rather than incidental
+    # — `docker compose up --build` has nothing here to build, so it cannot
+    # silently reintroduce the unstable, timestamp-bearing identity `up.sh`'s
+    # header explains. `up.sh` writes this variable into a `.env` file in
+    # this directory before invoking Compose; `:?` fails loudly if that has
+    # not happened yet, rather than starting a container named "".
+    image: ${PARALLAX_DEMO_APP_IMAGE:?set by up.sh}
     container_name: parallax-demo-app
     restart: unless-stopped
     # Published here rather than on `attest`: `attest` shares this container's
