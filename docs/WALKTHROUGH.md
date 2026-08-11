@@ -96,8 +96,8 @@ never on the VM:
 
 It builds `deploy/gcp/app` once, pushes it, and reads the **registry
 manifest digest** back from `docker image inspect -f '{{json
-.RepoDigests}}'` — deliberately not `.Id`, which is the image *config*
-digest and embeds a build timestamp (see [§5](#5-why-the-old-flow-needed-replacing-rebuilding-from-identical-source-does-not-reproduce-the-digest)).
+.RepoDigests}}'` — deliberately not `.Id`, which tracks the image *config*
+JSON and embeds a build timestamp (see [§5](#5-why-the-old-flow-needed-replacing-rebuilding-from-identical-source-does-not-reproduce-the-digest)).
 It refuses to guess if the registry did not hand back exactly one
 `RepoDigests` entry for the tag just pushed (`publish.sh`'s own
 `match_count` check), then derives the `[reference_values]` block for that
