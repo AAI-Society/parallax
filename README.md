@@ -203,13 +203,17 @@ procurement conversation that metaphor licenses. See
 
 ## Try it
 
-**[`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md) is the real thing**: provision a
-GCP confidential VM, deploy an unmodified app behind `parallax-attest`, verify
-it through `parallax-proxy` from a second machine, then deploy a different
-image and watch the proxy refuse it — with the verbatim transcript of both
-halves, not a description of what would happen. It is also where the honesty
-work lives: what the attestation covers and, just as pointedly, what it does
-not.
+**[`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md) is the real thing**: publish an
+unmodified app image once, off the VM, pull it onto a GCP confidential VM by
+its registry manifest digest — never rebuilt where it runs — deploy it behind
+`parallax-attest`, verify it through `parallax-proxy` from a second machine,
+then deploy a different image and watch the proxy refuse it. Every value and
+every captured command is cited to a transcript or fixture actually committed
+in this repository, not reconstructed from memory of what the session looked
+like. It is also where the honesty work lives: what the attestation covers
+and, just as pointedly, what it does not — including the boundary between
+"the deploy tooling declared this image" and "this image is what is
+running," which the attester itself does not close.
 
 That needs a confidential VM. Without one, the describing mode runs anywhere,
 offline, in well under a second:
@@ -307,13 +311,20 @@ carries a real quote whose `report_data` is genuinely bound, and
 could drive `Decision::Allow` over a real socket now exists in this
 repository. Nobody has wired it into `tests/proxy.rs` yet — that test file
 still stands up its TLS peer with an `rcgen`-generated certificate, the same
-way it always has. What *did* run the allow path for real, once, by hand
-rather than under `cargo test`, is `docs/WALKTHROUGH.md`: `parallax-proxy`
-against the live `parallax-demo` deployment, `copy_bidirectional` actually
+way it always has. `parallax-proxy` *did* run the allow path for real, once,
+by hand rather than under `cargo test`, against the live `parallax-demo`
+deployment `docs/WALKTHROUGH.md` documents — `copy_bidirectional` actually
 forwarding an HTTP response from a real upstream through a real TLS
 handshake. That covers the forwarding call, the allow log line and the
-manifest emission it prints, and a further set of mostly degenerate branches
-`src/proxy/mod.rs` names individually — read it there rather than treating
+manifest emission it prints. That session's own console output was not saved
+to a file in this repository, though, so `docs/WALKTHROUGH.md` does not
+reproduce it as a transcript — what it documents instead is
+`tests/fixtures/gcp-c3-bound/`, the same deployment's real certificate and
+the real quote embedded in it, captured directly against the sidecar rather
+than through the proxy (deliberately, so the capture does not depend on the
+proxy's own correctness) and accepted by `check_binding`
+(`tests/fixture_gcp_c3_bound.rs`). A further set of mostly degenerate
+branches `src/proxy/mod.rs` names individually — read it there rather than treating
 this paragraph as the inventory, and do not take a count from either: the two
 previous versions of that list were each presented as complete and each was
 not. The decision logic is a pure function and is tested against outcomes
@@ -379,22 +390,45 @@ rather than the incomparability result.
 - **The proxy has been exercised against a live, real RA-TLS peer exactly
   once, by hand.** `tests/proxy.rs`'s automated suite still runs entirely
   against a local in-process `TcpListener` on `127.0.0.1` serving an `rcgen`
-  certificate — that has not changed. `docs/WALKTHROUGH.md` is the one real
-  run against a production-shaped deployment: `parallax-demo` on GCP, `Task 6`'s
-  confidential VM, over the real internet, with a real refusal recorded when a
-  different image was deployed underneath it. One run, recorded once, not a
-  repeatable test a future change could break silently. That hardware has
-  since been torn down; the walkthrough's transcript is what remains of it.
-- **An RTMR3 reference value does not survive rebuilding its own image from
-  unchanged source.** `docs/WALKTHROUGH.md` §5 rebuilt the demo app from
-  byte-identical `app.py` and got a *third*, different RTMR3 — matching
-  neither the original reference value nor a deliberately-different one
-  demonstrated elsewhere in that document. That is a real limit on what an
-  image-digest-keyed reference value can promise across rebuilds, not a
-  defect in the attester or the verifier, and it means a reference value
-  committed today can go stale the next time its image is rebuilt with no
-  code change at all. Nothing in this repository detects or works around
-  that.
+  certificate — that has not changed. `docs/WALKTHROUGH.md` documents the one
+  real run against a production-shaped deployment: `parallax-demo` on GCP,
+  over the real internet, publishing the workload image once and pulling it
+  by registry digest rather than building it on the guest, with a real
+  refusal recorded when a different image was deployed underneath it. One
+  run, recorded once, not a repeatable test a future change could break
+  silently. That hardware has since been torn down; what remains is the
+  fixture and configuration `docs/WALKTHROUGH.md` cites, not a preserved raw
+  console session for every step.
+- **`parallax-attest` measures the digest its own configuration declares, not
+  the container actually in front of it.** `deploy/gcp/up.sh` renders
+  `attest.toml`'s `image_digest` from the same reference it just told Docker
+  to pull, and the sidecar measures that value — nothing re-derives the
+  digest from the running container to confirm the two still agree. The
+  deploy tooling asserts the binding; the attester trusts it. See
+  `docs/WALKTHROUGH.md`'s up-front accounting for why this is treated as an
+  overclaim risk rather than a footnote.
+- **A registry manifest digest and a local image-config digest are
+  indistinguishable by form** — both are a `sha256:` prefix and 64 hex
+  characters. `parallax reference-value` cannot detect that an operator
+  pasted the wrong kind of digest. What enforces the distinction is
+  `deploy/gcp/up.sh` refusing to deploy anything that is not pinned to a
+  registry manifest digest, and `docs/WALKTHROUGH.md` explaining which one is
+  which — not a check inside the tool.
+- **An RTMR3 reference value used to be keyed to a local image *config*
+  digest, which does not survive rebuilding unchanged source — this is why
+  the deploy flow changed, not an open problem it still has.**
+  `scripts/publish-digest-stability.sh`, run for real
+  (`tests/fixtures/publish-digest-stability/`), measured two `--no-cache`
+  builds of byte-identical source producing two different `docker image
+  inspect -f '{{.Id}}'` values, with the top-level `Created` build timestamp
+  as the differing field. `deploy/gcp/publish.sh` and `deploy/gcp/up.sh` now
+  pin every deployment to the *registry manifest* digest a single
+  build-and-push produces, rather than a digest computed locally, which is
+  why this deployment's reference value is stable across the app's own
+  content while still being tied to one specific build. What remains manual:
+  a real source change still requires an operator to publish again and
+  update the reference value by hand — nothing here automates or warns about
+  that step.
 
 **The evidence base for the describing mode is five architectures we wrote
 ourselves** (seven files — one is a negative control, and one is the TDX

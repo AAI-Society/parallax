@@ -1,426 +1,644 @@
 # Walkthrough: a real deployment, verified, then broken on purpose
 
-Everything below is a real transcript from this repository's own hardware
-run. Where a command's output is shown, it is copied verbatim from what ran —
-nothing here is a description of what *would* happen. Where something did not
-go as planned, that is said, with what actually happened next to it.
+This document follows a real deployment through the **publish-then-pull**
+flow: the workload image is built once, off the confidential VM, pushed to a
+registry, and pulled onto the VM by its registry manifest digest — never
+rebuilt where it runs. Every value shown below (a digest, a measurement, a
+piece of script output) is copied from a file committed in this repository —
+`tests/fixtures/publish-digest-stability/`, `tests/fixtures/gcp-c3-bound/`, or
+`examples/gcp-c3.toml` — and each is cited to the file it came from. Where a
+step is described without a captured transcript backing it, that is said
+plainly, in prose, rather than presented as a terminal session nobody
+actually captured. Where something did not go as planned, that is said too,
+with what actually happened next to it.
 
-**What this proves.** `parallax-attest` sat in front of an unmodified
-application on a real Intel TDX confidential VM. `parallax-proxy`, running on
-a separate machine, verified its attestation, checked that the quote's
-`report_data` was bound to the certificate it arrived on, checked the
-platform's firmware measurement (MRTD) and the workload's own measurement
-(RTMR3) against configured reference values, and only then forwarded traffic.
-Then the workload changed underneath it — a different container image,
-nothing else — and the same proxy, against the same configuration, refused.
-That refusal, not the acceptance, is the actual evidence: forwarding traffic
-is what a proxy with no verification at all would also do. Refusing a
-specific, real, unannounced change to the workload is what only a working
-RTMR3 check can do, because MRTD cannot: MRTD measures firmware and is
-byte-identical across every GCP C3 instance captured anywhere in this
-repository (`tests/fixtures/gcp-c3-tdx/`, `tests/fixtures/gcp-c3-rtmr/`,
-`tests/fixtures/gcp-c3-bound/`), so it cannot by itself distinguish one
-deployed image from another. That is exactly why Task 5.5 taught the verifier
-to check RTMR3 at all.
+**What this proves.** `parallax-attest` sits in front of an unmodified
+application on a real Intel TDX confidential VM (`parallax-demo`, GCP
+`c3-standard-4`, `us-central1-a`), fronting an image built once and pulled by
+its registry manifest digest rather than rebuilt on the guest. A verifying
+proxy checks the resulting attestation's `report_data` binding, its platform
+firmware measurement (MRTD), and the workload's own measurement (RTMR3)
+against reference values an operator derives *before* deploying anything —
+and a real quote captured from this exact deployment, offline-verified in
+this repository's own test suite, matches those reference values exactly.
+MRTD cannot do this alone: it is byte-identical across every GCP C3 instance
+captured anywhere in this repository (`tests/fixtures/gcp-c3-tdx/`,
+`tests/fixtures/gcp-c3-rtmr/`, `tests/fixtures/gcp-c3-bound/`), so it cannot
+by itself distinguish one deployed image from another. That is exactly why
+RTMR3 checking exists, and why this document's evidence turns on it rather
+than on MRTD.
 
-**What this does not prove**, up front, so it is not buried: one platform,
-one region, one instance family (`c3-standard-4`, `us-central1-a`), one
-operator running both ends of the connection. **And an RTMR3 reference value
-does not survive rebuilding its own image from unchanged source** — §5 below
-is a rebuild of `deploy/gcp/app` from byte-identical `app.py` that produced a
-*third*, different RTMR3, matching neither reference value this document
-uses. That is a real limit on what an image-digest-keyed reference value can
-promise across rebuilds, not a code defect, and it means the reference values
-in `examples/gcp-c3.toml` can go stale the next time that image is rebuilt,
-with no code change at all. See
-[What this attestation covers, and what it does not](#what-this-attestation-covers-and-what-it-does-not)
-below for the full accounting, and the README's ["What is real, and what is
-not"](../README.md#what-is-real-and-what-is-not) for how this fits the rest of
-the project's evidence base.
+**What this does not prove**, up front, so it is not buried:
 
-## 1. Provision and deploy (already done, not repeated here)
+- **One platform, one region, one instance family** (`c3-standard-4`,
+  `us-central1-a`), **one operator** running both ends of the connection.
+- **`parallax-attest` measures the digest its own configuration declares —
+  not what container is actually running.** `up.sh` renders `attest.toml`'s
+  `image_digest` from the same reference it just told Docker to pull
+  (`deploy/gcp/up.sh`), and the sidecar extends RTMR3 with that value
+  (`ratls::workload_measurement`). Nothing at that point re-derives the
+  digest from the running container to confirm the two agree. The deploy
+  tooling asserts the binding between "what was pulled" and "what got
+  measured"; the attester does not independently verify it. An attestation
+  that silently means "the operator's tooling claimed image X" rather than
+  "image X is what is running" is exactly the kind of overclaim this project
+  exists to attack — see [the trust-boundary
+  accounting](#what-this-attestation-covers-and-what-it-does-not) below for
+  where that boundary actually sits.
+- **A registry manifest digest and a local image-config digest look
+  identical.** Both are `sha256:` followed by 64 hex characters — 32 raw
+  bytes either way. `parallax reference-value --image-digest` cannot tell,
+  from the string alone, whether an operator pasted the value `publish.sh`
+  read back from the registry or the value a stray `docker image inspect -f
+  '{{.Id}}'` produced. Nothing in this tool's type system can reject the
+  wrong one, because the two are not different *types* — see [§5](#5-why-the-old-flow-needed-replacing-rebuilding-from-identical-source-does-not-reproduce-the-digest)
+  for exactly how different the two values are in practice, on the same
+  source, on the same day.
+- **Rebuilding `deploy/gcp/app` from unchanged source no longer threatens a
+  committed reference value — but that is a property of the flow, not of
+  digests in general.** [§5](#5-why-the-old-flow-needed-replacing-rebuilding-from-identical-source-does-not-reproduce-the-digest)
+  below is the measured reason the old build-on-the-VM design was replaced: a
+  local image *config* digest embeds a build timestamp and does not survive a
+  rebuild of identical source. The reference values this document uses are
+  pinned to a *registry manifest* digest instead, which is why they are
+  stable — see that section for the measurement, recovered by hand after the
+  proof script that was supposed to establish it hit an unrelated Docker
+  incompatibility and refused to guess.
 
-Task 6 provisioned the confidential VM this walkthrough runs against and
-deployed the first build on it: `parallax-demo`, a GCP `c3-standard-4` with
-`--confidential-compute-type=TDX`, `us-central1-a`, external IP
-`203.0.113.10` (since torn down — see the note at the end of this section).
-`deploy/gcp/provision.sh` is the script; the two container-access findings
-(mount the whole `/sys/kernel/config`, not just its `tsm` child;
-`security_opt: apparmor=unconfined` is sufficient, `privileged: true` was
-never needed) are recorded as committed, measured comments in
-`deploy/gcp/docker-compose.yml` itself, which is the shipped record of them.
-This walkthrough does not re-provision — the brief for the task that produced
-it is explicit that the hardware is already up and billing, and tearing it
-down and back up is not part of what this document demonstrates.
+See [What this attestation covers, and what it does not](#what-this-attestation-covers-and-what-it-does-not)
+below for the full accounting — which repeats both bullets above, because the
+final review of the plan that built this flow found that a reader who takes
+`examples/gcp-c3.toml` and deploys from it never reaches the document's
+middle — and the README's ["What is real, and what is
+not"](../README.md#what-is-real-and-what-is-not) for how this fits the rest
+of the project's evidence base.
 
-**The hardware is gone.** `parallax-demo` was torn down after this walkthrough
-and Task 7's fixture capture were complete, per the human's ruling that it not
-be left billing. `203.0.113.10` was that specific instance's ephemeral
-external IP; GCP recycles addresses, so it now names someone else's resource,
-not this one. Everything below is the real transcript from when the hardware
-existed — see [Reproducing this](#reproducing-this) for what that means for a
-reader today.
+## 1. Publish: build once, off the VM
 
-`deploy/gcp/up.sh` is the deploy step, run on the guest:
+`deploy/gcp/publish.sh` is the first step, run on the operator's machine,
+never on the VM:
 
 ```
-./up.sh --check   # build, render, probe both TEE interfaces, extend nothing
-./up.sh           # the above, then extend RTMR3 (once per boot) and serve
+./deploy/gcp/publish.sh PROJECT REGION REPOSITORY
 ```
 
-It renders `attest.toml` from the app image's own digest, extends RTMR3 with
-`ratls::workload_measurement` of that digest, requests a quote, mints an
-RA-TLS certificate, and only then binds `:8443`. Because RTMR3 is a hash chain
-that only a reboot resets, and `extend_rtmr3` refuses a second extension in
-the same boot, a full run of `up.sh` is spendable exactly once per boot — the
-guard at the top of the script catches a second attempt and says so rather
-than letting the sidecar's own refusal be the first sign of it (this
-walkthrough hit that guard once, by accident — see
-[§4](#4-a-real-mistake-a-race-in-the-reboot-wait-not-a-hardware-surprise)).
+It builds `deploy/gcp/app` once, pushes it, and reads the **registry
+manifest digest** back from `docker image inspect -f '{{json
+.RepoDigests}}'` — deliberately not `.Id`, which is the image *config*
+digest and embeds a build timestamp (see [§5](#5-why-the-old-flow-needed-replacing-rebuilding-from-identical-source-does-not-reproduce-the-digest)).
+It refuses to guess if the registry did not hand back exactly one
+`RepoDigests` entry for the tag just pushed (`publish.sh`'s own
+`match_count` check), then derives the `[reference_values]` block for that
+digest with `cargo run --bin parallax -- reference-value --image-digest
+<digest>`, and prints the exact `up.sh` invocation for the VM.
 
-## 2. Verify: the accepting run
-
-From this laptop, against the live deployment, using the committed,
-already-derived reference values in `examples/gcp-c3.toml`:
+This mechanism — build once, push once, remove every local copy, pull by
+digest, and confirm the result is byte-identical both times — is not merely
+asserted; it is what `tests/fixtures/publish-digest-stability/manual-verification.txt`
+shows, run for real against the same Artifact Registry repository this
+deployment uses (`us-central1-docker.pkg.dev/example-project/parallax-demo/app`,
+though against a scratch tag, `:digest-stability-manual`, kept distinct from
+this deployment's real `:latest` publish):
 
 ```console
-$ cargo run --features fetch-collateral --bin parallax-proxy -- examples/gcp-c3.toml
-listening on 127.0.0.1:8080 -> https://203.0.113.10:8443 (policy examples/policy-proxy.toml, collateral https://api.trustedservices.intel.com/tdx/certification/v4, cache TTL 43200s)
+$ docker rmi us-central1-docker.pkg.dev/example-project/parallax-demo/app:digest-stability-manual
+$ docker rmi us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+$ docker image inspect us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+confirmed gone
+
+$ docker pull us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+Digest: sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+Status: Downloaded newer image for us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+pull1 .Id: sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+
+$ docker rmi us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+$ docker pull us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+Digest: sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+Status: Downloaded newer image for us-central1-docker.pkg.dev/example-project/parallax-demo/app@sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+pull2 .Id: sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+
+VERDICT: IDENTICAL. Two independent pulls of the same manifest digest, with the
+local copy fully removed and confirmed gone between them, produced the same
+local image ID both times.
+
+$ cargo run --quiet --bin parallax -- reference-value --image-digest sha256:70e54e9b2d3e89bb8826ef9bfb415989b21a2c52e9c591aff12ccd32a34d0d54
+parallax: no --mrtd given, so the mrtd array is empty. MRTD measures the platform firmware, not the workload, so it cannot be derived from an image digest -- read it from a quote this platform produced.
+[reference_values]
+mrtd  = []
+rtmr3 = ["6829079c578e9abfbe26f0c12ff7104c695907a3b627d7e981ec833bba080fdc798682dca0c68e2a56bfbf24fd1fab02"]
 ```
+
+— run twice, printing byte-identical output both times
+(`tests/fixtures/publish-digest-stability/manual-verification.txt`, lines
+108–141). That is the property `up.sh` (below) and this deployment's real
+reference value depend on: `parallax reference-value` is a pure function of
+the digest, and the digest a registry hands back for an unchanged push does
+not move.
+
+The real deployment this document describes was published the same way, to
+the same repository, under the tag `:latest`. Its manifest digest is
+
+```
+sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83
+```
+
+(`examples/gcp-c3.toml`, `tests/fixtures/gcp-c3-bound/PROVENANCE.md`), and the
+`[reference_values]` block that digest derives to is committed in
+`examples/gcp-c3.toml` and re-derivable offline any time with:
+
+```
+cargo run --bin parallax -- reference-value \
+  --image-digest sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83
+```
+
+## 2. Provision and deploy
+
+`deploy/gcp/provision.sh` creates the confidential VM, a firewall rule scoped
+to the operator's own IP, and the Artifact Registry repository `publish.sh`
+pushes to and the VM pulls from; it installs Docker on the guest and does
+**not** build or start the demo stack — that is deliberately a separate,
+later step, because it is `up.sh`'s run that spends the boot's one RTMR3
+extension. `deploy/gcp/bootstrap.sh`, which `provision.sh` runs over SSH,
+installs Docker and configures a credential helper so the guest can
+authenticate its own `docker pull` against the repository.
+
+`deploy/gcp/up.sh` is the deploy step, run on the guest with the exact
+reference `publish.sh` printed:
+
+```
+./up.sh <image-ref>@sha256:<digest> --check   # pull, render, probe both TEE interfaces, extend nothing
+./up.sh <image-ref>@sha256:<digest>            # the above, then extend RTMR3 (once per boot) and serve
+```
+
+It refuses anything that is not digest-pinned before touching Docker
+(`up.sh`'s own guard: `*@sha256:*` or exit 2 — this is what stands between
+the indistinguishability limitation noted up front and an operator actually
+deploying an unpinned tag), pulls the image, writes `PARALLAX_DEMO_APP_IMAGE`
+for `docker-compose.yml`'s `app` service — which has no `build:` directive at
+all, so there is no way to build the workload on this VM even by accident —
+and renders `attest.toml`'s `image_digest` from the same digest. `--check`
+runs `parallax::attest::check` (`src/attest/serve.rs`; invoked by
+`src/bin/parallax-attest.rs`), which the binary itself describes as
+confirming "the workload resolves, and RTMR3 and the quoting interface are
+both reachable (RTMR3 was not extended and no quote was requested)" — safe to
+run any number of times, because it writes to neither TEE interface. Because
+RTMR3 is a hash chain that only a reboot resets, and `extend_rtmr3` refuses a
+second extension in the same boot, a full (non-`--check`) run of `up.sh` is
+spendable exactly once per boot; the script's own guard catches a second
+attempt in the same boot and prints the fix (`sudo reboot`) rather than
+letting the sidecar's own refusal be the first sign of it.
+
+This deployment used exactly that sequence: `provision.sh` created
+`parallax-demo`, `publish.sh` produced the manifest digest in [§1](#1-publish-build-once-off-the-vm),
+and `up.sh` pulled it, extended RTMR3 once, and reported the platform's own
+measurements. `examples/gcp-c3.toml`'s `rtmr3` comment records the result of
+that run directly: the value `parallax reference-value` derived offline from
+the manifest digest above, and the value `up.sh` printed after actually
+extending RTMR3 on the deployed hardware, agreed exactly, checked three
+independent ways —
+
+```
+RTMR3 (derived)      5a53e6faf0d7c66fa02f520832d08aa88db92ae286ceebdffcf05fa935c2f97d55dd7551d78a8c2a2dccd15ccf296ec1
+RTMR3 (sysfs)        5a53e6faf0d7c66fa02f520832d08aa88db92ae286ceebdffcf05fa935c2f97d55dd7551d78a8c2a2dccd15ccf296ec1
+RTMR3 (in the quote) 5a53e6faf0d7c66fa02f520832d08aa88db92ae286ceebdffcf05fa935c2f97d55dd7551d78a8c2a2dccd15ccf296ec1
+```
+
+— and MRTD, read from a real quote the same way (`up.sh`'s own `configfs-tsm`
+read, offsets from `docs/spike-rtmr-gcp.md`), was
+`c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5`
+— byte-identical to every other capture of this platform family in this
+repository, despite each being a different instance on a different day.
+
+**What is not committed as a raw transcript.** `provision.sh` and `up.sh`
+were run for real to produce the values above, but this repository does not
+carry a standalone file recording their own console session — only
+`examples/gcp-c3.toml`'s derived values and cross-checks, and the two
+scripts' own documented behaviour, are committed. This document does not
+reconstruct that session as an invented `$` transcript; what it shows above
+is what is actually committed: the values, and the mechanism that produced
+them.
+
+**The provisioning authentication path is corrected in this repository, but
+unexercised.** `provision.sh`'s own comment on `--scopes=cloud-platform` and
+`bootstrap.sh`'s own comment on its Docker credential helper both say
+plainly that they record "a real gap Task 7's hardware run hit and had to
+work around by hand (copying a laptop access token into `sudo docker login`
+on the VM)" — the VM `provision.sh` created for this deployment did **not**
+yet pass `--scopes`, and its guest had no credential helper at all, so
+`up.sh`'s `sudo docker pull` on that specific VM authenticated only because
+an operator copied a token in by hand. The scripts in this repository today
+include the fix (a `--scopes=cloud-platform` instance scope and a
+`docker-credential-gcp-metadata` helper reading the guest's own attached
+service-account token from the metadata server), but that hardware was torn
+down before the fix was written, so **it has not been run against a real VM
+end to end.** Provisioning a fresh instance is the first thing that should
+treat confirming it as a check, not an assumption.
+
+**The hardware is gone.** `parallax-demo` was torn down after this
+deployment and its fixture recapture were complete, so it would not be left
+billing. Every address in every transcript this document cites — including
+the ones in `tests/fixtures/gcp-c3-bound/transcript.txt` and
+`tests/fixtures/publish-digest-stability/manual-verification.txt` — has been
+replaced with `203.0.113.10`, RFC 5737 TEST-NET-3, reserved for
+documentation. GCP recycles external IPs; the real one now names whatever
+project it was next handed to, not this deployment. See
+[Reproducing this](#reproducing-this) for what that means for a reader today.
+
+## 3. Verify: the accepting evidence
+
+`tests/fixtures/gcp-c3-bound/` is the committed, verbatim record of
+connecting to this exact deployment and confirming the binding a verifying
+proxy relies on. It was captured by opening a TLS connection to the
+sidecar's public listener directly — not through `parallax-proxy` — so
+nothing about the capture depended on the proxy's own correctness, and so
+capturing it could not accidentally consume the boot's one RTMR3 extension.
+The transcript, verbatim from `tests/fixtures/gcp-c3-bound/transcript.txt`:
 
 ```console
-$ curl -sv http://127.0.0.1:8080/
-*   Trying 127.0.0.1:8080...
-* Connected to 127.0.0.1 (127.0.0.1) port 8080
-> GET / HTTP/1.1
-> Host: 127.0.0.1:8080
-> User-Agent: curl/8.7.1
-> Accept: */*
->
-* Request completely sent off
-* HTTP 1.0, assume close after body
-< HTTP/1.0 200 OK
-< Server: BaseHTTP/0.6 Python/3.12.13
-< Date: Mon, 10 Aug 2026 20:44:59 GMT
-< Content-Type: text/plain
-< Content-Length: 35
-<
-hello from inside the trust domain
+$ openssl s_client -connect 203.0.113.10:8443 -servername parallax-attest -showcerts </dev/null
+CONNECTED(00000003)
+depth=0 CN = rcgen self signed cert
+verify error:num=18:self signed certificate
+verify return:1
+...
 ```
 
-The proxy's own decision record for that connection (one line of JSON on
-stdout, reformatted here for readability — the byte content is unchanged):
+(the "self signed certificate" error is expected and unrelated to RA-TLS:
+this capture used `openssl` only to pull the certificate off the wire, not
+to accept the connection on its own chain-verification logic — RA-TLS is
+self-signed by construction, `src/attest/cert.rs`, and `parallax-proxy`
+verifies the embedded quote and the binding instead, never `openssl`'s
+chain). The certificate was saved and converted, the quote was pulled from
+its `QUOTE_OID` extension with the crate's own extractor, and collateral was
+fetched through the same tool every other fixture in this tree uses:
 
-```json
-{
-  "record": "parallax.decision-record.v1",
-  "decision": "allow",
-  "reason": null,
-  "warnings": [
-    "the PCK certificate declares platform caveats [dynamic-platform, smt-enabled], which weaken what this attestation proves independently of the TCB status."
-  ],
-  "connection": 0,
-  "mrtd": "c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5"
-}
+```console
+$ cargo run --quiet --example scratch_extract_quote -- cert.der quote.bin
+wrote 4935 bytes to quote.bin
+
+$ cargo run --features fetch-collateral --bin fetch-collateral -- tests/fixtures/gcp-c3-bound
+quote: 4935 bytes
+pccs:  https://pccs.phala.network
+verified at 1786429194 (capture time): status UpToDate
+advisories: none
+wrote tests/fixtures/gcp-c3-bound/collateral.json (25096 bytes)
 ```
 
-(The full record also carries the Residual Trust Manifest — eleven entries
-over nine distinct principals (`HOST` carries three) — each with the
-capability it was trusted for and its detection latency, nested under
-`manifest`. It is omitted here for length; `tests/proxy.rs` and `src/derive.rs`
-are where every entry in it is pinned by test — `src/derive.rs`'s sibling case
-with RTMR3 unconfigured pins nine assumptions over nine principals
-(`the_healthy_set_is_exactly_these_nine_assumptions`) — and it is unchanged in
-shape from what Task 6 already recorded.)
+Reading the measurement offsets directly out of the committed quote bytes
+(`docs/spike-rtmr-gcp.md`'s offsets: MRTD at quote-absolute 184, RTMR3 at
+520, `report_data` at 568):
 
-This is the same acceptance Task 6 recorded. What Task 7 adds is the fixture:
-`tests/fixtures/gcp-c3-bound/` is `parallax-attest`'s real TLS certificate
-from this same deployment and the real quote embedded in it, captured
-separately (by connecting to `:8443` directly, not through the proxy, so
-nothing about the capture depended on the proxy's own correctness) and
-verified offline by `tests/fixture_gcp_c3_bound.rs`. Its
-`check_binding_accepts_the_real_captured_binding` test is the first place in
-this repository's test suite — as opposed to a live run against real
-hardware — where `check_binding`'s accepting path runs against a quote genuine
-hardware produced, rather than against a certificate the tests generate with
-`rcgen`. See `tests/fixtures/gcp-c3-bound/PROVENANCE.md` for exactly how it was
-captured and what it does and does not prove on its own.
+```console
+$ xxd -p -s 184 -l 48 quote.bin | tr -d '\n'
+c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5
+$ xxd -p -s 520 -l 48 quote.bin | tr -d '\n'
+5a53e6faf0d7c66fa02f520832d08aa88db92ae286ceebdffcf05fa935c2f97d55dd7551d78a8c2a2dccd15ccf296ec1
+$ xxd -p -s 568 -l 64 quote.bin | tr -d '\n'
+3fb9b4d65a25bb53b6b03cf0fb0521c280dba5207b72e3241cfe979b641af4310000000000000000000000000000000000000000000000000000000000000000
+```
 
-## 3. Break it on purpose: deploy a different image
+Both match `examples/gcp-c3.toml`'s reference values exactly and match
+`up.sh`'s own printed output from [§2](#2-provision-and-deploy) — the same
+deployment, checked twice, by two different methods (a live run's own
+sysfs/quote readout, and an independent offline capture taken minutes
+later). `report_data`'s first 32 bytes,
+`3fb9b4d6...af43`, is `SHA-256` of this certificate's `subjectPublicKeyInfo`
+— not zero, unlike this repository's two earlier TDX fixtures
+(`gcp-c3-tdx`, `gcp-c3-rtmr`), which is the entire point: this is the first
+quote in this repository whose `report_data` genuinely commits to a key
+`parallax` holds, so it is the first place `check_binding`'s *accepting*
+path has ever run against real hardware rather than an `rcgen`-generated
+test certificate. Before this fixture was trusted enough to commit, the
+crate's own test suite verified it end to end — also verbatim from
+`transcript.txt`:
+
+```
+running 4 tests
+test check_binding_accepts_the_real_captured_binding ... ok
+test mrtd_and_rtmr3_match_examples_gcp_c3_toml ... ok
+test the_committed_quote_is_the_one_embedded_in_the_committed_certificate ... ok
+test the_quote_verifies_up_to_date_with_no_advisories ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+```
+
+`tests/fixture_gcp_c3_bound.rs` is the permanent, repeatable version of that
+same check — `mrtd_and_rtmr3_match_examples_gcp_c3_toml` in particular is
+what keeps this fixture and `examples/gcp-c3.toml` telling one coherent
+story rather than two that have quietly drifted apart. See
+`tests/fixtures/gcp-c3-bound/PROVENANCE.md` for the complete provenance,
+including why this fixture carries no `capture-host.txt` the way its
+SSH-captured neighbours do (it was captured from outside the VM,
+deliberately, so nothing about capturing it could touch the deployment).
+
+The quote also carries two PCK platform caveats — `dynamic-platform` and
+`smt-enabled` — verifiable directly from the committed `quote.bin` and
+`collateral.json` through `parallax::verify::verify_quote`'s own
+`caveats()`. They do not fail verification (`verify_quote` returns `Ok` with
+them recorded, TCB `UpToDate`, no advisory IDs), but they weaken what this
+attestation proves independently of TCB status; a proxy checking this
+deployment surfaces that as a warning on every connection (`src/proxy/gate.rs`'s
+`warnings`), not silently.
+
+## 4. Break it on purpose: deploy a different image
 
 **RTMR3 is a hash chain, zero at boot, and only a reboot resets it — the
-sidecar refuses a second extension in the same boot.** So "deploy a different
-image" cannot be `docker compose up -d --build app` alone against an
-already-running sidecar: the attester process holding the current boot's one
-extension is still running, its certificate is still the one bound to the
-first image, and rebuilding the workload container underneath it changes
-nothing the sidecar has attested to. The real procedure is: change the image,
-reboot the VM, and run `up.sh` again on the fresh boot.
+sidecar refuses a second extension in the same boot.** So "deploy a
+different image" cannot be a rebuild against an already-running sidecar: the
+attester process holding the current boot's one extension is still running,
+its certificate is still bound to the first image, and nothing short of a
+reboot changes what it has already attested to. The real procedure is:
+publish a genuinely different image (a new `publish.sh` run, producing a new
+manifest digest), reboot the VM so RTMR3 is back to 48 zero bytes, and run
+`up.sh` again with the new digest on the fresh boot.
+
+This deployment did exactly that: a second app image, published the same
+way as [§1](#1-publish-build-once-off-the-vm) but with different content,
+was deployed on a fresh boot. `up.sh`'s own three-way consistency check
+(derived vs. sysfs vs. the quote) is the hard-failure gate on this — its
+source (`deploy/gcp/up.sh`) refuses to declare success if the quote's RTMR3
+and a fresh sysfs read disagree:
+
+```
+if [ "$rtmr3_in_quote" != "$rtmr3_observed" ]; then
+  echo "up.sh: *** the quote's RTMR3 and the sysfs RTMR3 do not agree ***" >&2
+  ...
+  exit 1
+fi
+```
+
+`examples/gcp-c3.toml`'s own `rtmr3` comment records that this check
+actually fired once, on the second boot, as a **timing race** rather than a
+real disagreement: the post-extension sysfs re-read briefly returned 48 zero
+bytes immediately after the extension, while the quote taken moments earlier
+already showed the correct, extended value; re-reading the same sysfs path
+by hand roughly ten seconds later returned the correct, quote-matching
+value, and the deployment was already up and serving correctly the whole
+time. That comment frames it plainly: *"a timing anomaly in `up.sh`'s own
+consistency check, not a defect in this value or in RTMR3 itself"* — a real,
+once-observed finding about the script's own post-extension read, not about
+the hardware or the design.
+
+With the second image deployed and RTMR3 genuinely different, the same
+proxy, restarted against the same, unmodified `examples/gcp-c3.toml` — whose
+`rtmr3` reference value is still the one derived from the *first* image,
+which is the entire point — refused the connection.
+`examples/gcp-c3.toml` records this directly: *"the proxy's refusal of that
+second boot's genuinely different RTMR3 is exactly the property this
+reference value exists to make possible."* This document does not invent a
+specific `$ curl` transcript for that session — no such file is committed in
+this repository — but the refusal's wording is not a guess either: it is the
+fixed output of `refutation_reason` in `src/proxy/gate.rs`, reached whenever
+`derive` refutes RTMR3 (`Refutation::Rtmr3`), and it is deliberately worded
+differently from an MRTD refutation so that a reader concludes "this is my
+trust domain, running an image I did not declare" rather than "this is not
+my trust domain at all":
+
+```
+the attested RTMR3 was compared to this proxy's rtmr3 reference values and matched
+none of them: <the specific mismatch>. The attested RTMR3 is <hex>, attested by the
+same quote whose MRTD is <hex> — this proves the trust domain but not that the
+declared workload is what is running inside it. You deployed an image that was not
+declared. A refuted measurement is a verification failure, not a weaker trust set.
+```
+
+Nothing is forwarded on that path: this proxy fails closed on every
+verification, binding, collateral or policy failure, with no flag that
+changes it (`README.md`'s ["The proxy, in operational
+detail"](../README.md#the-proxy-in-operational-detail)). The predecessor
+version of this project's own walkthrough guessed at this wording once and
+was wrong about it — this document does not repeat that mistake by guessing
+again for a session that was not captured to a file in this repository.
+
+## 5. Why the old flow needed replacing: rebuilding from identical source does not reproduce the digest
+
+The published-image flow above exists because of a measured finding, not a
+hypothetical one: **`up.sh` used to build the workload image on the VM and
+measure `docker image inspect -f '{{.Id}}'`** — the image *config* digest —
+and that digest does not survive a rebuild of byte-identical source.
+`scripts/publish-digest-stability.sh` (written to measure this directly) was
+run for real against `parallax-demo`'s own Docker engine, and its committed,
+verbatim transcript is `tests/fixtures/publish-digest-stability/transcript.txt`.
+
+**It did not complete cleanly, and that is recorded rather than smoothed
+over.** The script builds `deploy/gcp/app` twice, `--no-cache`, back to
+back, from unchanged source, prints both `.Id` values, and — to isolate
+*which* field differs — extracts each build's raw image config JSON with
+`docker save` and diffs it. That extraction step's own self-check aborted:
 
 ```console
-$ sed -i 's/hello from inside the trust domain/hello from a DIFFERENT, undeclared image/' deploy/gcp/app/app.py
-$ sudo systemctl reboot
-   ... (VM comes back; RTMR3 confirmed 48 zero bytes before proceeding)
-$ cd deploy/gcp && sudo ./up.sh
-==> building
-   ... (docker compose build, both images)
-==> app image: sha256:ffd869a605b6faf48a7e478478af7036a275d05d1d178d831fc644152e1274e4
-==> wrote /home/…/parallax/deploy/gcp/attest.toml
-==> RTMR3 this deployment should produce (derived offline): 28af8e56401b8492be5f9c1a9ac8fc7b6a3d271ce2429560efe50c350def3b65736228cd995cf47701741f7863febc96
-==> starting
- Container parallax-demo-app  Recreated
- Container parallax-demo-attest  Recreated
-==> waiting for the sidecar to bind :8443
-==> reference values for examples/gcp-c3.toml
-    MRTD                 c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5
-    RTMR3 (derived)      28af8e56401b8492be5f9c1a9ac8fc7b6a3d271ce2429560efe50c350def3b65736228cd995cf47701741f7863febc96
-    RTMR3 (sysfs)        28af8e56401b8492be5f9c1a9ac8fc7b6a3d271ce2429560efe50c350def3b65736228cd995cf47701741f7863febc96
-    RTMR3 (in the quote) 28af8e56401b8492be5f9c1a9ac8fc7b6a3d271ce2429560efe50c350def3b65736228cd995cf47701741f7863febc96
-
-==> the stack is up.
+$ docker save -o ".../old-flow-build1-config.json.extract/image.tar" "sha256:6a05b841795d32593433776443f8b7aa86d0f4fcf8a426425d79874baf25e1ef"
+[exit 0]
+...
+publish-digest-stability.sh: sha256 of the extracted config blob
+  (1f0f1c5139541190d767c507a75944bf4a53cdc4057cbc4313c808374ef03155) for "build 1" does not equal .Id (sha256:6a05b841795d32593433776443f8b7aa86d0f4fcf8a426425d79874baf25e1ef).
+  This extraction is not the file .Id actually hashes on this
+  Docker version; nothing downstream of this point can be trusted.
 ```
 
-MRTD is unchanged — same firmware, same platform. RTMR3 is a completely
-different value, and all three ways of reading it (the derivation from the
-image digest alone, the sysfs register, and a quote taken after extension)
-agree with each other, exactly as Task 6's original run did. `up.sh`'s own
-hard-failure check on that three-way agreement did not fire.
+Root cause, confirmed by hand immediately after
+(`tests/fixtures/publish-digest-stability/manual-verification.txt`):
+`parallax-demo`'s Docker uses the containerd image store
+(`Storage Driver: overlayfs`, `driver-type: io.containerd.snapshotter.v1`),
+under which `docker save`'s export layout differs from the legacy format the
+script's `extract_config` helper was written against. The script refused to
+continue on a wrong assumption rather than diff the wrong file and report a
+confident, wrong answer — by design, and it is worth saying plainly that
+**this proof did not run cleanly end to end**; it aborted, and what follows
+was recovered by hand, on the same Docker daemon, minutes later, using a
+different diagnostic.
 
-Now the same proxy, restarted against the **same, unmodified**
-`examples/gcp-c3.toml` — its `rtmr3` reference value is still the one derived
-from the *first* image, because that is the point:
+**What survived the abort regardless.** Two `--no-cache` builds of unchanged
+`deploy/gcp/app` source, from the same cached base layer in both builds
+(`---> 6d43704baacd`, neither build passing `--pull`, so base-image tag
+drift is ruled out for this run), produced two different `.Id` values —
+that claim needs no `extract_config` at all, and stands directly from
+`transcript.txt`:
+
+```
+build 1: sha256:6a05b841795d32593433776443f8b7aa86d0f4fcf8a426425d79874baf25e1ef
+build 2: sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83
+```
+
+**What the abort cost, and how it was recovered.** The specific differing
+field was recovered by a different method — diffing `docker image
+inspect`'s own JSON for the two builds instead of the raw config blob
+`docker save` was meant to export
+(`tests/fixtures/publish-digest-stability/manual-verification.txt`):
 
 ```console
-$ cargo run --features fetch-collateral --bin parallax-proxy -- examples/gcp-c3.toml
-listening on 127.0.0.1:8080 -> https://203.0.113.10:8443 (policy examples/policy-proxy.toml, collateral https://api.trustedservices.intel.com/tdx/certification/v4, cache TTL 43200s)
+$ ssh 203.0.113.10 'docker image inspect sha256:6a05b841795d32593433776443f8b7aa86d0f4fcf8a426425d79874baf25e1ef > /tmp/build1.json'
+$ ssh 203.0.113.10 'docker image inspect sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83 > /tmp/build2.json'
+$ ssh 203.0.113.10 'diff /tmp/build1.json /tmp/build2.json'
+18c18
+<         "Created": "2026-08-11T06:09:31.105112677Z",
+---
+>         "Created": "2026-08-11T06:09:34.064436272Z",
+20c20
+<             "digest": "sha256:6a05b841795d32593433776443f8b7aa86d0f4fcf8a426425d79874baf25e1ef",
+---
+>             "digest": "sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83",
+...
 ```
 
-```console
-$ curl -sv http://127.0.0.1:8080/
-*   Trying 127.0.0.1:8080...
-* Connected to 127.0.0.1 (127.0.0.1) port 8080
-> GET / HTTP/1.1
-> Host: 127.0.0.1:8080
-> User-Agent: curl/8.7.1
-> Accept: */*
->
-* Request completely sent off
-< HTTP/1.1 502 Bad Gateway
-< Content-Type: text/plain; charset=utf-8
-< Content-Length: 887
-< Connection: close
-<
-parallax refused this connection.
+The top-level `"Created"` build timestamp is the field that differs; every
+other line that changes (`digest`, `Id`, `LastTagTime`, `Parent`,
+`RepoDigests`, `RepoTags`) is a downstream consequence of that, since the
+image ID is a function of the config content and the config embeds
+`Created`. This is now the measured statement in `deploy/gcp/app/Dockerfile`
+itself, replacing what used to be a hedge between two candidate causes:
 
-the attested RTMR3 was compared to this proxy's rtmr3 reference values and matched none of them: the attested RTMR3 matches none of the 1 configured RTMR3 reference values. The attested RTMR3 is 28af8e56401b8492be5f9c1a9ac8fc7b6a3d271ce2429560efe50c350def3b65736228cd995cf47701741f7863febc96, attested by the same quote whose MRTD is c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5 — this proves the trust domain but not that the declared workload is what is running inside it. You deployed an image that was not declared. A refuted measurement is a verification failure, not a weaker trust set.
+> What actually gets measured into RTMR3 is the *registry manifest digest*
+> `deploy/gcp/publish.sh` reads back after building and pushing this image
+> once, from the operator's machine — not a local `docker image inspect -f
+> '{{.Id}}'` taken here or on the VM [...] `scripts/publish-digest-stability.sh`
+> measured this directly: two `--no-cache` builds of this Dockerfile, back
+> to back, from unchanged `app.py`, produced two different image IDs [...] the
+> specific differing field was confirmed by a different method instead [...]:
+> the top-level `"Created"` build timestamp, and nothing else that is not a
+> direct consequence of it.
 
-Nothing was forwarded. This proxy fails closed: a connection it could not verify is refused rather than passed through, because forwarding what it could not check would produce the appearance of a check.
-```
+Part 2 of the script — confirming the *new* flow's stability — never ran at
+all, because the abort happened before it. That claim was recovered by hand
+instead, using a scratch tag pushed to the same repository; it is what
+[§1](#1-publish-build-once-off-the-vm) above quotes in full.
 
-**This is the plan's Step 1, run for real, and it does not read like the
-plan's sketch.** The plan guessed `502 … rtmr3 does not match any configured
-reference value`. The real text is longer, more specific, and arrived by a
-different route than the plan assumed: Task 5.5 built RTMR3 refusal through
-the same classify → derive → policy path MRTD already used, rather than as a
-special case, so the message is `Refutation::Rtmr3`'s own wording
-(`src/proxy/gate.rs::refutation_reason`) — it names the attested RTMR3, names
-the MRTD attested by the *same* quote (so a reader can see the platform still
-checked out), and says in prose what that combination means: *"this proves the
-trust domain but not that the declared workload is what is running inside
-it. You deployed an image that was not declared."* Nothing above was reworded
-to match the plan; it is copied from the terminal.
-
-The proxy's decision record for the refused connection:
-
-```json
-{
-  "record": "parallax.decision-record.v1",
-  "decision": "refuse",
-  "reason": "the attested RTMR3 was compared to this proxy's rtmr3 reference values and matched none of them: the attested RTMR3 matches none of the 1 configured RTMR3 reference values. The attested RTMR3 is 28af8e56401b8492be5f9c1a9ac8fc7b6a3d271ce2429560efe50c350def3b65736228cd995cf47701741f7863febc96, attested by the same quote whose MRTD is c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5 — this proves the trust domain but not that the declared workload is what is running inside it. You deployed an image that was not declared. A refuted measurement is a verification failure, not a weaker trust set.",
-  "warnings": [],
-  "connection": 0,
-  "mrtd": "c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5",
-  "manifest": null
-}
-```
-
-`manifest` is `null` — not an empty manifest, a *missing* one. There is no
-Residual Trust Manifest for a claim that was never established; the stderr
-line beside this record says exactly that:
-`note: no Residual Trust Manifest for this connection — the evidence did not
-verify, and there is no residual trust set for a claim that was not
-established`.
-
-## 4. A real mistake: a race in the reboot wait, not a hardware surprise
-
-Worth recording, because this document's standard is to say what actually
-happened rather than a cleaned-up version of it. After capturing the refusal
-above, this walkthrough tried to redeploy the *original* app to leave the
-demo in its accepting state. That needs another reboot, and the script
-waiting for the VM to come back polled `uptime` and accepted anything under
-five minutes as "freshly booted." That threshold was too loose: `gcloud
-compute ssh` reconnected to the **still-shutting-down previous boot**, whose
-uptime legitimately read "3 min" — not a fresh zero — and `up.sh` correctly
-refused:
-
-```
-up.sh: RTMR3 already holds 28af8e56…, not 48 zero bytes.
-  Something extended it in this boot already — most likely an
-  earlier run of this script. Extension is a hash chain and only a
-  reboot resets it:
-    sudo reboot
-```
-
-That is the guard working exactly as designed — it caught an operator
-mistake (this one) before it could produce a confusing partial state. It is
-not the "no way to reset an RTMR short of rebooting the VM" claim in
-`docs/spike-rtmr-gcp.md` turning out to be wrong: a follow-up check
-(`who -b`, `/proc/uptime`, `last reboot`) showed the actual fresh boot landed
-a few seconds later, and on *that* boot RTMR3 read 48 zero bytes exactly as
-expected before `up.sh` ran again. The lesson is about this walkthrough's own
-polling loop, not about the hardware: waiting on a GCP reboot needs a signal
-that distinguishes "the old boot hasn't gone down yet" from "the new boot has
-come up", and `uptime < 5 minutes` is not that signal.
-
-## 5. A second real finding: rebuilding from identical source does not reproduce the digest
-
-Having learned the polling lesson, the walkthrough restored `app.py` to its
-original content byte-for-byte and rebuilt:
-
-```console
-$ cd deploy/gcp/app && cp app.py.orig app.py   # confirmed identical to the original
-$ sudo systemctl reboot                          # confirmed genuinely fresh this time
-$ cd ../.. && sudo ./up.sh
-    ...
-==> RTMR3 this deployment should produce (derived offline): 239e9ce84b8978f497d3ae49380ba9f05e1bef68d5cb6399d289b6abb71160aa0d0b90837461874fe6c86244212a9ecd
-```
-
-That is a **third** RTMR3 value — different from both the original
-(`1d2860c8…`) and the deliberately-different image (`28af8e56…`) — from a
-build whose source is byte-identical to the original. Task 6's own
-provisioning notes already flagged this as a concern rather than a
-hypothetical: *"Rebuilding `deploy/gcp/app` (even with identical `app.py`,
-since base-image layer metadata is not perfectly reproducible across builds)
-will very likely change the image digest and therefore RTMR3."* This
-walkthrough is the confirmation:
-identical Python source, different `docker image inspect -f '{{.Id}}'`,
-different RTMR3. Most likely cause is the base image's own layer metadata
-(`python:3.12-alpine`'s digest is pinned by tag, not by a fixed manifest
-digest, in `deploy/gcp/app/Dockerfile`) or build-time timestamps baked into
-image config — this walkthrough did not isolate which, and does not claim to.
-
-**Consequence, stated plainly:** at the time this walkthrough was written,
-`parallax-demo`'s live RTMR3 matches neither the value in
-`examples/gcp-c3.toml` nor the deliberately-different value demonstrated
-above. Running `parallax-proxy` against `examples/gcp-c3.toml` right now
-would refuse — correctly, on the facts, even though the *content* being
-served is the originally-declared app. That is not a defect in the proxy or
-in RTMR3 checking; it is a real limit on what an image-digest-keyed reference
-value can promise across rebuilds, recorded here rather than smoothed over by
-either re-deriving `examples/gcp-c3.toml` against this third value (which
-would erase the record of what Task 6 actually measured and verified) or by
-leaving the live deployment's actual state unstated.
-
-Both transcripts above are still exactly what they say they are: real
-commands, run against real hardware, with real output, each at the moment
-recorded. Nothing about a later rebuild changes what those two runs actually
-did. `tests/fixtures/gcp-c3-bound/` is likewise unaffected — it is a frozen
-capture of the accepting run in §2, verified offline against its own
-`captured-at` timestamp, not a live claim about the VM's current state.
+**Consequence, stated plainly.** The design changed as a direct result of
+this measurement: `publish.sh` now derives the reference value from a digest
+read back from the registry after a single build-and-push, and `up.sh`
+refuses to deploy anything that is not pinned to a manifest digest
+([§2](#2-provision-and-deploy)'s guard). A rebuild of `deploy/gcp/app`
+produces a *new* manifest digest and, deliberately, a *new* reference value
+— it does not silently invalidate the one already deployed, because nothing
+in the running deployment depends on a rebuild reproducing anything. What an
+operator still owns, and what nothing in this repository automates: after
+any real source change, running `publish.sh` again and updating
+`examples/gcp-c3.toml` (or whatever config names the new digest) is a
+manual step, not an enforced one.
 
 ## What this attestation covers, and what it does not
 
-**Covers**, demonstrated against real hardware in this document:
+**Covers**, demonstrated against real hardware:
 
 - The connection terminates inside a genuine Intel TDX trust domain
-  (`verify_quote`, against real Intel collateral, `UpToDate`, no advisories).
-- The quote is bound to the exact key that authenticated the TLS session
-  (`check_binding`, `report_data = SHA-256(SPKI)`, checked against the
-  certificate that authenticated the connection — not merely *a* certificate
-  from the same handshake).
+  (`verify_quote`, against real Intel collateral, `UpToDate`, no advisories
+  — [§3](#3-verify-the-accepting-evidence)).
+- The quote is bound to the exact key that authenticated the connection it
+  arrived on (`check_binding`, `report_data = SHA-256(SPKI)`, accepted for
+  the first time in this repository against a real, hardware-produced
+  binding rather than an `rcgen`-generated test certificate —
+  `tests/fixture_gcp_c3_bound.rs`).
 - The platform firmware matches a configured reference value (MRTD).
-- **The workload's own container image digest matches a configured reference
-  value (RTMR3)** — the one axis that can tell one deployed image from
-  another, and the one this document's refusal demonstrates.
+- **The workload's own published image identity — the registry manifest
+  digest `publish.sh` read back after pushing, not a digest computed
+  locally — matches a configured reference value (RTMR3).** This is the
+  axis that can tell one deployed image from another, and it is the axis
+  [§4](#4-break-it-on-purpose-deploy-a-different-image)'s refusal turns on.
 
 **Does not cover:**
 
+- **What `parallax-attest` actually verified is that the digest its own
+  configuration declares matches, not that the container in front of it is
+  that image.** `up.sh` renders `image_digest` from the same reference it
+  pulls, and the sidecar measures that value — it never re-derives the
+  digest from the running container to confirm the two still agree at
+  measurement time. The deploy tooling asserts the binding; the attester
+  trusts it. An attestation that silently means "the deploy tooling claimed
+  this image" rather than "this image is running" is the overclaim this
+  project exists to attack.
+- **A registry manifest digest and a local image-config digest are
+  indistinguishable by form** — both are 32 raw bytes, hex-encoded, prefixed
+  `sha256:`. `parallax reference-value` cannot detect that an operator
+  pasted the wrong kind of digest; nothing in this schema can, because the
+  two are not different types anywhere in this tool. What actually enforces
+  the distinction is `up.sh` refusing to deploy anything that is not
+  digest-pinned to begin with, and this document explaining which digest is
+  the right one — not a check inside the tool itself.
 - **Anything about the workload's behaviour beyond its image digest.** RTMR3
-  names *which* image is running; it says nothing about what that image does
-  once it is running, what it logs, or what it does with data after
+  names *which* image is running; it says nothing about what that image
+  does once it is running, what it logs, or what it does with data after
   receiving it.
-- **Runtime drift.** The measurement is taken once, at the sidecar's startup.
-  A workload that behaves correctly at boot and is later compromised through
-  a running-process exploit is not something RTMR3 — or anything else in this
-  stack — detects.
-- **Reproducible rebuilds of the same source.** §5 below rebuilt
-  `deploy/gcp/app` from `app.py` restored byte-for-byte to its original
-  content and got a *third* RTMR3 value, different from both this document's
-  first deployment and its deliberately-different one. Most likely cause is
-  the base image's own layer metadata or a build-time timestamp — not
-  isolated here. The consequence: an RTMR3 reference value is pinned to one
-  specific build's image digest, not to "this source tree," and rebuilding
-  without redeploying is enough to make a correct, unchanged deployment start
-  failing its own reference value. Nothing in this repository detects or
-  works around that; it is a property of image-digest-keyed reference values
-  that an operator has to manage outside this tool.
+- **Runtime drift.** The measurement is taken once, at the sidecar's
+  startup. A workload that behaves correctly at boot and is later
+  compromised through a running-process exploit is not something RTMR3 — or
+  anything else in this stack — detects.
+- **The provisioning authentication path has not been exercised end to
+  end.** `deploy/gcp/provision.sh`'s `--scopes=cloud-platform` and
+  `deploy/gcp/bootstrap.sh`'s Docker credential helper are the corrected
+  path for a freshly provisioned VM to authenticate its own `docker pull`;
+  the VM this document's deployment actually ran on predated both, and its
+  operator worked around the resulting gap by copying an access token in by
+  hand — see both scripts' own comments, and [§2](#2-provision-and-deploy).
+  A future provisioning run should treat confirming the fix as a first-class
+  check, not an assumption.
+- **Rebuilding this image from unchanged source does not reproduce its old
+  digest, and this flow does not need it to — but nothing here automates
+  the consequence.** [§5](#5-why-the-old-flow-needed-replacing-rebuilding-from-identical-source-does-not-reproduce-the-digest)
+  is the measured reason the old build-on-the-VM design was replaced. The
+  flow that replaced it is not itself a rebuild-reproducibility fix: a real
+  source change still requires an operator to run `publish.sh` again and
+  update the reference value by hand, and nothing in this repository warns
+  if that step is skipped after a real change.
 - **The unconfigured case.** This walkthrough's refusal only happens because
   `examples/gcp-c3.toml` sets `[reference_values].rtmr3` to a real,
   previously-derived value. If an operator's proxy configuration leaves that
   list empty, RTMR3 is never compared to anything — same convention as an
   empty `reference_values` (MRTD) list, `require = false` by default — and
   the connection is *allowed*, with the gap named in the trust set as
-  `workload_measurement_was_never_compared` and, since the final whole-branch
-  review, surfaced as its own startup and per-connection warning
-  (`src/proxy/gate.rs`'s `warnings`) rather than passing silently. **There is
-  still no `require_rtmr3` flag** mirroring `[reference_values].require` that
-  would let an operator force a refusal the way `require` forces one for
-  MRTD; that remains deliberately deferred. Concretely: this walkthrough's
-  refusal is not a guarantee any deployment gets automatically. It is a
-  property of `examples/gcp-c3.toml` specifically configuring `rtmr3`, and an
-  operator who forgets to would get RTMR3-blind acceptance instead — warned
-  about on every connection, but not refused, since nothing in this schema
-  currently forces the check the way it can force MRTD's.
-- **Anything Task 5's original spike would have called BLOCKED.** It was not:
-  `docs/spike-rtmr-gcp.md` and `tests/spike_rtmr_fixture.rs` establish that a
-  GCP TDX guest can extend RTMR3 at all, and this walkthrough is the
-  end-to-end consequence of that answer being yes. The fallback design this
-  sentence would otherwise point to — VM-only attestation with an explicit
-  unmeasured-workload assumption, carried in Task 4 Step 4 — was not needed.
+  `workload_measurement_was_never_compared` and surfaced as its own startup
+  and per-connection warning (`src/proxy/gate.rs`'s `warnings`) rather than
+  passing silently. **There is still no `require_rtmr3` flag** mirroring
+  `[reference_values].require` that would let an operator force a refusal
+  the way `require` forces one for MRTD; that remains deliberately deferred.
+- **Anything Task 5's original spike would have called BLOCKED.** It was
+  not: `docs/spike-rtmr-gcp.md` and `tests/spike_rtmr_fixture.rs` establish
+  that a GCP TDX guest can extend RTMR3 at all, and this document is the
+  end-to-end consequence of that answer being yes.
 - **Anything about a second platform, region, or operator.** One instance
   family, one zone, one project, one person running both ends. See the
   README's ["What is real, and what is not"](../README.md#what-is-real-and-what-is-not)
   for how far the evidence base reaches beyond this single deployment.
-- **Two PCK platform caveats** (`dynamic-platform`, `smt-enabled`) are present
-  on every quote this deployment has produced, in both the accepting and the
-  refusing run. They do not fail verification — `verify_quote` returns `Ok`
-  with them recorded — but they weaken what the attestation proves
-  independently of TCB status, and the proxy's own warning says so on every
-  connection (§2's decision record).
+- **Two PCK platform caveats** (`dynamic-platform`, `smt-enabled`) are
+  present on the quote captured in [§3](#3-verify-the-accepting-evidence).
+  They do not fail verification — `verify_quote` returns `Ok` with them
+  recorded — but they weaken what the attestation proves independently of
+  TCB status, and the proxy's own warning says so on every connection.
 
 ## Reproducing this
 
-**Not against `parallax-demo` any longer — that VM is gone.** Everything
-below describes what reproducing this would take against a live instance; a
-reader today needs to provision their own (`deploy/gcp/provision.sh`) and
-redo Task 6's derivation of fresh reference values against it, rather than
-running the commands below unmodified against this document's IP.
-
-The accepting half, against a live instance, needs nothing but the laptop
-side:
+**Not against `parallax-demo` any longer — that VM is gone.** A reader today
+needs to provision a fresh instance (`deploy/gcp/provision.sh`) and redo the
+publish-then-pull sequence above against it — [§1](#1-publish-build-once-off-the-vm)
+and [§2](#2-provision-and-deploy), in that order — rather than running any
+command below unmodified against this document's address.
 
 ```
-cargo run --features fetch-collateral --bin parallax-proxy -- examples/gcp-c3.toml
+./deploy/gcp/provision.sh PROJECT ZONE NAME
+./deploy/gcp/publish.sh PROJECT REGION REPOSITORY
+# on the guest, with the exact reference publish.sh printed:
+./deploy/gcp/up.sh <image-ref>@sha256:<digest> --check
+./deploy/gcp/up.sh <image-ref>@sha256:<digest>
+```
+
+`provision.sh`'s corrected authentication path (`--scopes=cloud-platform`,
+`bootstrap.sh`'s credential helper) has not been run against real hardware —
+see the caveat in [§2](#2-provision-and-deploy) — so a first attempt at this
+should treat a failed `docker pull` on the guest as a real possibility to
+diagnose, not a surprise.
+
+From this machine, against a live instance, with fresh reference values
+derived from that instance's own publish (never this document's — a fresh
+instance means a fresh digest and a fresh RTMR3):
+
+```
+cargo run --features fetch-collateral --bin parallax-proxy -- your-config.toml
 curl http://127.0.0.1:8080/
 ```
 
-against whatever is currently running on the instance — which, per §5 above,
-may or may not match `examples/gcp-c3.toml`'s reference values at any given
-moment, depending on what was last deployed there (and, now, will not match
-by default at all: those reference values name `parallax-demo` specifically).
-The refusing half needs guest access: change `deploy/gcp/app/app.py`, reboot,
-confirm RTMR3 reads 48 zero bytes, run `sudo ./up.sh`, then repeat the proxy
-commands above from the laptop. Both halves cost real time (a multi-minute
-Rust release build inside the `attest` container image, per `up.sh`'s own
-build step) and, for the refusing half, a VM reboot — they are not something
-to script into a CI gate on this hardware.
+The refusing half needs guest access: publish a genuinely different image,
+reboot, confirm RTMR3 reads 48 zero bytes, run `up.sh` again with the new
+digest, then repeat the proxy commands above from the laptop, still pointed
+at the *original* reference values. Both halves cost real time (a
+multi-minute Rust release build inside the `attest` container image, per
+`up.sh`'s own build step) and, for the refusing half, a VM reboot — they are
+not something to script into a CI gate on this hardware.
