@@ -249,12 +249,37 @@ gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet >/dev/null
 # would mean this deployment runs on a platform the spike's findings were
 # never checked against. `--maintenance-policy=TERMINATE` is not optional for
 # a confidential VM: they cannot live-migrate.
+#
+# `--scopes=cloud-platform` -- without it, the granted IAM role above is
+# inert. Access scopes and IAM roles are two independent gates on a GCE
+# service account's own token: IAM decides what the token is *allowed* to
+# do, but the instance's access scopes decide which APIs a token minted for
+# this VM can be requested against *at all*, and `gcloud compute instances
+# create` run without `--scopes` (as this call did until this line was
+# added) gets the historical default set --
+# `devstorage.read_only,logging.write,monitoring.write,pubsub,service.management.readonly,servicecontrol,trace.append`
+# -- which does not include Artifact Registry or `cloud-platform` in any
+# form. A VM created that way cannot authenticate `docker pull` against the
+# repository above using its own identity no matter what is granted to
+# `$VM_SA` -- the `roles/artifactregistry.reader` binding above would be
+# silently inert, exactly the gap Task 7's hardware run hit and
+# had to work around by hand. `cloud-platform.read-only` -- narrower, and in
+# principle sufficient for a VM that only ever pulls -- was not used
+# instead: this repository has not run a real deployment against it to
+# confirm Artifact Registry's Docker-pull path accepts it, and shipping an
+# unverified narrower scope that silently breaks provisioning on someone
+# else's machine is a worse failure than granting a wider scope that is
+# already bounded by the single-repository IAM grant above. The blast
+# radius `cloud-platform` opens beyond what this VM needs is closed at the
+# IAM layer, not the scope layer, the same way `roles/artifactregistry.reader`
+# is scoped to one repository rather than the project.
 echo "==> creating $VM (c3-standard-4, TDX) in $PROJECT/$ZONE"
 g compute instances create "$VM" --zone="$ZONE" \
   --machine-type=c3-standard-4 --confidential-compute-type=TDX \
   --maintenance-policy=TERMINATE \
   --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud \
-  --boot-disk-size=50GB --tags="$TAG" >/dev/null
+  --boot-disk-size=50GB --tags="$TAG" \
+  --scopes=cloud-platform >/dev/null
 
 # A tarball of the working tree, not `git archive`: a demo is routinely run
 # against a change that has not been committed yet, and deploying HEAD while
@@ -285,12 +310,17 @@ if [ "$copied" = no ]; then
 fi
 
 echo "==> unpacking and installing Docker"
+# $REGION, quoted into the remote command below rather than left for
+# bootstrap.sh to guess: bootstrap.sh has no zone or project of its own to
+# derive it from (it is also run stand-alone, or by hand, on an already-
+# provisioned VM -- see its own header), and this is the one place that
+# already computed it correctly from `--zone`'s convention.
 g compute ssh "$VM" --zone="$ZONE" --command='
   set -euo pipefail
   rm -rf ~/parallax && mkdir -p ~/parallax
   tar -C ~/parallax -xzf ~/parallax.tar.gz
   chmod +x ~/parallax/deploy/gcp/*.sh
-  ~/parallax/deploy/gcp/bootstrap.sh'
+  ~/parallax/deploy/gcp/bootstrap.sh '"'$REGION'"
 
 IP="$(gcloud compute instances describe "$VM" --zone="$ZONE" --project="$PROJECT" \
         --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
