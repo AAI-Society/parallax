@@ -1,29 +1,66 @@
 #!/usr/bin/env bash
-# Build the demo stack, render the attester's configuration from the app image
-# that was actually built, and either dry-run it or run it for real. Run on
-# the confidential VM, from this directory:
+# Pull the demo stack's workload image by digest, render the attester's
+# configuration from that digest, and either dry-run it or run it for real.
+# Run on the confidential VM, from this directory:
 #
-#   ./up.sh --check     # build, render, probe both TEE interfaces, extend nothing
-#   ./up.sh              # the above, then extend RTMR3 (once per boot) and serve
+#   ./up.sh <image-ref>@sha256:<digest> --check   # pull, render, probe both TEE interfaces, extend nothing
+#   ./up.sh <image-ref>@sha256:<digest>            # the above, then extend RTMR3 (once per boot) and serve
 #
-# Why the configuration is rendered rather than committed: `[workload]
-# .image_digest` is what gets measured into RTMR3, so it has to name the image
-# this host just built. A digest written down in advance would be a claim
-# about a build nobody has run yet, and the first thing to go stale.
+# <image-ref>@sha256:<digest> is what deploy/gcp/publish.sh prints, after it
+# builds the image, pushes it, and reads its manifest digest back from the
+# registry -- run that first, on your own machine, not this one.
+#
+# Why this VM pulls rather than builds: `docker image inspect -f '{{.Id}}'`,
+# which up.sh used to measure, is the digest of the image *config JSON*. That
+# JSON embeds a `created` timestamp with nanosecond precision, so it changes
+# on every build regardless of content -- a rebuild from byte-identical
+# source produced a different RTMR3, and the deployment matched no committed
+# reference value. Pulling the artifact publish.sh already pushed transfers
+# the image config instead of regenerating it, which is what makes
+# `[workload].image_digest` -- what gets measured into RTMR3 -- stable by
+# construction.
+#
+# Why the configuration is rendered rather than committed: the digest is only
+# known once an image has actually been published, and rendering it from the
+# argument below -- rather than keeping a second, committed copy of it --
+# means there is exactly one place an operator has to type it.
 #
 # Why `--check` is a mode of this script, not an afterthought: RTMR3 is a hash
 # chain only a reboot resets, so a full run is spendable exactly once per
-# boot. `--check` builds, renders the real configuration, and confirms both
+# boot. `--check` pulls, renders the real configuration, and confirms both
 # TEE interfaces are reachable *from inside the container* without writing to
 # either — see `parallax::attest::check` — so everything cheap to shake out is
 # shaken out before the boot's one extension is spent.
 set -euo pipefail
 
+if [ $# -lt 1 ]; then
+  echo "usage: up.sh <image-ref>@sha256:<digest> [--check]" >&2
+  echo "  the argument is the reference deploy/gcp/publish.sh printed after" >&2
+  echo "  publishing the workload image; run that first, on your own machine." >&2
+  exit 1
+fi
+IMAGE_REF="$1"
+
 MODE=run
-case "${1:-}" in
+case "${2:-}" in
   --check) MODE=check ;;
   "")      ;;
-  *)       echo "usage: up.sh [--check]" >&2; exit 1 ;;
+  *)       echo "usage: up.sh <image-ref>@sha256:<digest> [--check]" >&2; exit 1 ;;
+esac
+
+# ---------------------------------------------------------------------------
+# Guard: refuse anything that is not digest-pinned, before touching Docker
+# ---------------------------------------------------------------------------
+case "$IMAGE_REF" in
+    *@sha256:*) ;;
+    *)
+        # A tag reintroduces exactly the drift this design removes: it can
+        # resolve to different bytes tomorrow, and RTMR3 would change under a
+        # reference value the operator already wrote down.
+        echo "up.sh: '$IMAGE_REF' is not digest-pinned." >&2
+        echo "up.sh: pass <registry>/<repo>@sha256:<manifest>, as publish.sh prints." >&2
+        exit 2
+        ;;
 esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -50,7 +87,7 @@ fi
 # `extend_rtmr3` itself refuses when RTMR3 is not 48 zero bytes, so a second
 # full run in one boot cannot succeed regardless. Checking here rather than
 # letting the sidecar refuse costs nothing and puts the reboot instruction in
-# front of the operator before a multi-minute image build, not after it. Not
+# front of the operator before a multi-minute image pull, not after it. Not
 # applied in `--check` mode, which extends nothing and is therefore safe to
 # repeat, including on a boot where the real extension already happened.
 if [ "$MODE" = run ]; then
@@ -67,26 +104,30 @@ if [ "$MODE" = run ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Build, and resolve what was built
+# Pull, and resolve what was pulled
 # ---------------------------------------------------------------------------
-echo "==> building"
-$DOCKER compose build
+echo "==> pulling $IMAGE_REF"
+$DOCKER pull "$IMAGE_REF"
 
-# `.Id` — the digest of the image config — rather than `.RepoDigests`, which
-# is empty for an image built here and never pushed to a registry. It is the
-# identifier `docker images --no-trunc` prints, so an operator can check it
-# against this deployment without trusting this script's own formatting.
-APP_IMAGE_ID="$($DOCKER image inspect -f '{{.Id}}' parallax-demo-app)"
-case "$APP_IMAGE_ID" in
-  sha256:????????????????????????????????????????????????????????????????) ;;
-  *)
-    echo "up.sh: docker reported the app image as '$APP_IMAGE_ID', which is" >&2
-    echo "  not sha256: followed by 64 characters. Refusing to write it into" >&2
-    echo "  a configuration the sidecar would then reject at startup." >&2
-    exit 1
-    ;;
-esac
-echo "==> app image: $APP_IMAGE_ID"
+# docker-compose.yml's `app` service still names its image
+# `parallax-demo-app` (and still carries a `build:` directive, for local
+# development off this script). Tagging the pulled artifact under that name
+# makes compose find an image already present under the name it expects, so
+# it runs what was just pulled instead of falling back to `build:`.
+$DOCKER tag "$IMAGE_REF" parallax-demo-app
+
+# The sidecar is still compiled from this checkout's source, never pulled —
+# only the workload's identity has to be pinnable and stable ahead of time;
+# the sidecar's does not feed RTMR3.
+echo "==> building the attest sidecar"
+$DOCKER compose build attest
+
+# The sha256:... portion of $IMAGE_REF becomes image_digest below. It is the
+# registry's manifest digest — what publish.sh read back after pushing, not
+# a local `docker image inspect` computation. See that script for why its
+# local config digest (`.Id`) is refused as a source for this value.
+APP_IMAGE_DIGEST="${IMAGE_REF#*@}"
+echo "==> app image: $IMAGE_REF"
 
 # ---------------------------------------------------------------------------
 # Render the attester configuration
@@ -96,8 +137,8 @@ echo "==> app image: $APP_IMAGE_ID"
 cat > attest.toml <<EOF
 # Rendered by deploy/gcp/up.sh — do not edit; re-run the script instead.
 # See examples/attest.toml for what each field means. The only value here
-# that is not fixed is image_digest, which names the app image this host
-# just built.
+# that is not fixed is image_digest, which is the manifest digest of the
+# image this host was just told to pull.
 
 # Faces the verifying proxy, which runs on another machine (the laptop).
 listen = "0.0.0.0:8443"
@@ -107,31 +148,11 @@ listen = "0.0.0.0:8443"
 app = "127.0.0.1:3000"
 
 [workload]
-# docker image inspect -f '{{.Id}}' parallax-demo-app
-image_digest = "$APP_IMAGE_ID"
+# The sha256:... portion of the <image-ref>@sha256:<digest> this script was
+# invoked with — the registry manifest digest deploy/gcp/publish.sh printed.
+image_digest = "$APP_IMAGE_DIGEST"
 EOF
 echo "==> wrote $HERE/attest.toml"
-
-# ---------------------------------------------------------------------------
-# The reference values a verifier needs, derived before anything is deployed
-# ---------------------------------------------------------------------------
-# This is what `ratls::expected_rtmr3` is for: it is computable from the image
-# digest alone, offline, before the sidecar has run. Reading a reference value
-# off the running deployment instead would be circular — a reference derived
-# from the image being checked cannot detect that the wrong image was
-# deployed, which is the entire property this pair is meant to demonstrate.
-#
-# The two lines below are `ratls::workload_measurement` and
-# `ratls::expected_rtmr3` in shell:
-#
-#   workload_measurement(d) = SHA-384(d)          -- d is the 32 raw digest bytes
-#   expected_rtmr3(m)       = SHA-384(0^48 || m)
-#
-digest_hex="${APP_IMAGE_ID#sha256:}"
-measurement="$(printf '%s' "$digest_hex" | xxd -r -p | sha384sum | cut -d' ' -f1)"
-expected_rtmr3="$( { head -c 48 /dev/zero; printf '%s' "$measurement" | xxd -r -p; } \
-                   | sha384sum | cut -d' ' -f1)"
-echo "==> RTMR3 this deployment should produce (derived offline): $expected_rtmr3"
 
 # ---------------------------------------------------------------------------
 # --check: probe both TEE interfaces from inside the container, and stop
@@ -144,7 +165,7 @@ if [ "$MODE" = check ]; then
   $DOCKER compose run --rm attest --check /etc/parallax/attest.toml
   echo
   echo "==> ready. To spend this boot's one RTMR3 extension and serve:"
-  echo "    $HERE/up.sh"
+  echo "    $HERE/up.sh $IMAGE_REF"
   exit 0
 fi
 
@@ -175,7 +196,7 @@ if [ "$ready" != yes ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# What the deployment actually reports, against what was derived
+# What the deployment actually produced
 # ---------------------------------------------------------------------------
 rtmr3_observed="$(sudo xxd -p -c 48 "$RTMR3_PATH" | tr -d '\n')"
 
@@ -196,24 +217,27 @@ mrtd="$(xxd -p -s 184 -l 48 /tmp/parallax-demo-quote.bin | tr -d '\n')"
 rtmr3_in_quote="$(xxd -p -s 520 -l 48 /tmp/parallax-demo-quote.bin | tr -d '\n')"
 
 echo
-echo "==> reference values for examples/gcp-c3.toml"
+echo "==> what this deployment produced"
 echo "    MRTD                 $mrtd"
-echo "    RTMR3 (derived)      $expected_rtmr3"
 echo "    RTMR3 (sysfs)        $rtmr3_observed"
 echo "    RTMR3 (in the quote) $rtmr3_in_quote"
+echo
+echo "==> compare these against the reference value deploy/gcp/publish.sh"
+echo "    printed for $IMAGE_REF (re-derive it offline any time with:"
+echo "    cargo run --bin parallax -- reference-value --image-digest $APP_IMAGE_DIGEST)."
 
-# A mismatch is a real finding — the attester and whoever predicted the
-# reference value have disagreed — so it is a non-zero exit, not a warning.
-# Copying the observed value into the configuration instead would make this
-# check pass and destroy the property it exists to demonstrate.
-if [ "$expected_rtmr3" != "$rtmr3_observed" ] || [ "$rtmr3_in_quote" != "$rtmr3_observed" ]; then
+# The quote and the sysfs register are two independent reads of the same
+# hardware state, taken moments apart (see src/attest/rtmr.rs and
+# src/attest/tsm.rs). They should always agree regardless of which image was
+# deployed or what any reference value says; predicting RTMR3 from the image
+# digest offline is `publish.sh`'s job now (via `parallax reference-value`),
+# not this script's — see the module header for why the shell reimplementation
+# of that arithmetic was removed.
+if [ "$rtmr3_in_quote" != "$rtmr3_observed" ]; then
   echo >&2
-  echo "up.sh: *** the derived RTMR3 and the deployment's do not agree ***" >&2
-  echo "  ratls::expected_rtmr3 predicts what this sidecar will extend. If" >&2
-  echo "  that prediction is wrong, every verifier computing a reference" >&2
-  echo "  value offline computes the wrong one, and a correct deployment is" >&2
-  echo "  reported as the wrong image. Do not paper over this by copying the" >&2
-  echo "  observed value in." >&2
+  echo "up.sh: *** the quote's RTMR3 and the sysfs RTMR3 do not agree ***" >&2
+  echo "  These should be identical reads of the same register. Investigate" >&2
+  echo "  before trusting either value." >&2
   exit 1
 fi
 
