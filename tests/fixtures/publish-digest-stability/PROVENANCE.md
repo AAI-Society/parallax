@@ -135,11 +135,26 @@ anything about the image — committing it would only invite a reader to trust
 an extraction the script itself flagged as untrustworthy on this Docker
 version.
 
+**One substitution, applied across this repository before it was made public.**
+The GCP project this was captured in is named `example-project` throughout, in
+place of its real name. It appeared here in registry paths
+(`us-central1-docker.pkg.dev/<project>/parallax-demo/app`) and `gcloud`
+invocations, in both `transcript.txt` and `manual-verification.txt`. The
+manifest below is recomputed over the rewritten files, so it verifies; the
+hashes therefore differ from those in this file's own git history before the
+substitution.
+
+**No digest or measurement passes through the project name.** Every image id,
+config digest and manifest digest recorded here is byte-unchanged — the
+substitution touches the repository path those digests were pushed to, never
+the digests themselves, which is why the RTMR3 values derived from them still
+reproduce exactly.
+
 SHA-256, of every file in this directory except this one:
 
 ```
-0fd87d7573430fb1b8006e5f12e368de96b6170dad8fdce034ee4d5e41ac0cab  transcript.txt
-36f716bba3f849cb0ef130ae0ac1fa01d26b2a16951e364df8b34291c21ea568  manual-verification.txt
+35c95ec0c6536f9b025bca1ae9f6d81d885dece9b2ade736c2a48d13a891552b  transcript.txt
+570673cc600485398a4ad465f36ac1416dc7fa1c73880956193cb28003186866  manual-verification.txt
 47495c6bc13dd35351caad25a97f6e1e4711c9df5fb496fc5a53e8cf3b9d30c2  captured-at
 ```
 

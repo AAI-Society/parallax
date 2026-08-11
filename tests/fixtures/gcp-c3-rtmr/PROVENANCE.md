@@ -44,6 +44,24 @@ thing that has to be read to know which machine a file came from.
 | `captured-at`, `instance-b-captured-at` | RFC 3339 capture time for each instance. The verification clock is pinned to these. |
 | `provider` | The configfs-tsm provider that answered: `tdx_guest`. Instance A's; instance B's transcript shows the same. |
 
+**One substitution, applied across this repository before it was made public.**
+The GCP project this was captured in is named `example-project` throughout, in
+place of its real name. Four files here carried it and were rewritten:
+`transcript.txt`, `instance-b-transcript.txt`, `instance-describe.txt` and
+`instance-b-describe.txt` — in resource URLs, and inside the guest hostnames
+the `uname -a` lines print (`parallax-spike-a-54737.us-central1-a.c.<project>.internal`).
+The manifest below is recomputed over the rewritten files, so it verifies; the
+hashes therefore differ from those in this file's own git history before the
+substitution.
+
+**No measurement passes through the project name.** Every `.bin` quote, both
+collateral bundles, and the capture metadata are byte-unchanged, and their
+hashes below are identical to what they were at capture. The substitution
+touches prose, resource URLs and hostnames only — nothing this fixture attests
+to. The instance ids (`1000000000000000001`, `1000000000000000002`) are
+deliberately left as captured: they identify VMs that no longer exist and are
+what makes the two captures independently checkable against each other.
+
 SHA-256, of every file in this directory except this one:
 
 ```
@@ -56,12 +74,12 @@ a3dfeca795f91244f49cd1204ac132832cffb5da7b4ff03058dfcf633c14960b  instance-b-quo
 baf89bb44d99dcd2607bca13e6fcf3dbbf988776a848459fc0a4cac42a71bc4b  collateral.json
 3681552b02b074db7a6987e56f2592fe65c6f943c7c87d8f5c6b1853f3529d1e  instance-b-collateral.json
 f08cb2ef0423f4aedfa49ed0a5f9172d6b0fe8dc3b70f4fc8598d246eb9457e5  verification.txt
-0ab4c3c5b057fbf6c997826392efd42d3632217b43e704171953b492fd88c631  transcript.txt
-8c97731b5f085da191aa6bbb6cb61c8020f39ff0101c92326bab29a61f145389  instance-b-transcript.txt
+023e565d80df0a31e2b0ad7af683dbab3f961d384b1fa718b513322ea0998354  transcript.txt
+8625edc61586b6c2d2944da551296bd138f5738aca41ca945136f208bd45b37a  instance-b-transcript.txt
 964b64a21a035013b738051a834c935e2d49597cca6b3e6c652ad0fc3aa0acbc  capture-host.txt
 964b64a21a035013b738051a834c935e2d49597cca6b3e6c652ad0fc3aa0acbc  instance-b-capture-host.txt
-18ec2822da541fcaeddd39da94d96793b4a34e1f085319370b078174bbf1411a  instance-describe.txt
-4644a537459db7fd89edd6c21e6cc196bf443da64dbe22e11521e2572084d752  instance-b-describe.txt
+df63c51c56e5b15cc62def8b632a53b84828c401128cad3e80397e8ae0c68f05  instance-describe.txt
+16e21ec1cf76b4377ef4c368fd605dd55bee71e4f65e15ebd23c74626f430094  instance-b-describe.txt
 7c898f06a3fe2a4aeb42c8e9d811d26e1c6ff243426604eb51f9a4854b626897  captured-at
 60b9adf1da7f25205552f8b54c21a371e4c43de33cf867c6f575dc04934cc55d  instance-b-captured-at
 72d8462b0dd08e09959c804e12b2785023b53212bec1498e9fb5813bd2a7bfc7  provider
