@@ -50,14 +50,22 @@ than on MRTD.
   accounting](#what-this-attestation-covers-and-what-it-does-not) below for
   where that boundary actually sits.
 - **A registry manifest digest and a local image-config digest look
-  identical.** Both are `sha256:` followed by 64 hex characters — 32 raw
-  bytes either way. `parallax reference-value --image-digest` cannot tell,
-  from the string alone, whether an operator pasted the value `publish.sh`
-  read back from the registry or the value a stray `docker image inspect -f
-  '{{.Id}}'` produced. Nothing in this tool's type system can reject the
-  wrong one, because the two are not different *types* — see [§5](#5-why-the-old-flow-needed-replacing-rebuilding-from-identical-source-does-not-reproduce-the-digest)
-  for exactly how different the two values are in practice, on the same
-  source, on the same day.
+  identical, and neither "always different" nor "always the same" is
+  supported by anything measured here.** Both are `sha256:` followed by 64
+  hex characters — 32 raw bytes either way. `parallax reference-value
+  --image-digest` cannot tell, from the string alone, whether an operator
+  pasted the value `publish.sh` read back from the registry or the value a
+  stray `docker image inspect -f '{{.Id}}'` produced. Nothing in this tool's
+  type system can reject the wrong one, because the two are not different
+  *types* — see [§5](#5-why-the-old-flow-needed-replacing-rebuilding-from-identical-source-does-not-reproduce-the-digest)
+  for how different the two values were, in practice, on one build. On
+  another build, on the same source, on the same day, they were observed to
+  *coincide* instead — [§1](#1-publish-build-once-off-the-vm) prints the same
+  32 bytes in both roles and says so. What actually stands between an
+  operator and pasting the wrong one is not the two values looking different
+  — sometimes they don't — but `up.sh` refusing to deploy anything that is
+  not digest-pinned to begin with, and this document explaining which digest
+  is the right one to paste.
 - **Rebuilding `deploy/gcp/app` from unchanged source no longer threatens a
   committed reference value — but that is a property of the flow, not of
   digests in general.** [§5](#5-why-the-old-flow-needed-replacing-rebuilding-from-identical-source-does-not-reproduce-the-digest)
@@ -146,9 +154,18 @@ the same repository, under the tag `:latest`. Its manifest digest is
 sha256:e2c9fbcae48dc0618e7ecb32bdfa2af1f604e0a1578a33cd028cd68b337e9a83
 ```
 
-(`examples/gcp-c3.toml`, `tests/fixtures/gcp-c3-bound/PROVENANCE.md`), and the
-`[reference_values]` block that digest derives to is committed in
-`examples/gcp-c3.toml` and re-derivable offline any time with:
+(`examples/gcp-c3.toml`, `tests/fixtures/gcp-c3-bound/PROVENANCE.md`). **This
+is the same 32 bytes as build 2's `.Id`** in [§5](#5-why-the-old-flow-needed-replacing-rebuilding-from-identical-source-does-not-reproduce-the-digest)'s
+measurement (`transcript.txt` line 110) — a registry manifest digest and a
+local image-config digest, coinciding on this platform, printed here without
+disguising it. That coincidence is not evidence the two are usually the same;
+it is exactly the failure mode named up front: the two are indistinguishable
+by form, whether or not they happen to agree on a given build, and what
+actually pins this deployment to *this* digest, in *this* role, is that
+`up.sh` was invoked with it as a manifest-digest-pinned reference, not that
+the digit looks a particular way. The `[reference_values]` block that digest
+derives to is committed in `examples/gcp-c3.toml` and re-derivable offline
+any time with:
 
 ```
 cargo run --bin parallax -- reference-value \
@@ -488,8 +505,9 @@ detail"](../README.md#the-proxy-in-operational-detail)).
 
 The published-image flow above exists because of a measured finding, not a
 hypothetical one: **`up.sh` used to build the workload image on the VM and
-measure `docker image inspect -f '{{.Id}}'`** — the image *config* digest —
-and that digest does not survive a rebuild of byte-identical source.
+measure `docker image inspect -f '{{.Id}}'`** — which tracks the image
+*config* JSON — **and that value does not survive a rebuild of
+byte-identical source.**
 `scripts/publish-digest-stability.sh` (written to measure this directly) was
 run for real against `parallax-demo`'s own Docker engine, and its committed,
 verbatim transcript is `tests/fixtures/publish-digest-stability/transcript.txt`.
@@ -512,15 +530,19 @@ publish-digest-stability.sh: sha256 of the extracted config blob
 
 Root cause, confirmed by hand immediately after
 (`tests/fixtures/publish-digest-stability/manual-verification.txt`):
-`parallax-demo`'s Docker uses the containerd image store
-(`Storage Driver: overlayfs`, `driver-type: io.containerd.snapshotter.v1`),
-under which `docker save`'s export layout differs from the legacy format the
-script's `extract_config` helper was written against. The script refused to
-continue on a wrong assumption rather than diff the wrong file and report a
-confident, wrong answer — by design, and it is worth saying plainly that
-**this proof did not run cleanly end to end**; it aborted, and what follows
-was recovered by hand, on the same Docker daemon, minutes later, using a
-different diagnostic.
+**the extraction itself was correct** — the blob `docker save`'s tar output
+named did hash to its own filename (`1f0f1c51…`, both times — `transcript.txt`
+lines 126–132) — but `.Id` is not that config JSON's digest on this Docker
+version. `parallax-demo`'s Docker uses the containerd image store (`Storage
+Driver: overlayfs`, `driver-type: io.containerd.snapshotter.v1`), under which
+`docker save`'s export layout differs from the legacy format the script's
+`extract_config` helper was written against, and on which `.Id` is not the
+digest of the extracted config JSON the way it is on the legacy format. The
+script refused to continue on a wrong assumption rather than diff the wrong
+file and report a confident, wrong answer — by design, and it is worth saying
+plainly that **this proof did not run cleanly end to end**; it aborted, and
+what follows was recovered by hand, on the same Docker daemon, minutes later,
+using a different diagnostic.
 
 **What survived the abort regardless.** Two `--no-cache` builds of unchanged
 `deploy/gcp/app` source, from the same cached base layer in both builds

@@ -11,8 +11,8 @@ Not synthesised.
 **This is a recapture, replacing a prior capture from a predecessor plan's
 run of the same deployment shape.** The predecessor capture was taken while
 `deploy/gcp/up.sh` still built the workload image on the VM and measured
-`docker image inspect -f '{{.Id}}'` — the image *config* digest, unstable
-across rebuilds because it embeds a build timestamp (see
+`docker image inspect -f '{{.Id}}'`, which tracks the image *config* JSON and
+is unstable across rebuilds because that JSON embeds a build timestamp (see
 `deploy/gcp/app/Dockerfile` and `tests/fixtures/publish-digest-stability/`).
 Tasks 1-6 of this plan replaced that flow with the published-image flow
 described below, and this recapture is against a fresh deployment of that new

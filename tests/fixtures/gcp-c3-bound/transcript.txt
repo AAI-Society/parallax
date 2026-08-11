@@ -102,8 +102,9 @@ $ xxd -p -s 568 -l 64 quote.bin | tr -d '\n'
 3fb9b4d65a25bb53b6b03cf0fb0521c280dba5207b72e3241cfe979b641af4310000000000000000000000000000000000000000000000000000000000000000
 
 Both measurements match `deploy/gcp/up.sh`'s own printed output from the same
-deployment, taken moments earlier during Task 7's Step 1 (see the task's
-report): MRTD `c1ee9c16e3af...` and RTMR3 `5a53e6faf0d7...`, and RTMR3 in turn
+deployment, taken moments earlier during provisioning (see
+`docs/WALKTHROUGH.md`'s §2, "Provision and deploy"): MRTD `c1ee9c16e3af...`
+and RTMR3 `5a53e6faf0d7...`, and RTMR3 in turn
 matches the value `deploy/gcp/publish.sh` derived offline from the published
 image's manifest digest before anything was deployed. `report_data`'s first
 32 bytes (`3fb9b4d6...af43`) is `SHA-256` of this certificate's

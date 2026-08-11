@@ -11,14 +11,17 @@
 # registry -- run that first, on your own machine, not this one.
 #
 # Why this VM pulls rather than builds: `docker image inspect -f '{{.Id}}'`,
-# which up.sh used to measure, is the digest of the image *config JSON*. That
-# JSON embeds a `created` timestamp with nanosecond precision, so it changes
-# on every build regardless of content -- a rebuild from byte-identical
-# source produced a different RTMR3, and the deployment matched no committed
-# reference value. Pulling the artifact publish.sh already pushed transfers
-# the image config instead of regenerating it, which is what makes
-# `[workload].image_digest` -- what gets measured into RTMR3 -- stable by
-# construction.
+# which up.sh used to measure, tracks the image *config JSON* -- confirmed by
+# diffing `docker image inspect`'s own JSON between two builds; `.Id` is not,
+# on every Docker version, provably the raw config JSON's own SHA-256 (see
+# `tests/fixtures/publish-digest-stability/PROVENANCE.md`), but it still
+# moves with that JSON's content. That JSON embeds a `created` timestamp with
+# nanosecond precision, so it changes on every build regardless of content --
+# a rebuild from byte-identical source produced a different RTMR3, and the
+# deployment matched no committed reference value. Pulling the artifact
+# publish.sh already pushed transfers the image config instead of
+# regenerating it, which is what makes `[workload].image_digest` -- what
+# gets measured into RTMR3 -- stable by construction.
 #
 # Why the configuration is rendered rather than committed: the digest is only
 # known once an image has actually been published, and rendering it from the
@@ -128,7 +131,7 @@ $DOCKER compose build attest
 # The sha256:... portion of $IMAGE_REF becomes image_digest below. It is the
 # registry's manifest digest — what publish.sh read back after pushing, not
 # a local `docker image inspect` computation. See that script for why its
-# local config digest (`.Id`) is refused as a source for this value.
+# local image ID (`.Id`) is refused as a source for this value.
 APP_IMAGE_DIGEST="${IMAGE_REF#*@}"
 echo "==> app image: $IMAGE_REF"
 
@@ -201,7 +204,22 @@ fi
 # ---------------------------------------------------------------------------
 # What the deployment actually produced
 # ---------------------------------------------------------------------------
+# Re-read sysfs a few times, with a short pause, before trusting it: on one
+# of two real boots, this read landed in a narrow window where sysfs still
+# read back 48 zero bytes moments after the sidecar's own extension, while
+# the quote taken just below -- a separate, already-consistent read of the
+# same extension -- reflected it already (examples/gcp-c3.toml records that
+# boot). This retry is a mitigation for that observed race, not a diagnosis
+# of its cause, and it only fires on the race's own signature (all-zero
+# sysfs); it does not soften the comparison below, which still fails hard,
+# unretried, on a genuine mismatch -- two settled, disagreeing, non-zero
+# reads of the same register is a real problem, not this race.
 rtmr3_observed="$(sudo xxd -p -c 48 "$RTMR3_PATH" | tr -d '\n')"
+for _ in 1 2 3 4; do
+  [ "$rtmr3_observed" != "$ZERO48" ] && break
+  sleep 3
+  rtmr3_observed="$(sudo xxd -p -c 48 "$RTMR3_PATH" | tr -d '\n')"
+done
 
 # MRTD is not derivable offline — it measures the firmware, which this
 # deployment does not choose — so it is read out of a real quote. Taking a
@@ -226,7 +244,9 @@ echo "    RTMR3 (sysfs)        $rtmr3_observed"
 echo "    RTMR3 (in the quote) $rtmr3_in_quote"
 echo
 echo "==> compare these against the reference value deploy/gcp/publish.sh"
-echo "    printed for $IMAGE_REF (re-derive it offline any time with:"
+echo "    printed for $IMAGE_REF (re-derive it offline any time, on your own"
+echo "    machine -- bootstrap.sh installs no Rust toolchain on this guest --"
+echo "    with:"
 echo "    cargo run --bin parallax -- reference-value --image-digest $APP_IMAGE_DIGEST)."
 
 # The quote and the sysfs register are two independent reads of the same

@@ -67,10 +67,17 @@ sudo mount -t configfs none /sys/kernel/config 2>/dev/null || true
 # right access scope: `provision.sh`'s own `gcloud auth configure-docker`
 # call configures the *operator's* laptop, for the operator's own `docker
 # push` in `publish.sh`, and nothing before this block ever ran the
-# equivalent on the guest. This is a real gap Task 7's hardware run hit and
-# had to work around by hand (copying a laptop access token into `sudo
-# docker login` on the VM); this block is the deployable fix, written but
-# not re-exercised on hardware -- see that task's report for why.
+# equivalent on the guest. This is a real gap a hardware run hit and had to
+# work around by hand (copying a laptop access token into `sudo docker
+# login` on the VM); this block is the deployable fix. It has not been
+# re-exercised on hardware: the VM that hit the gap predated this fix
+# (`provision.sh` did not yet pass `--scopes=cloud-platform` when that VM
+# was created, and its guest had no credential helper at all), and that VM
+# was torn down before the fix was written. Confirming this block actually
+# works is a first-class check for the next fresh `provision.sh` run, not an
+# assumption -- see `docs/WALKTHROUGH.md`'s "What this attestation covers,
+# and what it does not" section, and `provision.sh`'s own comment on
+# `--scopes=cloud-platform`.
 if [ -n "$REGION" ]; then
   echo "==> configuring a Docker credential helper for ${REGION}-docker.pkg.dev"
 

@@ -18,14 +18,18 @@
 #   MRTD=<96 hex> ./deploy/gcp/publish.sh PROJECT REGION REPOSITORY
 #
 # Why this script exists instead of `up.sh` building on the VM: `docker
-# image inspect -f '{{.Id}}'` -- what `up.sh` used to measure -- is the
-# digest of the image *config JSON*, which embeds a `created` timestamp with
-# nanosecond precision. It changes on every build regardless of content, so
-# a rebuild from byte-identical source produced a different RTMR3 and the
-# deployment matched no committed reference value. Building here, once, and
-# having the VM pull the byte-identical artifact by manifest digest instead
-# of rebuilding it transfers the image config rather than regenerating it,
-# which is what makes the identity stable by construction.
+# image inspect -f '{{.Id}}'` -- what `up.sh` used to measure -- tracks the
+# image *config JSON* (confirmed by diffing `docker image inspect`'s own
+# JSON between two builds; `.Id` is not, on every Docker version, provably
+# the raw config JSON's own SHA-256 -- see
+# `tests/fixtures/publish-digest-stability/PROVENANCE.md` -- but it still
+# moves with that JSON's content). That JSON embeds a `created` timestamp
+# with nanosecond precision, so it changes on every build regardless of
+# content, so a rebuild from byte-identical source produced a different
+# RTMR3 and the deployment matched no committed reference value. Building
+# here, once, and having the VM pull the byte-identical artifact by manifest
+# digest instead of rebuilding it transfers the image config rather than
+# regenerating it, which is what makes the identity stable by construction.
 set -euo pipefail
 
 if [ $# -lt 3 ]; then
@@ -118,9 +122,9 @@ $entries
 ENTRIES
 
 # No fallback to `.Id`. That fallback is the bug this script exists to remove:
-# `.Id` is the digest of the image *config JSON*, which embeds a `created`
-# timestamp with nanosecond precision, so it changes on every build regardless
-# of content. If the registry did not give us a manifest digest, we do not have
+# `.Id` tracks the image *config JSON*, which embeds a `created` timestamp
+# with nanosecond precision, so it changes on every build regardless of
+# content. If the registry did not give us a manifest digest, we do not have
 # a stable identity and must not pretend otherwise.
 # Exactly one, not "at least one": even several entries that happen to
 # agree are a signal that something about this repository or this image ID

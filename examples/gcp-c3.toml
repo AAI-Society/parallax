@@ -104,12 +104,13 @@ mrtd = ["c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c916
 # own post-extension sysfs re-read raced the just-completed extension and
 # briefly read back 48 zero bytes while the quote taken moments earlier
 # already showed the correct, extended value; re-reading the same sysfs path
-# by hand ~10 seconds later returned the correct, quote-matching value. That
-# is recorded in Task 7's report as a timing anomaly in `up.sh`'s own
-# consistency check, not a defect in this value or in RTMR3 itself, and does
-# not concern the digit above — the proxy's refusal of that second boot's
-# genuinely different RTMR3 is exactly the property this reference value
-# exists to make possible; see `docs/WALKTHROUGH.md`.)
+# by hand ~10 seconds later returned the correct, quote-matching value.
+# `up.sh`'s consistency check now retries the sysfs read for exactly this
+# reason (see its own comment there) rather than trusting a single read; it
+# was a timing anomaly in that check, not a defect in this value or in RTMR3
+# itself, and does not concern the digit above — the proxy's refusal of that
+# second boot's genuinely different RTMR3 is exactly the property this
+# reference value exists to make possible; see `docs/WALKTHROUGH.md`.)
 #
 # THIS DOES NOT SURVIVE A REBUILD from source — it is pinned to the specific
 # registry manifest digest quoted above, not to "whatever `deploy/gcp/app`'s

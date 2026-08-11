@@ -1,5 +1,12 @@
 /target
 
+# Written at runtime by `deploy/gcp/up.sh` on the guest, rendered from the
+# <image-ref>@sha256:<digest> an operator passes on the command line — not
+# committed source, so it should not show up as an untracked file to add by
+# accident on a deployed VM's checkout.
+/deploy/gcp/attest.toml
+/deploy/gcp/.env
+
 # Scratch output from `scripts/capture-on-gcp.sh`. The fixture that counts is
 # committed under tests/fixtures/; anything here is an exploratory re-run, and
 # defaulting the script's output to a spot that is ignored is what keeps such a

@@ -410,7 +410,11 @@ rather than the incomparability result.
 - **A registry manifest digest and a local image-config digest are
   indistinguishable by form** — both are a `sha256:` prefix and 64 hex
   characters. `parallax reference-value` cannot detect that an operator
-  pasted the wrong kind of digest. What enforces the distinction is
+  pasted the wrong kind of digest. On the one real deployment this project
+  measured both on, they were in fact observed to *coincide*
+  (`docs/WALKTHROUGH.md`'s [§1](WALKTHROUGH.md#1-publish-build-once-off-the-vm)); that is not evidence they usually
+  do, only that the two are not different by form, so an operator cannot rely
+  on them merely looking different either. What enforces the distinction is
   `deploy/gcp/up.sh` refusing to deploy anything that is not pinned to a
   registry manifest digest, and `docs/WALKTHROUGH.md` explaining which one is
   which — not a check inside the tool.

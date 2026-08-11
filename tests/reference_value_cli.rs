@@ -58,7 +58,14 @@ fn a_malformed_digest_exits_non_zero_without_emitting_a_block() {
         .args(["reference-value", "--image-digest", "sha256:nothex"])
         .output()
         .expect("the binary runs");
-    assert!(!out.status.success(), "a malformed digest must not succeed");
+    // 2 is this project's convention for bad configuration, not just any
+    // non-zero exit -- see src/bin/parallax.rs, which returns it explicitly.
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a malformed digest must exit 2: {:?}",
+        out.status
+    );
     let stdout = String::from_utf8(out.stdout).expect("utf-8");
     assert!(
         !stdout.contains("[reference_values]"),
@@ -78,5 +85,10 @@ fn a_malformed_mrtd_is_refused_rather_than_echoed() {
         ])
         .output()
         .expect("the binary runs");
-    assert!(!out.status.success(), "a malformed MRTD must not be echoed");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a malformed MRTD must exit 2, not just non-zero: {:?}",
+        out.status
+    );
 }

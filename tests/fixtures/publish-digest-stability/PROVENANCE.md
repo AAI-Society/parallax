@@ -38,13 +38,13 @@ command inside the script's own transcript prints that address).
 
 ## Why this ran where it ran
 
-Neither the machine that ran this plan's earlier tasks nor the machine that ran
-Task 7 has a working local Docker daemon — the same circumstance the AMENDMENT
-to Task 7's brief records for Task 6 ("no container runtime exists on the
-machine executing this plan"). The only Docker engine available anywhere in
-this task's environment was the one `deploy/gcp/provision.sh` installs on the
-confidential VM itself. Rather than run the script over SSH on the VM directly
-(which would also have needed `gcloud` and `cargo` installed there, and would
+Neither the machine that ran this plan's earlier tasks nor the machine that
+provisioned the confidential VM has a working local Docker daemon: no
+container runtime exists on the machine executing this plan. The only Docker
+engine available anywhere in this task's environment was the one
+`deploy/gcp/provision.sh` installs on the confidential VM itself. Rather than
+run the script over SSH on the VM directly (which would also have needed
+`gcloud` and `cargo` installed there, and would
 have made the VM's own restricted service-account OAuth scope — see
 `docs/spike-rtmr-gcp.md`-adjacent finding below — the source of `docker push`
 authentication), the operator's laptop drove the VM's Docker daemon remotely
@@ -155,8 +155,9 @@ It does not prove `scripts/publish-digest-stability.sh` runs cleanly end to
 end on any Docker version — on the contrary, it is direct evidence that it
 does not, on at least one real, current Docker Engine release using the
 containerd snapshotter. Fixing `extract_config` for that image-store layout
-is future work this fixture motivates but does not itself perform: Task 7's
-brief authorizes running the script and correcting
-`deploy/gcp/app/Dockerfile` from what it measured, not modifying the script.
-It also does not prove anything about RTMR3, MRTD, or any other TDX-specific
-property — see "This capture was taken on a TDX host" above.
+is future work this fixture motivates but does not itself perform — out of
+scope for the task that produced this fixture, which corrects
+`deploy/gcp/app/Dockerfile` from what the script measured rather than
+modifying the script itself. It also does not prove anything about RTMR3,
+MRTD, or any other TDX-specific property — see "This capture was taken on a
+TDX host" above.

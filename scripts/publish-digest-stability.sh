@@ -24,13 +24,12 @@
 #   back to back, from source that does not change between the two builds.
 #   `docker image inspect -f '{{.Id}}'` -- what the pre-fix `deploy/gcp/up.sh`
 #   used to measure into RTMR3 -- is compared between the two builds. If they
-#   differ, the underlying config JSON blobs (the exact bytes `.Id` hashes,
-#   extracted the same way `docker save` packs them, not `docker image
-#   inspect`'s own reformatted view -- see extract_config below for why that
-#   distinction matters) are diffed to name the differing field. The
-#   Dockerfile currently hedges between two candidates, a `created` build
-#   timestamp and base-image tag drift; this script does not assume the
-#   answer, it reports whatever the diff actually shows.
+#   differ, the underlying config JSON blobs (assumed to be the exact bytes
+#   `.Id` hashes, extracted the same way `docker save` packs them, not
+#   `docker image inspect`'s own reformatted view -- see extract_config below,
+#   whose own self-check exists because that assumption is not true on every
+#   Docker version) are diffed to name the differing field. This script does
+#   not assume the answer, it reports whatever the diff actually shows.
 #
 #   Part 2 (the NEW flow is stable). Build once, push once, read the
 #   registry's manifest digest back -- following deploy/gcp/publish.sh's own
@@ -176,9 +175,14 @@ fi
 # extract_config <label> <image-ref> <expected-id> <dest-file>
 #
 # Pulls the literal config JSON blob out of `docker save`'s tar output: the
-# exact bytes whose SHA-256 IS `.Id`. `docker save`'s legacy export format
-# names that file "<config-digest-hex>.json" at the tar root and points to it
-# from manifest.json's "Config" field -- a stable, long-standing convention.
+# bytes `.Id` is assumed to be the SHA-256 of -- an assumption this helper's
+# own self-check below verifies rather than trusts, because it does not hold
+# on every Docker version (see
+# `tests/fixtures/publish-digest-stability/PROVENANCE.md`, which measured a
+# real counterexample). `docker save`'s legacy export format names that file
+# "<config-digest-hex>.json" at the tar root and points to it from
+# manifest.json's "Config" field -- a stable, long-standing convention, but
+# not the one every Docker version's image store actually uses.
 #
 # `docker image inspect`'s own JSON is deliberately NOT used for this: it is
 # Docker's reformatted view, which folds in fields such as

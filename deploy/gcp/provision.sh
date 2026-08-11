@@ -11,8 +11,9 @@
 # named from it, so `--delete` is exhaustive by construction rather than by
 # anyone remembering what else exists -- except the Artifact Registry
 # repository below, which is fixed by name (not derived from NAME, to match
-# `publish.sh`'s own default) and deliberately outside `--delete`; see its own
-# comment for why.
+# the example REPOSITORY value in `publish.sh`'s own usage text -- REPOSITORY
+# there is a required positional with no default of its own) and
+# deliberately outside `--delete`; see its own comment for why.
 #
 # Requires gcloud, authenticated, with billing enabled. Creates one
 # c3-standard-4 with --confidential-compute-type=TDX, one firewall rule, and
@@ -56,10 +57,11 @@ TLS_PORT=8443
 REGION="${ZONE%-*}"
 
 # Fixed, not derived from $NAME: this is the exact repository name
-# `deploy/gcp/publish.sh`'s usage text names as its own default, and the two
-# scripts have no shared configuration to keep it in sync through -- an
-# operator who overrides NAME here still publishes to the name publish.sh
-# expects unless they also pass a different REPOSITORY there.
+# `deploy/gcp/publish.sh`'s usage text gives as its example REPOSITORY value
+# -- publish.sh has no actual default; REPOSITORY is a required positional
+# there -- and the two scripts have no shared configuration to keep it in
+# sync through, so an operator who overrides NAME here still publishes to
+# this name unless they also pass a different REPOSITORY to publish.sh.
 REPOSITORY=parallax-demo
 
 if [ -z "$PROJECT" ]; then
@@ -334,13 +336,21 @@ $VM is up at $IP. Docker is installed; the demo stack is not built or
 started yet — that spends the boot's one RTMR3 extension, so it is a
 separate, deliberate step.
 
-On the guest:
+First, publish the workload image — on this machine, never on the guest (see
+publish.sh's own header for why):
+
+  ./deploy/gcp/publish.sh $PROJECT $REGION $REPOSITORY
+
+That prints an <image-ref>@sha256:<digest> reference once the push completes.
+Then, on the guest, with that exact reference — up.sh now refuses anything
+that is not digest-pinned, so --check is passed alongside the digest, not
+instead of it:
 
   gcloud compute ssh $VM --zone=$ZONE --project=$PROJECT \\
-    --command='~/parallax/deploy/gcp/up.sh --check'   # safe, repeatable
+    --command='~/parallax/deploy/gcp/up.sh <image-ref>@sha256:<digest> --check'   # safe, repeatable
 
   gcloud compute ssh $VM --zone=$ZONE --project=$PROJECT \\
-    --command='~/parallax/deploy/gcp/up.sh'            # extends RTMR3, serves
+    --command='~/parallax/deploy/gcp/up.sh <image-ref>@sha256:<digest>'           # extends RTMR3, serves
 
 Then, from this machine, with examples/gcp-c3.toml's upstream pointing at
 $IP:$TLS_PORT — confirm it does; the address is not templated — run the
