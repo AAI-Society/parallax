@@ -24,6 +24,18 @@ support the second.
 | Result         | **Aborted partway through Part 1** — see "What actually happened" below                    |
 | Captured at    | see `captured-at` (mtime of the script's own last write to its transcript, 2026-08-11T06:09:37Z) |
 
+**One substitution in `manual-verification.txt`, made deliberately.** The
+`ssh` and `DOCKER_HOST` commands in that file originally named the VM's real,
+ephemeral external IP. It has been replaced throughout with `203.0.113.10` —
+RFC 5737 TEST-NET-3, reserved for documentation — the same substitution and
+the same reasoning `tests/fixtures/gcp-c3-bound/PROVENANCE.md` describes at
+length: the instance was deleted at the end of Task 7's session, GCP recycles
+external IPs, and the original address now names whatever project it was
+next handed to. `transcript.txt` needed no such substitution — the script it
+records never names the VM by address; it drives the local Docker daemon
+directly (the shell running it *was* `DOCKER_HOST`-pointed at the VM, but no
+command inside the script's own transcript prints that address).
+
 ## Why this ran where it ran
 
 Neither the machine that ran this plan's earlier tasks nor the machine that ran
@@ -127,9 +139,15 @@ SHA-256, of every file in this directory except this one:
 
 ```
 0fd87d7573430fb1b8006e5f12e368de96b6170dad8fdce034ee4d5e41ac0cab  transcript.txt
-69f090d8b24ebdd292b599082bbbcb98fcb13f9930b7e5d30c237a8613238de2  manual-verification.txt
+36f716bba3f849cb0ef130ae0ac1fa01d26b2a16951e364df8b34291c21ea568  manual-verification.txt
 47495c6bc13dd35351caad25a97f6e1e4711c9df5fb496fc5a53e8cf3b9d30c2  captured-at
 ```
+
+(`manual-verification.txt`'s hash above is of the file after the address
+substitution described earlier in this document, not of what was originally
+captured on screen — the same relationship every other hash in this
+repository that follows a substitution has to its own pre-substitution
+capture.)
 
 ## What this fixture does not prove
 
