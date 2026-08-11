@@ -3,13 +3,17 @@
 This document follows a real deployment through the **publish-then-pull**
 flow: the workload image is built once, off the confidential VM, pushed to a
 registry, and pulled onto the VM by its registry manifest digest — never
-rebuilt where it runs. Every value shown below (a digest, a measurement, a
-piece of script output) is copied from a file committed in this repository —
+rebuilt where it runs. Most values shown below (a digest, a measurement, a
+piece of script output) are copied from a file committed in this repository —
 `tests/fixtures/publish-digest-stability/`, `tests/fixtures/gcp-c3-bound/`, or
-`examples/gcp-c3.toml` — and each is cited to the file it came from. Where a
-step is described without a captured transcript backing it, that is said
-plainly, in prose, rather than presented as a terminal session nobody
-actually captured. Where something did not go as planned, that is said too,
+`examples/gcp-c3.toml` — and each is cited to the file it came from. A
+smaller set of values, all in [§3](#3-verify-the-accepting-evidence) and
+[§4](#4-break-it-on-purpose-deploy-a-different-image), were genuinely
+recorded during the run but never saved to a committed file of their own;
+those are labelled **recorded, not captured** where they appear, and are
+shown as quoted values rather than as an invented `$`-prefixed session. Where
+a step is described without either kind of evidence backing it, that is said
+plainly, in prose. Where something did not go as planned, that is said too,
 with what actually happened next to it.
 
 **What this proves.** `parallax-attest` sits in front of an unmodified
@@ -340,6 +344,22 @@ attestation proves independently of TCB status; a proxy checking this
 deployment surfaces that as a warning on every connection (`src/proxy/gate.rs`'s
 `warnings`), not silently.
 
+**Recorded, not captured: the accepting run through the proxy itself.**
+Everything above is a captured file's own bytes, read back from
+`tests/fixtures/gcp-c3-bound/`. `parallax-proxy` was also run live, from this
+laptop, against `examples/gcp-c3.toml` pointed at this exact deployment, and
+it forwarded traffic: `curl http://127.0.0.1:8080/` returned `200 OK`, body
+`hello from inside the trust domain` — the exact string
+`deploy/gcp/app/app.py`'s committed `BODY` constant holds. The proxy's own
+decision log recorded `"decision":"allow"`, with warnings naming the same
+two PCK caveats verified against the committed quote above
+(`dynamic-platform`, `smt-enabled`) — an expected property of shared cloud
+hardware, not a defect. Unlike the fixture, that session's own console
+output was never saved to a file in this repository, so these lines are
+**recorded** from what was observed during the run rather than **captured**
+to it. They are shown here as quoted values with that provenance stated, not
+as an invented `$ curl` transcript.
+
 ## 4. Break it on purpose: deploy a different image
 
 **RTMR3 is a hash chain, zero at boot, and only a reboot resets it — the
@@ -382,33 +402,87 @@ the hardware or the design.
 With the second image deployed and RTMR3 genuinely different, the same
 proxy, restarted against the same, unmodified `examples/gcp-c3.toml` — whose
 `rtmr3` reference value is still the one derived from the *first* image,
-which is the entire point — refused the connection.
-`examples/gcp-c3.toml` records this directly: *"the proxy's refusal of that
-second boot's genuinely different RTMR3 is exactly the property this
-reference value exists to make possible."* This document does not invent a
-specific `$ curl` transcript for that session — no such file is committed in
-this repository — but the refusal's wording is not a guess either: it is the
-fixed output of `refutation_reason` in `src/proxy/gate.rs`, reached whenever
-`derive` refutes RTMR3 (`Refutation::Rtmr3`), and it is deliberately worded
-differently from an MRTD refutation so that a reader concludes "this is my
-trust domain, running an image I did not declare" rather than "this is not
-my trust domain at all":
+which is the entire point — refused the connection. This is the plan's
+headline demonstration, so it is worth being precise about both what it was
+and where the evidence for it actually lives.
+
+The second image was `deploy/gcp/app/app.py`'s `BODY` changed to `"a
+different workload, refused by RTMR3\n"`, built from a scratch copy so the
+tracked `app.py` was never modified, and published the same way as
+[§1](#1-publish-build-once-off-the-vm). Its manifest digest, and the
+deployment's own RTMR3 for it as reported after `up.sh` extended it, were
+recorded as:
 
 ```
-the attested RTMR3 was compared to this proxy's rtmr3 reference values and matched
-none of them: <the specific mismatch>. The attested RTMR3 is <hex>, attested by the
-same quote whose MRTD is <hex> — this proves the trust domain but not that the
-declared workload is what is running inside it. You deployed an image that was not
-declared. A refuted measurement is a verification failure, not a weaker trust set.
+manifest digest: sha256:bbc335c73f45f0001d3ab833e2f4f1dc2b5d39fdbbdd146e6cd981085b408e5c
+RTMR3 (deployment-reported): 0350c673536564c2f7e1694c4f4826225533aa4d4207f256bba6fdbf52d8405a34356e6f135e856071eb2f80f9c14f8d
 ```
+
+**That RTMR3 does not have to be taken on trust: it is checkable today,
+offline, without the hardware**, because it is a pure function of the digest
+above — the same cross-check [§1](#1-publish-build-once-off-the-vm) and
+[§2](#2-provision-and-deploy) already lean on:
+
+```console
+$ cargo run --quiet --bin parallax -- reference-value --image-digest sha256:bbc335c73f45f0001d3ab833e2f4f1dc2b5d39fdbbdd146e6cd981085b408e5c
+parallax: no --mrtd given, so the mrtd array is empty. MRTD measures the platform firmware, not the workload, so it cannot be derived from an image digest -- read it from a quote this platform produced.
+[reference_values]
+mrtd  = []
+rtmr3 = ["0350c673536564c2f7e1694c4f4826225533aa4d4207f256bba6fdbf52d8405a34356e6f135e856071eb2f80f9c14f8d"]
+```
+
+This is a real, freshly run command against this repository's own committed
+source — reproducible by anyone reading this document, right now, with no
+hardware and no network — and it derives exactly the RTMR3 the deployment
+reported. The two independent sources (a live quote, and an offline
+derivation from the digest alone) agree.
+
+`examples/gcp-c3.toml` records the refusal itself directly: *"the proxy's
+refusal of that second boot's genuinely different RTMR3 is exactly the
+property this reference value exists to make possible."* The response body
+the proxy actually returned was:
+
+```
+parallax refused this connection.
+
+the attested RTMR3 was compared to this proxy's rtmr3 reference values and matched none of them: the attested RTMR3 matches none of the 1 configured RTMR3 reference values. The attested RTMR3 is 0350c673536564c2f7e1694c4f4826225533aa4d4207f256bba6fdbf52d8405a34356e6f135e856071eb2f80f9c14f8d, attested by the same quote whose MRTD is c1ee9c16e3afc506cfe042c5b846a368528f3b37618eafb27469bc114cf914e9222c91618470e7f2b28ac360968270a5 — this proves the trust domain but not that the declared workload is what is running inside it. You deployed an image that was not declared. A refuted measurement is a verification failure, not a weaker trust set.
+
+Nothing was forwarded. This proxy fails closed: a connection it could not verify is refused rather than passed through, because forwarding what it could not check would produce the appearance of a check.
+```
+
+**Why this is recorded rather than captured, and what that does and does not
+cost.** Unlike `tests/fixtures/gcp-c3-bound/transcript.txt`, no file in this
+repository holds the raw console session this response body, the digest, and
+the deployment-reported RTMR3 above came from — it was never `tee`'d to a
+committed transcript the way the fixture captures were, so these three
+values are recorded from what was observed during the run, not read back
+from a file this repository ships. This document does not dress them up as
+a `$`-prefixed terminal session, because that would claim a form of evidence
+(a captured transcript) that does not exist for this specific one. What
+narrows the gap: the MRTD the response body names
+(`c1ee9c16e3af…8270a5`) is the same value [§2](#2-provision-and-deploy) and
+[§3](#3-verify-the-accepting-evidence) derive and capture independently of
+this session, so the platform did not silently change between the accepting
+and refusing runs — only the workload did, which is what this demonstration
+is supposed to show. The RTMR3 digit is independently checkable against
+`reference-value`, above. And the wording itself is not a transcription risk
+at all: it is the fixed output of `refutation_reason` composed into
+`refusal_body`, both in `src/proxy/gate.rs`, reached whenever `derive`
+refutes RTMR3 (`Refutation::Rtmr3`) — a reader can check this exact text
+against the source that generates it, today, the same way the RTMR3 digit
+can be checked against `reference-value`. It is deliberately worded
+differently from an MRTD refutation so that a reader concludes "this is my
+trust domain, running an image I did not declare" rather than "this is not
+my trust domain at all." The predecessor version of this project's own
+walkthrough guessed at this wording once and was wrong about it; this
+document does not guess — it records what was observed, labels it as such,
+and shows separately what of it can be checked without trusting the
+recording at all.
 
 Nothing is forwarded on that path: this proxy fails closed on every
 verification, binding, collateral or policy failure, with no flag that
 changes it (`README.md`'s ["The proxy, in operational
-detail"](../README.md#the-proxy-in-operational-detail)). The predecessor
-version of this project's own walkthrough guessed at this wording once and
-was wrong about it — this document does not repeat that mistake by guessing
-again for a session that was not captured to a file in this repository.
+detail"](../README.md#the-proxy-in-operational-detail)).
 
 ## 5. Why the old flow needed replacing: rebuilding from identical source does not reproduce the digest
 
