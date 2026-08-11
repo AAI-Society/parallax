@@ -283,7 +283,12 @@ fn digest_bytes(workload: &Workload) -> Result<[u8; 32], PrepareError> {
     match (&workload.image_digest, &workload.binary) {
         (None, None) => Err(PrepareError::NoWorkload),
         (Some(_), Some(_)) => Err(PrepareError::BothWorkload),
-        (Some(digest), None) => parse_image_digest(digest),
+        (Some(digest), None) => {
+            crate::ratls::parse_image_digest(digest).map_err(|e| PrepareError::ImageDigest {
+                value: e.value,
+                reason: e.reason,
+            })
+        }
         (None, Some(path)) => {
             let bytes = std::fs::read(path).map_err(|source| PrepareError::Binary {
                 path: path.display().to_string(),
@@ -292,55 +297,6 @@ fn digest_bytes(workload: &Workload) -> Result<[u8; 32], PrepareError> {
             Ok(Sha256::digest(&bytes).into())
         }
     }
-}
-
-/// `sha256:` followed by exactly 64 lowercase-or-uppercase hex characters,
-/// into the 32 bytes they denote.
-///
-/// Case-insensitive by construction — `u8::from_str_radix(_, 16)` accepts
-/// both — so an uppercase digest and its lowercase spelling parse to the same
-/// bytes and therefore the same measurement; there is no separate
-/// case-folding step to keep in sync with that fact. Every slice is `get`,
-/// never indexed, so a multi-byte UTF-8 character landing mid-pair is a
-/// refusal rather than a panic — the same discipline
-/// `crate::proxy::config::parse_mrtd` uses for the same reason.
-///
-/// **Each pair is checked with `is_ascii_hexdigit` before it is parsed.**
-/// `u8::from_str_radix` alone is not strict enough: it accepts a leading `+`
-/// on an unsigned integer, so `"+0"` parses to `0` and `"+f"` parses to `15`
-/// exactly as `"00"` and `"0f"` would. A code review caught the consequence:
-/// `sha256:` followed by `"+0"` repeated 32 times parsed to the same
-/// all-zero bytes as the shipped example's legitimate digest, and `"+f"`
-/// repeated 32 times parsed to `0f0f0f…` — a half-typed digest producing a
-/// *different, valid* measurement instead of being refused. The explicit
-/// character check closes that: only the sixteen ASCII hex digits pass, `+`,
-/// `-` and whitespace among them refused like any other non-hex byte.
-fn parse_image_digest(value: &str) -> Result<[u8; 32], PrepareError> {
-    let bad = |reason: String| PrepareError::ImageDigest {
-        value: value.to_string(),
-        reason,
-    };
-    let hex = value
-        .strip_prefix("sha256:")
-        .ok_or_else(|| bad("does not start with `sha256:`".to_string()))?;
-    if hex.len() != 64 {
-        return Err(bad(format!(
-            "is {} hex characters after the prefix, not 64",
-            hex.len()
-        )));
-    }
-    let mut out = [0u8; 32];
-    for (i, byte) in out.iter_mut().enumerate() {
-        let pair = hex
-            .get(i * 2..i * 2 + 2)
-            .ok_or_else(|| bad("is not ASCII hex".to_string()))?;
-        if !pair.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(bad(format!("`{pair}` at character {} is not hex", i * 2)));
-        }
-        *byte = u8::from_str_radix(pair, 16)
-            .map_err(|e| bad(format!("`{pair}` at character {} is not hex: {e}", i * 2)))?;
-    }
-    Ok(out)
 }
 
 // ---------------------------------------------------------------------------

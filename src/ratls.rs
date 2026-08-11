@@ -82,6 +82,61 @@ pub fn expected_rtmr3(measurement: &[u8; 48]) -> [u8; 48] {
     h.finalize().into()
 }
 
+/// Why an `image_digest` string could not be read as 32 bytes.
+///
+/// Carries the offending value and a reason rather than a bare unit, because
+/// the attester renders both into `PrepareError::ImageDigest` and an operator
+/// reading that message needs to see what they actually typed.
+#[derive(Debug, thiserror::Error)]
+#[error("{value} {reason}")]
+pub struct ImageDigestError {
+    pub value: String,
+    pub reason: String,
+}
+
+/// `sha256:` followed by exactly 64 hex characters, into the 32 bytes they
+/// denote.
+///
+/// Case-insensitive by construction, so an uppercase digest and its lowercase
+/// spelling parse to the same bytes and therefore the same measurement; there
+/// is no separate case-folding step to keep in sync with that fact. Every
+/// slice is `get`, never indexed, so a multi-byte UTF-8 character landing
+/// mid-pair is a refusal rather than a panic — the same discipline
+/// `crate::proxy::config::parse_hex48` uses for the same reason.
+///
+/// **Each pair is checked with `is_ascii_hexdigit` before it is parsed.**
+/// `u8::from_str_radix` alone is not strict enough: it accepts a leading `+`
+/// on an unsigned integer, so `"+0"` parses to `0` exactly as `"00"` would,
+/// and `sha256:` followed by `"+0"` repeated 32 times would become the
+/// all-zero digest — a different, valid measurement rather than an error.
+pub fn parse_image_digest(value: &str) -> Result<[u8; 32], ImageDigestError> {
+    let bad = |reason: String| ImageDigestError {
+        value: value.to_string(),
+        reason,
+    };
+    let hex = value
+        .strip_prefix("sha256:")
+        .ok_or_else(|| bad("does not start with `sha256:`".to_string()))?;
+    if hex.len() != 64 {
+        return Err(bad(format!(
+            "is {} hex characters after the prefix, not 64",
+            hex.len()
+        )));
+    }
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        let pair = hex
+            .get(i * 2..i * 2 + 2)
+            .ok_or_else(|| bad("is not ASCII hex".to_string()))?;
+        if !pair.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(bad(format!("`{pair}` at character {} is not hex", i * 2)));
+        }
+        *byte = u8::from_str_radix(pair, 16)
+            .map_err(|e| bad(format!("`{pair}` at character {} is not hex: {e}", i * 2)))?;
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +219,41 @@ mod tests {
         // invisible to `quote_from_cert` and the failure reads as "not an
         // RA-TLS certificate" rather than "we disagree about the OID".
         assert_eq!(QUOTE_OID, "1.2.840.113741.1337.6");
+    }
+
+    #[test]
+    fn a_well_formed_digest_parses_case_insensitively() {
+        let lower = parse_image_digest(&format!("sha256:{}", "ab".repeat(32))).expect("lower");
+        let upper = parse_image_digest(&format!("sha256:{}", "AB".repeat(32))).expect("upper");
+        assert_eq!(lower, upper);
+        assert_eq!(lower, [0xab; 32]);
+    }
+
+    #[test]
+    fn a_leading_plus_is_refused_rather_than_parsed_as_zero() {
+        // `u8::from_str_radix("+0", 16)` is `Ok(0)`, so without the explicit
+        // hex-digit check this parses to the all-zero digest -- a *different,
+        // valid* measurement rather than an error. That is worse than a
+        // truncation: the sidecar would attest to a workload nobody described.
+        let e = parse_image_digest(&format!("sha256:{}", "+0".repeat(32)))
+            .expect_err("a leading + is not hex");
+        assert!(e.to_string().contains("not hex"), "{e}");
+    }
+
+    #[test]
+    fn the_prefix_and_the_length_are_both_required() {
+        assert!(parse_image_digest(&"ab".repeat(32)).is_err(), "no prefix");
+        assert!(parse_image_digest("sha256:abcd").is_err(), "too short");
+        assert!(
+            parse_image_digest(&format!("sha256:{}", "ab".repeat(33))).is_err(),
+            "too long"
+        );
+    }
+
+    #[test]
+    fn whitespace_and_dashes_are_refused_like_any_other_non_hex() {
+        for bad in ["sha256:-0", "sha256: 0"] {
+            assert!(parse_image_digest(bad).is_err(), "{bad} must be refused");
+        }
     }
 }
