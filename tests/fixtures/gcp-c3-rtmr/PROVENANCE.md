@@ -40,7 +40,7 @@ thing that has to be read to know which machine a file came from.
 | `verification.txt` | Verbatim output of the test that checks all of the above. See "Every one of these quotes verifies". |
 | `transcript.txt`, `instance-b-transcript.txt` | Every command the spike ran on each guest, with exit status and raw output. |
 | `capture-host.txt`, `instance-b-capture-host.txt` | Kernel, CPU model and TDX dmesg lines, taken on each guest. |
-| `instance-describe.txt`, `instance-b-describe.txt` | `gcloud compute instances describe` for each VM, run before deletion. The only record of the instance ids. |
+| `instance-describe.txt`, `instance-b-describe.txt` | `gcloud compute instances describe` for each VM, run before deletion. What distinguishes the two instances — though the ids themselves are substituted, see below. |
 | `captured-at`, `instance-b-captured-at` | RFC 3339 capture time for each instance. The verification clock is pinned to these. |
 | `provider` | The configfs-tsm provider that answered: `tdx_guest`. Instance A's; instance B's transcript shows the same. |
 
@@ -54,13 +54,21 @@ The manifest below is recomputed over the rewritten files, so it verifies; the
 hashes therefore differ from those in this file's own git history before the
 substitution.
 
-**No measurement passes through the project name.** Every `.bin` quote, both
+**A second substitution, for the same reason: the two GCE instance ids.** They
+read `1000000000000000001` and `1000000000000000002` here, in place of the ids
+the two VMs actually had. Distinct synthetic values rather than a single
+placeholder, because *that the two captures come from two different instances*
+is load-bearing — it is what makes MRTD agreeing across them evidence of
+anything. The property survives the substitution; the real ids do not appear.
+`instance-describe.txt` and `instance-b-describe.txt` were rewritten for this,
+and the manifest below is recomputed accordingly.
+
+**No measurement passes through either substitution.** Every `.bin` quote, both
 collateral bundles, and the capture metadata are byte-unchanged, and their
-hashes below are identical to what they were at capture. The substitution
-touches prose, resource URLs and hostnames only — nothing this fixture attests
-to. The instance ids (`1000000000000000001`, `1000000000000000002`) are
-deliberately left as captured: they identify VMs that no longer exist and are
-what makes the two captures independently checkable against each other.
+hashes below are identical to what they were at capture. Both substitutions
+touch prose, resource URLs, hostnames and instance ids only — never a
+measurement, a digest, or a signature. That is why every arithmetic check in
+this file still reproduces from the committed bytes.
 
 SHA-256, of every file in this directory except this one:
 
@@ -78,8 +86,8 @@ f08cb2ef0423f4aedfa49ed0a5f9172d6b0fe8dc3b70f4fc8598d246eb9457e5  verification.t
 8625edc61586b6c2d2944da551296bd138f5738aca41ca945136f208bd45b37a  instance-b-transcript.txt
 964b64a21a035013b738051a834c935e2d49597cca6b3e6c652ad0fc3aa0acbc  capture-host.txt
 964b64a21a035013b738051a834c935e2d49597cca6b3e6c652ad0fc3aa0acbc  instance-b-capture-host.txt
-df63c51c56e5b15cc62def8b632a53b84828c401128cad3e80397e8ae0c68f05  instance-describe.txt
-16e21ec1cf76b4377ef4c368fd605dd55bee71e4f65e15ebd23c74626f430094  instance-b-describe.txt
+3cd55767a539c570d48f8b209c8bf4241130b6816c9888c7708073c35093d6ec  instance-describe.txt
+e2bb86f1b45a76feb079bc7825824b2d860d798c66b9ce023e781463b04fad84  instance-b-describe.txt
 7c898f06a3fe2a4aeb42c8e9d811d26e1c6ff243426604eb51f9a4854b626897  captured-at
 60b9adf1da7f25205552f8b54c21a371e4c43de33cf867c6f575dc04934cc55d  instance-b-captured-at
 72d8462b0dd08e09959c804e12b2785023b53212bec1498e9fb5813bd2a7bfc7  provider
